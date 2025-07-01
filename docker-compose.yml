@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  main-mediator:
+    build: ./main-mediator
+    env_file: ./main-mediator/.env
+    ports:
+      - "4000:4000"
+    restart: unless-stopped
+    networks:
+      - himnet
+
+  fhir-proxy:
+    build: ./fhir-proxy
+    env_file: ./fhir-proxy/.env
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    networks:
+      - himnet
+
+  feed-mediator:
+    build: ./feed-mediator
+    env_file: ./feed-mediator/.env
+    depends_on:
+      - main-mediator
+    restart: unless-stopped
+    networks:
+      - himnet
+
+networks:
+  himnet:
+    driver: bridge
