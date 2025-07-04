@@ -1,18 +1,24 @@
 {
-  "name": "bahmni-fhir-mediator",
+  "name": "main-mediator",
   "version": "1.0.0",
+  "description": "Mediador principal que recibe eventos, consulta FHIR y arma bundle ITI-65",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "babel-node index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
     "axios": "^1.6.8",
-    "openhim-mediator-utils": "",
+    "dotenv": "^16.4.5",
+    "express": "^4.18.2",
+    "openhim-mediator-utils": ""
+  },
+  "devDependencies": {
     "@babel/cli": "^7.25.7",
     "@babel/core": "^7.25.8",
     "@babel/node": "^7.25.7",
     "@babel/preset-env": "^7.25.8"
-  }
+  },
+  "author": "",
+  "license": "ISC"
 }
