@@ -1,0 +1,35 @@
+{
+  "urn": "urn:mediator:bahmni_fhir_proxy",
+  "version": "1.0.0",
+  "name": "Bahmni FHIR Proxy Mediator",
+  "description": "Proxy de todas las APIs FHIR de OpenMRS vía OpenHIM",
+  "defaultChannelConfig": [
+    {
+      "name": "FHIR Proxy Channel",
+      "urlPattern": "^/fhir/.*$",
+      "routes": [
+        {
+          "name": "FHIR Proxy Route",
+          "host": "0.0.0.0",
+          "path": "/",
+          "port": "5000",
+          "primary": true,
+          "type": "http"
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+      "type": "http"
+    }
+  ],
+  "endpoints": [
+    {
+      "name": "FHIR Proxy Endpoint",
+      "host": "0.0.0.0",
+      "path": "/",
+      "port": "5000",
+      "primary": true,
+      "type": "http"
+    }
+  ]
+}
