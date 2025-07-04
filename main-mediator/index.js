@@ -2,7 +2,9 @@
 import express from 'express'
 import axios from 'axios'
 import { registerMediator } from 'openhim-mediator-utils'
-import mediatorConfig from './mediatorConfig.json'
+import { createRequire } from 'module'
+const require = createRequire(import.meta.url)
+const mediatorConfig = require('./mediatorConfig.json')
 
 const OPENMRS_FHIR_BASE = 'https://<openmrs_host>/openmrs/ws/fhir2/R4'
 const FHIR_SERVER_DEST = 'https://<fhir_dest_host>/fhir/Bundle'
