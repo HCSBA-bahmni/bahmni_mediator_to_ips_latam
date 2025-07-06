@@ -45,6 +45,7 @@ app.post('/event', async (req, res) => {
     const { uuid } = req.body
     // 1. Obtener Encounter
     const encounter = await getEncounterFHIR(uuid)
+    console.log('Respuesta Encounter:', JSON.stringify(encounter, null, 2))
     if (!encounter || !encounter.subject) throw new Error('No se encontró Encounter o subject')
     const patientId = encounter.subject.reference.split('/')[1]
     // 2. Obtener recursos IPS (por paciente)
