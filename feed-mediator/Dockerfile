@@ -6,4 +6,4 @@ COPY . .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python", "feed_watcher.py"]
+CMD ["python", "feed-watcher.py"]
