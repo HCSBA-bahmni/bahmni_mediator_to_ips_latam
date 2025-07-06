@@ -4,7 +4,25 @@ import axios from 'axios'
 import { registerMediator } from 'openhim-mediator-utils'
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
-const itiConfig = require('./itiConfig.json')
+const mediatorConfig = require('./itiConfig.json')  // O el nombre de tu config
+
+const openhimConfig = {
+  username: process.env.OPENHIM_USER,
+  password: process.env.OPENHIM_PASS,
+  apiURL: process.env.OPENHIM_API,
+  trustSelfSigned: true
+}
+
+// Agrega este log:
+console.log('Intentando registrar mediador en OpenHIM:', openhimConfig)
+
+registerMediator(openhimConfig, mediatorConfig, err => {
+  if (err) {
+    console.error('Failed to register mediator:', err)
+    process.exit(1)
+  }
+  console.log('Mediator registered successfully!')
+})
 
 const app = express()
 app.use(express.json({ limit: '15mb' }))
