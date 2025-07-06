@@ -1,0 +1,35 @@
+{
+  "urn": "urn:mediator:fhir-proxy",
+  "version": "1.0.0",
+  "name": "OpenMRS FHIR Proxy Mediator",
+  "description": "Proxy universal de la API FHIR de OpenMRS vía OpenHIM",
+  "defaultChannelConfig": [
+    {
+      "name": "FHIR Proxy Channel",
+      "urlPattern": "^/fhir/.*$",
+      "routes": [
+        {
+          "name": "FHIR Proxy Route",
+          "host": "0.0.0.0",
+          "path": "/",
+          "port": "7000",
+          "primary": true,
+          "type": "http"
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+      "type": "http"
+    }
+  ],
+  "endpoints": [
+    {
+      "name": "FHIR Proxy Endpoint",
+      "host": "0.0.0.0",
+      "path": "/",
+      "port": "7000",
+      "primary": true,
+      "type": "http"
+    }
+  ]
+}

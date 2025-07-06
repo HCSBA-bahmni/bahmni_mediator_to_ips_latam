@@ -1,15 +1,15 @@
 {
-  "urn": "urn:mediator:bahmni_fhir_proxy",
+  "urn": "urn:mediator:iti-mediator",
   "version": "1.0.0",
-  "name": "Bahmni FHIR Proxy Mediator",
-  "description": "Proxy de todas las APIs FHIR de OpenMRS vía OpenHIM",
+  "name": "LACPASS ITI Mediator",
+  "description": "Mediador modular para flujos ITI (65, 67, 68), IPS y validación LACPASS",
   "defaultChannelConfig": [
     {
-      "name": "FHIR Proxy Channel",
-      "urlPattern": "^/fhir/.*$",
+      "name": "ITI Event Channel",
+      "urlPattern": "^/event$",
       "routes": [
         {
-          "name": "FHIR Proxy Route",
+          "name": "ITI Event Route",
           "host": "0.0.0.0",
           "path": "/",
           "port": "5000",
@@ -18,13 +18,13 @@
         }
       ],
       "allow": ["admin"],
-      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+      "methods": ["POST"],
       "type": "http"
     }
   ],
   "endpoints": [
     {
-      "name": "FHIR Proxy Endpoint",
+      "name": "ITI Event Endpoint",
       "host": "0.0.0.0",
       "path": "/",
       "port": "5000",

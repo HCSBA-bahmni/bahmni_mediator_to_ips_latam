@@ -1,5 +1,5 @@
 {
-  "name": "fhir-proxy",
+  "name": "proxy-mediator",
   "version": "1.0.0",
   "main": "fhir-proxy.js",
   "type": "module",
@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "express": "^4.18.2",
-    "axios": "^1.6.8"
+    "axios": "^1.6.8",
+    "dotenv": "^16.4.5"
   }
 }
