@@ -14,7 +14,6 @@ if (process.env.NODE_ENV === 'development') {
   axios.defaults.httpsAgent = httpsAgent
   console.log('⚠️  MODO DEVELOPMENT: Se aceptan certificados self-signed (NO USAR en producción)')
 } else {
-  // En producción, NO parchea el agente: Axios usará validación SSL normal.
   console.log('🟢 MODO PRODUCTION: Solo se aceptan certificados SSL válidos')
 }
 
@@ -38,14 +37,47 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 const app = express()
 app.use(express.json({ limit: '15mb' }))
 
-// ITI-65: Recibe evento y construye/transmite IPS
+const FHIR_PROXY = process.env.FHIR_PROXY_URL || 'http://proxy-mediator:7000'
+
+// ================== FLUJO PRINCIPAL =====================
 app.post('/event', async (req, res) => {
   try {
     const { uuid } = req.body
-    const encounter = await getEncounter(uuid)
-    const patient = await getPatientPDQm(encounter.patient.uuid)
-    const translatedResources = await translateConcepts(encounter)
-    const ipsBundle = buildIPSBundle({ encounter, patient, translatedResources })
+    // 1. Obtener Encounter
+    const encounter = await getEncounterFHIR(uuid)
+    if (!encounter || !encounter.subject) throw new Error('No se encontró Encounter o subject')
+    const patientId = encounter.subject.reference.split('/')[1]
+    // 2. Obtener recursos IPS (por paciente)
+    const [patient, observations, conditions, allergies, medications, immunizations, procedures, documents] =
+      await Promise.all([
+        getPatientFHIR(patientId),
+        getObservationsFHIR(patientId),
+        getConditionsFHIR(patientId),
+        getAllergiesFHIR(patientId),
+        getMedicationsFHIR(patientId),
+        getImmunizationsFHIR(patientId),
+        getProceduresFHIR(patientId),
+        getDocumentReferencesFHIR(patientId)
+      ])
+    // 3. Filtrar los recursos vacíos (entry solo con datos)
+    const entries = [
+      patient ? toEntry(patient, 'Patient') : null,
+      encounter ? toEntry(encounter, 'Encounter') : null,
+      ...observations.map(r => toEntry(r, 'Observation')),
+      ...conditions.map(r => toEntry(r, 'Condition')),
+      ...allergies.map(r => toEntry(r, 'AllergyIntolerance')),
+      ...medications.map(r => toEntry(r, 'MedicationStatement')),
+      ...immunizations.map(r => toEntry(r, 'Immunization')),
+      ...procedures.map(r => toEntry(r, 'Procedure')),
+      ...documents.map(r => toEntry(r, 'DocumentReference'))
+    ].filter(Boolean)
+    // 4. Construir el Bundle IPS
+    const ipsBundle = {
+      resourceType: 'Bundle',
+      type: 'document',
+      entry: entries
+    }
+    // 5. Validar y enviar
     const validation = await validateWithGazelle(ipsBundle)
     if (!validation.isValid) return res.status(400).json({ error: 'IPS no válido en Gazelle', validation })
     const iti65Result = await sendITI65(ipsBundle)
@@ -56,7 +88,80 @@ app.post('/event', async (req, res) => {
   }
 })
 
-// ITI-67: GET /iti67?patientIdentifier=...
+// ================= FUNCIONES FHIR VIA PROXY ===================
+async function getPatientFHIR(patientId) {
+  if (!patientId) return null
+  try {
+    const res = await axios.get(`${FHIR_PROXY}/fhir/Patient/${patientId}`)
+    return isResourceValid(res.data, 'Patient') ? res.data : null
+  } catch { return null }
+}
+
+async function getEncounterFHIR(encounterId) {
+  if (!encounterId) return null
+  try {
+    const res = await axios.get(`${FHIR_PROXY}/fhir/Encounter/${encounterId}`)
+    return isResourceValid(res.data, 'Encounter') ? res.data : null
+  } catch { return null }
+}
+
+async function getObservationsFHIR(patientId) {
+  return await getListResources(`${FHIR_PROXY}/fhir/Observation?patient=${patientId}`, 'Observation')
+}
+async function getConditionsFHIR(patientId) {
+  return await getListResources(`${FHIR_PROXY}/fhir/Condition?patient=${patientId}`, 'Condition')
+}
+async function getAllergiesFHIR(patientId) {
+  return await getListResources(`${FHIR_PROXY}/fhir/AllergyIntolerance?patient=${patientId}`, 'AllergyIntolerance')
+}
+async function getMedicationsFHIR(patientId) {
+  return await getListResources(`${FHIR_PROXY}/fhir/MedicationStatement?patient=${patientId}`, 'MedicationStatement')
+}
+async function getImmunizationsFHIR(patientId) {
+  return await getListResources(`${FHIR_PROXY}/fhir/Immunization?patient=${patientId}`, 'Immunization')
+}
+async function getProceduresFHIR(patientId) {
+  return await getListResources(`${FHIR_PROXY}/fhir/Procedure?patient=${patientId}`, 'Procedure')
+}
+async function getDocumentReferencesFHIR(patientId) {
+  return await getListResources(`${FHIR_PROXY}/fhir/DocumentReference?patient=${patientId}`, 'DocumentReference')
+}
+
+async function getListResources(url, resourceType) {
+  try {
+    const res = await axios.get(url)
+    return (res.data.entry || [])
+      .map(e => e.resource)
+      .filter(r => isResourceValid(r, resourceType))
+  } catch {
+    return []
+  }
+}
+
+// ==== Helper para evitar recursos vacíos (personaliza según tu modelo) ====
+function isResourceValid(resource, type) {
+  if (!resource || resource.resourceType !== type) return false
+  if (type === 'Patient' && !resource.id) return false
+  if (type === 'Encounter' && !resource.id) return false
+  if (type === 'Observation' && !(resource.valueQuantity || resource.valueCodeableConcept || resource.valueString)) return false
+  if (type === 'Condition' && !resource.code) return false
+  if (type === 'AllergyIntolerance' && !resource.code) return false
+  if (type === 'MedicationStatement' && !resource.medicationCodeableConcept && !resource.medicationReference) return false
+  if (type === 'Immunization' && !resource.vaccineCode) return false
+  if (type === 'Procedure' && !resource.code) return false
+  if (type === 'DocumentReference' && !resource.content) return false
+  return true
+}
+
+function toEntry(resource, type) {
+  return {
+    fullUrl: `urn:uuid:${resource.id}`,
+    resource,
+    request: { method: 'POST', url: type }
+  }
+}
+
+// =================== OTROS ENDPOINTS (ejemplo original) ===============
 app.get('/iti67', async (req, res) => {
   try {
     const { patientIdentifier } = req.query
@@ -68,7 +173,6 @@ app.get('/iti67', async (req, res) => {
   }
 })
 
-// ITI-68: GET /iti68?bundleId=...
 app.get('/iti68', async (req, res) => {
   try {
     const { bundleId } = req.query
@@ -80,46 +184,7 @@ app.get('/iti68', async (req, res) => {
   }
 })
 
-// --- Funciones auxiliares modulares ---
-
-async function getEncounter(uuid) {
-  const url = `${process.env.OPENMRS_URL}/openmrs/ws/rest/v1/bahmnicore/bahmniencounter/${uuid}?includeAll=true`
-  // Aquí, NO necesitas el agent, ya se define global si corresponde
-  const res = await axios.get(url)
-  return res.data
-}
-
-async function getPatientPDQm(patientUuid) {
-  const url = `${process.env.PDQM_URL}/fhir/Patient/$pdqm?identifier=${patientUuid}`
-  const res = await axios.get(url)
-  return res.data.entry?.[0]?.resource || {}
-}
-
-async function translateConcepts(encounter) {
-  const result = []
-  for (const obs of (encounter.obs || [])) {
-    const translateUrl = `${process.env.SNOWSTORM_URL}/fhir/ConceptMap/$translate?code=${obs.concept}&system=http://snomed.info/sct`
-    try {
-      const translation = await axios.get(translateUrl)
-      result.push(translation.data)
-    } catch (e) {
-      console.error('Error traduciendo concepto', obs.concept, e.message)
-    }
-  }
-  return result
-}
-
-function buildIPSBundle({ encounter, patient, translatedResources }) {
-  return {
-    resourceType: 'Bundle',
-    type: 'transaction',
-    entry: [
-      // Ejemplo: List, DocumentReference, Bundle (type document), Patient, etc.
-      // Debes armar cada uno con request { method, url } como especifica ITI-65
-    ]
-  }
-}
-
+// =============== FUNCIONES DE ENVÍO ======================
 async function validateWithGazelle(bundle) {
   const res = await axios.post(process.env.GAZELLE_URL, bundle)
   return res.data
