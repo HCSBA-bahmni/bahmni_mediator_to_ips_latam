@@ -1,6 +1,6 @@
 {
   "urn": "urn:mediator:iti-mediator",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "LACPASS ITI Mediator",
   "description": "Mediador modular para flujos ITI (65, 67, 68), IPS y validación LACPASS",
   "defaultChannelConfig": [
