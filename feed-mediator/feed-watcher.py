@@ -1,4 +1,4 @@
-import requests, feedparser, time, os
+import requests, feedparser, time, os, re
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -9,29 +9,47 @@ OPENMRS_USER = os.getenv("OPENMRS_USER")
 OPENMRS_PASS = os.getenv("OPENMRS_PASS")
 
 seen = set()
+
+def extract_encounter_uuid_from_content(entry):
+    # Busca un UUID dentro del campo content (típicamente en la URL)
+    if hasattr(entry, 'content') and entry.content:
+        m = re.search(r'/bahmniencounter/([0-9a-fA-F\-]{36})', entry.content[0].value)
+        if m:
+            return m.group(1)
+    return None
+
 def process_feed(feed):
     for entry in feed.entries:
-        uuid = entry.id.split(":")[-1]
+        uuid = extract_encounter_uuid_from_content(entry)
+        if not uuid:
+            print(f"[WARN] No se pudo extraer UUID de content para entry: {entry.id}")
+            continue
         if uuid not in seen:
-            data = {
-                "uuid": uuid,
-                "title": entry.title,
-                "link": entry.link,
-                "content": entry.content[0].value if hasattr(entry, 'content') else ""
-            }
+            data = {"uuid": uuid}
             try:
-                requests.post(ITIMED_ENDPOINT, json=data)
+                resp = requests.post(ITIMED_ENDPOINT, json=data)
+                print("Notificado a ITI:", uuid, "| Status:", resp.status_code)
                 seen.add(uuid)
-                print("Notificado a ITI:", uuid)
             except Exception as e:
-                print("Error:", e)
+                print("[ERROR] Al notificar a ITI:", e)
 
 def get_feed():
     auth = (OPENMRS_USER, OPENMRS_PASS) if OPENMRS_USER else None
-    r = requests.get(FEED_URL, auth=auth, verify=False)
-    return feedparser.parse(r.text) if r.status_code==200 else None
+    try:
+        r = requests.get(FEED_URL, auth=auth, verify=False)
+        if r.status_code == 200:
+            return feedparser.parse(r.text)
+        else:
+            print("[ERROR] Feed status:", r.status_code)
+            return None
+    except Exception as e:
+        print("[ERROR] Al leer feed:", e)
+        return None
 
-while True:
-    feed = get_feed()
-    if feed: process_feed(feed)
-    time.sleep(FEED_POLL_INTERVAL)
+if __name__ == '__main__':
+    while True:
+        feed = get_feed()
+        if feed: process_feed(feed)
+        time.sleep(FEED_POLL_INTERVAL)
+
+#falta agregar metodo para no repetir lo procesado. como una base de datos como estaba antes.
