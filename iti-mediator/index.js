@@ -45,8 +45,15 @@ app.post('/event', async (req, res) => {
     const { uuid } = req.body
     // 1. Obtener Encounter
     const encounter = await getEncounterFHIR(uuid)
-    console.log('Respuesta Encounter:', JSON.stringify(encounter, null, 2))
-    if (!encounter || !encounter.subject) throw new Error('No se encontró Encounter o subject')
+    console.log('🔎 [LOG] Respuesta Encounter:', JSON.stringify(encounter, null, 2))
+    if (!encounter) {
+      console.error('❌ [ERROR] Encounter recibido es null o undefined')
+      return res.status(404).json({ error: 'No se encontró Encounter (null)' })
+    }
+    if (!encounter.subject) {
+      console.error('❌ [ERROR] Encounter encontrado pero falta subject')
+      return res.status(404).json({ error: 'No se encontró subject en Encounter' })
+    }
     const patientId = encounter.subject.reference.split('/')[1]
     // 2. Obtener recursos IPS (por paciente)
     const [patient, observations, conditions, allergies, medications, immunizations, procedures, documents] =
@@ -84,7 +91,7 @@ app.post('/event', async (req, res) => {
     const iti65Result = await sendITI65(ipsBundle)
     res.status(201).json({ result: 'ITI-65 enviado', iti65Result })
   } catch (e) {
-    console.error(e)
+    console.error('❌ [EXCEPTION] Error en /event:', e)
     res.status(500).json({ error: e.message })
   }
 })
@@ -95,15 +102,27 @@ async function getPatientFHIR(patientId) {
   try {
     const res = await axios.get(`${FHIR_PROXY}/fhir/Patient/${patientId}`)
     return isResourceValid(res.data, 'Patient') ? res.data : null
-  } catch { return null }
+  } catch (err) {
+    console.error('[ERROR] getPatientFHIR:', err.message)
+    return null
+  }
 }
 
+// AGREGADO DEBUG INTENSIVO AQUÍ:
 async function getEncounterFHIR(encounterId) {
   if (!encounterId) return null
   try {
-    const res = await axios.get(`${FHIR_PROXY}/fhir/Encounter/${encounterId}`)
+    const url = `${FHIR_PROXY}/fhir/Encounter/${encounterId}`
+    console.log('🔎 [DEBUG] GET', url)
+    const res = await axios.get(url)
+    console.log('🔎 [DEBUG] STATUS', res.status)
+    console.log('🔎 [DEBUG] HEADERS', JSON.stringify(res.headers))
+    console.log('🔎 [DEBUG] DATA', JSON.stringify(res.data, null, 2))
     return isResourceValid(res.data, 'Encounter') ? res.data : null
-  } catch { return null }
+  } catch (err) {
+    console.error('❌ [ERROR] getEncounterFHIR:', err.message)
+    return null
+  }
 }
 
 async function getObservationsFHIR(patientId) {
