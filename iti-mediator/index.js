@@ -4,6 +4,8 @@ import axios from 'axios'
 import https from 'https'
 import { registerMediator } from 'openhim-mediator-utils'
 import { createRequire } from 'module'
+import fs from 'fs'    // <-- Cambio aquí: importación moderna de fs/ lo dejare solo en debug.
+
 const require = createRequire(import.meta.url)
 const mediatorConfig = require('./itiConfig.json')
 
@@ -55,6 +57,8 @@ app.post('/event', async (req, res) => {
       return res.status(404).json({ error: 'No se encontró subject en Encounter' })
     }
     const patientId = encounter.subject.reference.split('/')[1]
+
+
     // 2. Obtener recursos IPS (por paciente)
     const [patient, observations, conditions, allergies, medications, immunizations, procedures, documents] =
       await Promise.all([
@@ -85,7 +89,15 @@ app.post('/event', async (req, res) => {
       type: 'document',
       entry: entries
     }
-    // 5. Validar y enviar
+
+    // 5. Guardar JSON en archivo para debug (asegura carpeta), sacar este bloque en producción
+    const debugDir = 'debug'
+    if (!fs.existsSync(debugDir)) {
+      fs.mkdirSync(debugDir, { recursive: true })
+    }
+    fs.writeFileSync(`${debugDir}/ipsBundle.json`, JSON.stringify(ipsBundle, null, 2))
+
+    // 6. Validar y enviar
     //const validation = await validateWithGazelle(ipsBundle)
     //if (!validation.isValid) return res.status(400).json({ error: 'IPS no válido en Gazelle', validation })
     console.log('--- Bundle IPS generado ---\n', JSON.stringify(ipsBundle, null, 2));
