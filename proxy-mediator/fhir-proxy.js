@@ -44,7 +44,7 @@ const PASS = process.env.OPENMRS_PASS
 app.all('/fhir/*', async (req, res) => {
   const fhirPath = req.originalUrl.replace('/fhir', '')
   const targetUrl = `${OPENMRS_FHIR}${fhirPath}`
-  console.log(`[PROXY] ${req.method} → ${targetUrl}`) // LOG de auditoría
+  console.log(`[PROXY] ${req.method} → ${targetUrl}`)
 
   try {
     const openmrsRes = await axios({
@@ -56,12 +56,34 @@ app.all('/fhir/*', async (req, res) => {
       validateStatus: false
     })
 
+    // Limpia headers conflictivos (especial OpenMRS bug)
     const headers = { ...openmrsRes.headers }
     delete headers['content-length']
     delete headers['Content-Length']
+    delete headers['transfer-encoding']
+    delete headers['Transfer-Encoding']
 
-    res.status(openmrsRes.status).set(headers).send(openmrsRes.data)
+    // Si el body viene como string y parece JSON, parsea
+    let data = openmrsRes.data
+    if (typeof data === 'string' && data.trim().startsWith('{')) {
+      try { data = JSON.parse(data) } catch {}
+    }
+
+    res.status(openmrsRes.status).set(headers).send(data)
   } catch (error) {
+    // Maneja errores de "Parse Error: Content-Length can't be present with Transfer-Encoding"
+    if (
+      error.message &&
+      error.message.includes("Content-Length can't be present with Transfer-Encoding")
+    ) {
+      console.error('🔥 FHIR Proxy Error: Header conflict OpenMRS. Devolviendo 502.', error.message)
+      return res.status(502).json({
+        error: 'Proxy error',
+        detail: 'OpenMRS devolvió headers HTTP conflictivos (Content-Length y Transfer-Encoding).',
+        raw: error.message
+      })
+    }
+    // Otros errores
     console.error('FHIR Proxy Error:', error.message)
     res.status(502).json({ error: 'Proxy error', detail: error.message })
   }
