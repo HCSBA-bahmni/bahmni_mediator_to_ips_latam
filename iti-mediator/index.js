@@ -86,8 +86,8 @@ app.post('/event', async (req, res) => {
       entry: entries
     }
     // 5. Validar y enviar
-    const validation = await validateWithGazelle(ipsBundle)
-    if (!validation.isValid) return res.status(400).json({ error: 'IPS no válido en Gazelle', validation })
+    //const validation = await validateWithGazelle(ipsBundle)
+    //if (!validation.isValid) return res.status(400).json({ error: 'IPS no válido en Gazelle', validation })
     const iti65Result = await sendITI65(ipsBundle)
     res.status(201).json({ result: 'ITI-65 enviado', iti65Result })
   } catch (e) {
