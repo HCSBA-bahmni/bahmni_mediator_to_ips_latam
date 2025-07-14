@@ -1,24 +1,16 @@
 version: "3.8"
 services:
-  feed-mediator:
-    build: ./feed-mediator
-    env_file: .env
-    restart: unless-stopped
 
-  fhir-forwarder-mediator:
-    build: ./fhir-forwarder-mediator
-    env_file: .env
+  fhir-forwarder:
+    build:
+      context: ./fhir-forwarder
+    env_file: ./fhir-forwarder/.env
     ports:
       - "8003:8003"
     restart: unless-stopped
-
-  fhir-proxy-mediator:
-    build: ./fhir-proxy-mediator
-    env_file: .env
-    ports:
-      - "7000:7000"
-    restart: unless-stopped
+    networks:
+      - lacpass-himnet
 
 networks:
-  default:
-    name: lacpass-himnet
+  lacpass-himnet:
+    external: true
