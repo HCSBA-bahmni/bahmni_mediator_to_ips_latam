@@ -170,7 +170,7 @@ app.post('/event', async (req, res) => {
 })
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }))
-const PORT = process.env.PORT || 8000
+const PORT = process.env.FORWARDER_MEDIATOR_PORT || 8000
 app.listen(PORT, () => {
   logStep(`Direct FHIR event forwarder listening on port ${PORT}`)
 })
