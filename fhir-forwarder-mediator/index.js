@@ -1,3 +1,4 @@
+// index.js (FHIR Event Forwarder Mediator)
 import 'dotenv/config'
 import express from 'express'
 import axios from 'axios'
@@ -8,6 +9,7 @@ import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const mediatorConfig = require('./mediatorConfig.json')
 
+// --- HTTPS agent para desarrollo con certificados self-signed ---
 let httpsAgent = undefined
 if (process.env.NODE_ENV === 'development') {
   httpsAgent = new https.Agent({ rejectUnauthorized: false })
@@ -17,68 +19,72 @@ if (process.env.NODE_ENV === 'development') {
   console.log('🟢 MODO PRODUCTION: Solo certificados SSL válidos')
 }
 
+// — Configuración fija para apuntar a tu OpenHIM —
 const openhimConfig = {
   username: process.env.OPENHIM_USER,
   password: process.env.OPENHIM_PASS,
-  apiURL: process.env.OPENHIM_API,
+  apiURL: process.env.OPENHIM_API_URL || 'http://localhost:8080/openhim',
   trustSelfSigned: true
 }
 
+// Registro en OpenHIM
 registerMediator(openhimConfig, mediatorConfig, err => {
   if (err) {
-    console.error('Failed to register mediator:', err)
+    console.error('❌ Failed to register mediator:', err)
     process.exit(1)
   }
-  console.log('Mediator registered successfully!')
+  console.log('✅ Mediator registered successfully!')
 })
 
 const app = express()
 app.use(express.json({ limit: '20mb' }))
 
-const FHIR_PROXY = process.env.FHIR_PROXY_URL // ej: http://fhir-proxy:7000
-const FHIR_NODE_URL = process.env.FHIR_NODE_URL // ej: http://nodo-fhir:8080
-const MAX_RETRIES = 3
+const FHIR_PROXY    = process.env.FHIR_PROXY_URL   // ej: http://10.68.174.206:8080/fhir-proxy-mediator
+const FHIR_NODE_URL = process.env.FHIR_NODE_URL    // ej: http://10.68.174.206:8080/openmrs-fhir-channel
+const MAX_RETRIES   = 3
 
+// — Healthcheck endpoint para heartbeats —
+app.get('/_health', (_req, res) => res.status(200).send('OK'))
+
+// Persistencia de eventos ya vistos
 const SEEN_FILE = './seen.json'
 let seen = new Set()
 try {
   if (fs.existsSync(SEEN_FILE)) {
     seen = new Set(JSON.parse(fs.readFileSync(SEEN_FILE)))
   }
-} catch {}
-
+} catch (e) {
+  console.warn('No se pudo leer seen.json, se creará uno nuevo.')
+}
 function saveSeen() {
   fs.writeFile(SEEN_FILE, JSON.stringify([...seen]), err => {
     if (err) console.error('❌ Error guardando seen.json:', err)
   })
 }
 
+// Función genérica de reintento
 async function retryRequest(fn, maxRetries = MAX_RETRIES) {
-  let attempt = 0
-  let lastErr = null
+  let attempt = 0, lastErr
   while (attempt < maxRetries) {
-    try {
-      return await fn()
-    } catch (err) {
-      lastErr = err
-      attempt++
+    try { return await fn() }
+    catch (err) {
+      lastErr = err; attempt++
       const wait = 500 * attempt
-      console.warn(`⏳ Retry ${attempt}/${maxRetries} after error:`, err.message)
-      await new Promise(res => setTimeout(res, wait))
+      console.warn(`⏳ Retry ${attempt}/${maxRetries} tras error:`, err.message)
+      await new Promise(r => setTimeout(r, wait))
     }
   }
   throw lastErr
 }
 
 function logStep(msg, ...data) {
-  const ts = new Date().toISOString()
-  console.log(`[${ts}]`, msg, ...data)
+  console.log(new Date().toISOString(), msg, ...data)
 }
 
 async function getFromProxy(path) {
   const url = `${FHIR_PROXY}/fhir${path}`
   logStep('GET (proxy)', url)
-  const resp = await axios.get(url)
+  const resp = await axios.get(url, { validateStatus: false })
   return resp.data
 }
 
@@ -94,9 +100,10 @@ async function putToNode(resource) {
   })
 }
 
+// Endpoint principal: recibe { uuid } y reenvía Encounter, Patient y recursos relacionados
 app.post('/event', async (req, res) => {
   const { uuid } = req.body
-  logStep('📩 Recibido POST /event', req.body)
+  logStep('📩 POST /event', req.body)
 
   if (!uuid) return res.status(400).json({ error: 'Falta uuid' })
   if (seen.has(uuid)) {
@@ -104,64 +111,38 @@ app.post('/event', async (req, res) => {
     return res.status(200).json({ status: 'duplicado', uuid })
   }
 
-  logStep('🔔 Nuevo evento desde feed', uuid)
-  seen.add(uuid)
-  saveSeen()
+  seen.add(uuid); saveSeen()
+  logStep('🔔 Procesando nuevo evento', uuid)
 
   const results = []
-
   try {
     // 1. Encounter
-    logStep('➡️ Solicitando Encounter desde proxy FHIR', uuid)
     const encounter = await getFromProxy(`/Encounter/${uuid}`)
-    logStep('✅ Recibido Encounter del proxy:', JSON.stringify(encounter, null, 1))
     results.push(await putToNode(encounter))
-    logStep('⬆️ Enviado Encounter al servidor FHIR destino')
 
     // 2. Patient
     const patientId = encounter.subject?.reference?.split('/').pop()
     if (patientId) {
-      logStep('➡️ Solicitando Patient desde proxy FHIR', patientId)
       const patient = await getFromProxy(`/Patient/${patientId}`)
-      logStep('✅ Recibido Patient del proxy:', JSON.stringify(patient, null, 1))
       results.push(await putToNode(patient))
-      logStep('⬆️ Enviado Patient al servidor FHIR destino')
     }
 
-    // 3. Recursos FHIR relacionados
+    // 3. Recursos relacionados
     const resourceQueries = [
-      { type: 'Observation', q: `/Observation?encounter=${uuid}` },
-      { type: 'Condition', q: `/Condition?encounter=${uuid}` },
-      { type: 'Procedure', q: `/Procedure?encounter=${uuid}` },
-      { type: 'MedicationRequest', q: `/MedicationRequest?encounter=${uuid}` },
-      { type: 'Medication', q: `/Medication?encounter=${uuid}` },
-      { type: 'AllergyIntolerance', q: `/AllergyIntolerance?encounter=${uuid}` },
-      { type: 'DiagnosticReport', q: `/DiagnosticReport?encounter=${uuid}` },
-      { type: 'Immunization', q: `/Immunization?encounter=${uuid}` },
-      { type: 'CarePlan', q: `/CarePlan?encounter=${uuid}` },
-      { type: 'Appointment', q: `/Appointment?encounter=${uuid}` },
-      { type: 'DocumentReference', q: `/DocumentReference?encounter=${uuid}` }
+      'Observation','Condition','Procedure','MedicationRequest',
+      'Medication','AllergyIntolerance','DiagnosticReport',
+      'Immunization','CarePlan','Appointment','DocumentReference'
     ]
-    for (const { type, q } of resourceQueries) {
-      try {
-        logStep(`➡️ Buscando ${type} desde proxy FHIR:`, q)
-        const bundle = await getFromProxy(q)
-        if (bundle.entry) {
-          logStep(`✅ Recibido bundle de ${type}:`, `count=${bundle.entry.length}`)
-          for (const entry of bundle.entry) {
-            if (entry.resource?.resourceType && entry.resource?.id) {
-              logStep(`⬆️ Enviando ${type} (${entry.resource.id}) al servidor FHIR destino`)
-              results.push(await putToNode(entry.resource))
-            }
-          }
-        } else {
-          logStep(`ℹ️ No hay ${type} para este Encounter`)
+    for (const type of resourceQueries) {
+      const bundle = await getFromProxy(`/${type}?encounter=${uuid}`)
+      if (bundle.entry) {
+        for (const entry of bundle.entry) {
+          results.push(await putToNode(entry.resource))
         }
-      } catch (e) {
-        logStep(`❌ No se pudo obtener ${type}:`, e.message)
       }
     }
-    logStep('🎉 Proceso completado para', uuid)
+
+    logStep('🎉 Proceso completado', uuid)
     res.json({ status: 'ok', uuid, sent: results.length })
   } catch (err) {
     logStep('❌ ERROR en procesamiento:', err.message)
@@ -169,8 +150,7 @@ app.post('/event', async (req, res) => {
   }
 })
 
-app.get('/health', (req, res) => res.json({ status: 'ok' }))
-const PORT = process.env.FORWARDER_MEDIATOR_PORT || 8000
+const PORT = process.env.FORWARDER_MEDIATOR_PORT || 8003
 app.listen(PORT, () => {
-  logStep(`Direct FHIR event forwarder listening on port ${PORT}`)
+  logStep(`FHIR Forwarder listening on port ${PORT}`)
 })

@@ -24,12 +24,14 @@
   ],
   "endpoints": [
     {
-      "name": "FHIR Proxy Endpoint",
-      "host": "0.0.0.0",
-      "path": "/",
-      "port": "7000",
-      "primary": true,
-      "type": "http"
+      "path": "/fhir/*",
+      "method": "*"
+    },
+    {
+      "path": "/_health",
+      "method": "get"
     }
-  ]
+  ],
+  "heartbeatPath": "/_health",
+  "heartbeatInterval": 30000
 }

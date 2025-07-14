@@ -41,6 +41,12 @@ const OPENMRS_FHIR = process.env.OPENMRS_FHIR_URL
 const USER = process.env.OPENMRS_USER
 const PASS = process.env.OPENMRS_PASS
 
+
+
+// ––– Endpoint de healthcheck para heartbeats –––
+app.get('/_health', (_req, res) => res.status(200).send('OK'))
+// ––– Endpoint de healthcheck para heartbeats –––
+
 app.all('/fhir/*', async (req, res) => {
   const fhirPath = req.originalUrl.replace('/fhir', '')
   const targetUrl = `${OPENMRS_FHIR}${fhirPath}`
