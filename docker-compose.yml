@@ -2,20 +2,19 @@ version: "3.8"
 services:
   feed-mediator:
     build: ./feed-mediator
-    env_file: ./feed-mediator/.env
+    env_file: .env
     restart: unless-stopped
-    depends_on: [iti-mediator]
 
-  iti-mediator:
-    build: ./iti-mediator
-    env_file: ./iti-mediator/.env
+  fhir-forwarder-mediator:
+    build: ./fhir-forwarder-mediator
+    env_file: .env
     ports:
-      - "5000:5000"
+      - "8003:8003"
     restart: unless-stopped
 
-  proxy-mediator:
-    build: ./proxy-mediator
-    env_file: ./proxy-mediator/.env
+  fhir-proxy-mediator:
+    build: ./fhir-proxy-mediator
+    env_file: .env
     ports:
       - "7000:7000"
     restart: unless-stopped
