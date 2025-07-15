@@ -6,12 +6,12 @@
   "defaultChannelConfig": [
     {
       "name": "FHIR Forwarder Event Channel",
-      "urlPattern": "^/event$",
+      "urlPattern": "^/forwarder/_event$",
       "routes": [
         {
           "name": "FHIR Forwarder Event Route",
           "host": "10.68.174.209",
-          "path": "/",
+          "path": "/forwarder/_event",
           "port": "8003",
           "primary": true,
           "type": "http"
@@ -23,12 +23,12 @@
     },
     {
       "name": "FHIR Forwarder Health Channel",
-      "urlPattern": "^/_health$",
+      "urlPattern": "^/forwarder/_health$",
       "routes": [
         {
           "name": "FHIR Forwarder Health Route",
           "host": "10.68.174.209",
-          "path": "/",
+          "path": "/forwarder/_health",
           "port": "8003",
           "primary": true,
           "type": "http"
@@ -40,17 +40,9 @@
     }
   ],
   "endpoints": [
-    {
-      "name": "event-endpoint",
-      "path": "/event",
-      "method": "post"
-    },
-    {
-      "name": "health-endpoint",
-      "path": "/_health",
-      "method": "get"
-    }
+    { "name": "event-endpoint",  "path": "/forwarder/_event",  "method": "post" },
+    { "name": "health-endpoint", "path": "/forwarder/_health", "method": "get" }
   ],
-  "heartbeatPath": "/_health",
+  "heartbeatPath": "/forwarder/_health",
   "heartbeatInterval": 30000
 }
