@@ -1,30 +1,29 @@
-# 1) Imagen base ligera de Node
+# Dockerfile para FHIR Event Forwarder Mediator
 FROM node:20-alpine
 
-# 2) Crear un usuario no‑root
+# 1) Crear usuario no‑root
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# 3) Directorio de trabajo
 WORKDIR /app
 
-# 4) Copiar package.json y lock para aprovechar cache
+# 2) Copiar package.json (no asumimos lockfile)
 COPY package.json ./
 
-# 5) Instalar solo dependencias de producción
-RUN npm ci --only=production
+# 3) Instalar sólo production deps
+RUN npm install --production
 
-# 6) Copiar el resto del código
+# 4) Copiar el resto del código
 COPY . .
 
-# 7) Exponer el puerto donde escucha tu forwarder
+# 5) Exponer puerto del Forwarder
 EXPOSE 8003
 
-# 8) Definir un healthcheck para orquestadores
+# 6) Healthcheck para Docker/K8s
 HEALTHCHECK --interval=30s --timeout=5s \
-  CMD wget --quiet --tries=1 --spider http://localhost:8003/_health || exit 1
+  CMD wget --quiet --tries=1 --spider http://localhost:8003/forwarder/_health || exit 1
 
-# 9) Ejecutar como usuario no-root
+# 7) Ejecutar como usuario no‑root
 USER appuser
 
-# 10) Comando de arranque
+# 8) Comando de arranque
 CMD ["npm", "start"]
