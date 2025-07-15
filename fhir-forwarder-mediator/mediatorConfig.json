@@ -5,11 +5,11 @@
   "description": "Reenvía recursos FHIR desde OpenMRS proxy a un nodo nacional vía OpenHIM",
   "defaultChannelConfig": [
     {
-      "name": "FHIR Forwarder Channel",
+      "name": "FHIR Forwarder Event Channel",
       "urlPattern": "^/event$",
       "routes": [
         {
-          "name": "FHIR Forwarder Route",
+          "name": "FHIR Forwarder Event Route",
           "host": "0.0.0.0",
           "path": "/",
           "port": "8003",
@@ -19,6 +19,23 @@
       ],
       "allow": ["admin"],
       "methods": ["POST"],
+      "type": "http"
+    },
+    {
+      "name": "FHIR Forwarder Health Channel",
+      "urlPattern": "^/_health$",
+      "routes": [
+        {
+          "name": "FHIR Forwarder Health Route",
+          "host": "0.0.0.0",
+          "path": "/",
+          "port": "8003",
+          "primary": true,
+          "type": "http"
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET"],
       "type": "http"
     }
   ],
