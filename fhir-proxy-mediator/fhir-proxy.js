@@ -26,19 +26,13 @@ const openhimConfig = {
 
 console.log('Intentando registrar FHIR Proxy en OpenHIM:', openhimConfig)
 
-registerMediator(
-  openhimConfig,
-  mediatorConfig,
-  // Le indicamos que registre canales y endpoints
-  { registerChannels: true, registerEndpoints: true },
-  err => {
-     if (err) {
-       console.error('❌ Error registrando mediador y canales:', err)
-       process.exit(1)
-     }
-     console.log('✅ Mediador, endpoints y canales registrados correctamente en OpenHIM')
-   }
- )
+registerMediator(openhimConfig, mediatorConfig, true, err => {
+  if (err) {
+    console.error('❌ Error registrando mediador y canales:', err)
+    process.exit(1)
+  }
+  console.log('✅ Mediador y canales registrados correctamente en OpenHIM')
+})
 
 
 
