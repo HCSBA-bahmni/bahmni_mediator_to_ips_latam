@@ -23,12 +23,12 @@
     },
     {
       "name": "FHIR Proxy Health Channel",
-      "urlPattern": "^/_health$",
+      "urlPattern": "^/proxy/_health$",
       "routes": [
         {
           "name": "FHIR Proxy Health Route",
           "host": "10.68.174.209",
-          "path": "/",
+          "path": "/proxy/_health",
           "port": "7000",
           "primary": true,
           "type": "http"
@@ -47,10 +47,10 @@
     },
     {
       "name": "health-endpoint",
-      "path": "/_health",
+      "path": "/proxy/_health",
       "method": "get"
     }
   ],
-  "heartbeatPath": "/_health",
+  "heartbeatPath": "/proxy/_health",
   "heartbeatInterval": 30000
 }
