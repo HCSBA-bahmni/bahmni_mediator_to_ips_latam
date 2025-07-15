@@ -1,47 +1,43 @@
+// fhir-proxy.js (OpenMRS FHIR Proxy Mediator)
 import 'dotenv/config'
 import express from 'express'
 import axios from 'axios'
 import https from 'https'
 import {
   registerMediator,
-  activateHeartbeat,
-  fetchConfig
+  activateHeartbeat
 } from 'openhim-mediator-utils'
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const mediatorConfig = require('./mediatorConfig.json')
 
-// 1) Construye tu configuración de OpenHIM antes de usarla
+// --- OpenHIM config ---
 const openhimConfig = {
   username: process.env.OPENHIM_USER,
   password: process.env.OPENHIM_PASS,
-  apiURL:  process.env.OPENHIM_API,
+  apiURL: process.env.OPENHIM_API,
   trustSelfSigned: true,
   urn: mediatorConfig.urn
 }
 
-// 2) Soporte de configuración dinámica desde la UI
-//fetchConfig(openhimConfig).on('config', cfg => {
-//  console.log('🔄 Nueva configuración recibida:', cfg)
-  // Aquí podrías actualizar timeouts, URLs, etc.
-//})
-
-// 3) HTTPS agent para desarrollo
+// HTTPS agent for development
 let httpsAgent
 if (process.env.NODE_ENV === 'development') {
   httpsAgent = new https.Agent({ rejectUnauthorized: false })
   axios.defaults.httpsAgent = httpsAgent
-  console.log('⚠️  MODO DEVELOPMENT: certificados self‑signed aceptados')
+  console.log('⚠️  DEV MODE: self‑signed certs accepted')
+} else {
+  console.log('🟢 PROD MODE: only valid SSL certs')
 }
 
-// 4) Registra el mediador y crea los canales
-console.log('Intentando registrar FHIR Proxy en OpenHIM:', openhimConfig)
+// 1) Register mediator & channels, then heartbeat
+console.log('Registering FHIR Proxy Mediator in OpenHIM:', openhimConfig)
 registerMediator(openhimConfig, mediatorConfig, err => {
   if (err) {
-    console.error('❌ Error registrando mediador:', err)
+    console.error('❌ Error registering mediator:', err)
     process.exit(1)
   }
-  console.log('✅ Mediador registrado correctamente')
+  console.log('✅ Mediator registered correctly')
 
   const channels = mediatorConfig.defaultChannelConfig || []
   Promise.all(channels.map(ch =>
@@ -50,54 +46,64 @@ registerMediator(openhimConfig, mediatorConfig, err => {
       { ...ch, mediator_urn: mediatorConfig.urn },
       { auth: { username: openhimConfig.username, password: openhimConfig.password }, httpsAgent }
     )
-    .then(() => console.log(`✅ Canal creado: ${ch.name}`))
-    .catch(e => console.error(`❌ Error creando canal ${ch.name}:`, e.response?.data || e.message))
+    .then(() => console.log(`✅ Channel created: ${ch.name}`))
+    .catch(e => console.error(`❌ Error creating channel ${ch.name}:`, e.response?.data || e.message))
   ))
   .then(() => {
-    console.log('✅ Todos los canales procesados')
+    console.log('✅ All channels processed')
     activateHeartbeat(openhimConfig)
   })
 })
 
-// 5) Express: health y proxy de FHIR
+// 2) Express setup
 const app = express()
-app.use(express.json({ limit: '20mb' }));
+app.use(express.json({ limit: '20mb' }))
 
-const healthPaths = ['/_health', '/proxy/_health'];
-healthPaths.forEach(path => {
-  app.get(path, (_req, res) => res.status(200).send('OK'));
-});
+// 3) Health endpoints
+['/_health', '/proxy/_health'].forEach(path => {
+  app.get(path, (_req, res) => res.status(200).send('OK'))
+})
 
-app.all(['/fhir/*', '/proxy/_fhir/*'], async (req, res) => {
-  // mapeamos ambos prefijos a /fhir
-  const path = req.originalUrl.replace(/^\/proxy\/_fhir/, '/fhir')
-  const fhirPath  = path.replace(/^\/fhir/, '')
-  const targetUrl = `${process.env.OPENMRS_FHIR_URL}${fhirPath}`
+// 4) FHIR proxy: support both /fhir/* and /proxy/fhir/*
+const OPENMRS_FHIR = process.env.OPENMRS_FHIR_URL
+const OPENMRS_USER = process.env.OPENMRS_USER
+const OPENMRS_PASS = process.env.OPENMRS_PASS
+
+app.all(['/fhir/*', '/proxy/fhir/*'], async (req, res) => {
+  // Map /proxy/fhir/... → /fhir/...
+  const cleanPath = req.originalUrl.replace(/^\/proxy\/fhir/, '/fhir')
+  const fhirPath  = cleanPath.replace(/^\/fhir/, '')
+  const targetUrl = `${OPENMRS_FHIR}${fhirPath}`
+
   console.log(`[PROXY] ${req.method} → ${targetUrl}`)
-
   try {
     const upstream = await axios({
       method: req.method,
-      url:    targetUrl,
-      data:   req.body,
-      headers:{ ...req.headers, host: undefined },
-      auth:   { username: process.env.OPENMRS_USER, password: process.env.OPENMRS_PASS },
+      url: targetUrl,
+      data: req.body,
+      headers: { ...req.headers, host: undefined },
+      auth: OPENMRS_USER ? { username: OPENMRS_USER, password: OPENMRS_PASS } : undefined,
       validateStatus: false
     })
-    // limpia headers conflictivos
+
+    // Clean conflicting headers
     const headers = { ...upstream.headers }
     delete headers['content-length']
     delete headers['transfer-encoding']
 
-    res
-      .status(upstream.status)
-      .set(headers)
-      .send(upstream.data)
+    // Parse string body if JSON
+    let data = upstream.data
+    if (typeof data === 'string' && data.trim().startsWith('{')) {
+      try { data = JSON.parse(data) } catch {}
+    }
+
+    res.status(upstream.status).set(headers).send(data)
   } catch (err) {
     console.error('🔥 FHIR Proxy Error:', err.message)
     res.status(502).json({ error: 'Proxy error', detail: err.message })
   }
 })
 
+// 5) Start server
 const port = process.env.FHIRPROXY_PORT || 7000
-app.listen(port, () => console.log(`FHIR Proxy listening on ${port}`))
+app.listen(port, () => console.log(`FHIR Proxy listening on port ${port}`))
