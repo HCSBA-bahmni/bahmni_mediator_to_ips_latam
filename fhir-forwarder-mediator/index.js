@@ -56,20 +56,27 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 const app = express()
 app.use(express.json({ limit: '20mb' }))
 
-// Seen set persistence
+// Ensure seen.json exists and is writable
 const SEEN_FILE = './seen.json'
+try {
+  if (!fs.existsSync(SEEN_FILE)) {
+    fs.writeFileSync(SEEN_FILE, JSON.stringify([]), { flag: 'wx' })
+  }
+} catch (e) {
+  console.warn('⚠️ Warning creating seen.json:', e.message)
+}
 let seen = new Set()
 try {
-  if (fs.existsSync(SEEN_FILE)) {
-    seen = new Set(JSON.parse(fs.readFileSync(SEEN_FILE)))
-  }
+  seen = new Set(JSON.parse(fs.readFileSync(SEEN_FILE)))
 } catch {
-  console.warn('No se pudo leer seen.json, se creará uno nuevo.')
+  console.warn('No se pudo leer seen.json, iniciando vacío.')
 }
 function saveSeen() {
-  fs.writeFile(SEEN_FILE, JSON.stringify([...seen]), err => {
-    if (err) console.error('❌ Error guardando seen.json:', err)
-  })
+  try {
+    fs.writeFileSync(SEEN_FILE, JSON.stringify([...seen]))
+  } catch (err) {
+    console.error('❌ Error guardando seen.json:', err)
+  }
 }
 
 // Generic retry
@@ -99,6 +106,9 @@ async function getFromProxy(path) {
 }
 
 async function putToNode(resource) {
+  if (!resource || !resource.resourceType || !resource.id) {
+    throw new Error('Recurso inválido, no se puede enviar a nodo')
+  }
   const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
   return retryRequest(async () => {
     logStep('PUT (node)', url)
