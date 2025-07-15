@@ -54,21 +54,24 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 const app = express()
 app.use(express.json({ limit: '20mb' }))
 
-// 2) Asegurar seen.json y cargar versiones
+// 2) Ensure seen.json exists and is writable
 const SEEN_FILE = './seen.json'
-let seenVersions = {}
 try {
   if (!fs.existsSync(SEEN_FILE)) {
-    fs.writeFileSync(SEEN_FILE, JSON.stringify({}), { flag: 'wx' })
+    fs.writeFileSync(SEEN_FILE, JSON.stringify([]), { flag: 'wx' })
   }
-  seenVersions = JSON.parse(fs.readFileSync(SEEN_FILE))
 } catch (e) {
-  console.warn('⚠️ Could not initialize seen.json:', e.message)
-  seenVersions = {}
+  console.warn('⚠️ Could not create seen.json:', e.message)
+}
+let seen = new Set()
+try {
+  seen = new Set(JSON.parse(fs.readFileSync(SEEN_FILE)))
+} catch {
+  console.warn('⚠️ Could not read seen.json, starting empty.')
 }
 function saveSeen() {
   try {
-    fs.writeFileSync(SEEN_FILE, JSON.stringify(seenVersions))
+    fs.writeFileSync(SEEN_FILE, JSON.stringify([...seen]))
   } catch (err) {
     console.error('❌ Error writing seen.json:', err)
   }
@@ -93,10 +96,11 @@ function logStep(msg, ...data) {
   console.log(new Date().toISOString(), msg, ...data)
 }
 
-// 4) Funciones FHIR proxy
+// 4) FHIR proxy functions
 const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
 
 async function getFromProxy(path) {
+  // path llega como "/Encounter/{uuid}"
   const url = `${baseProxy}${path}`
   logStep('GET (proxy)', url)
   const resp = await axios.get(url, { validateStatus: false })
@@ -118,43 +122,34 @@ async function putToNode(resource) {
   })
 }
 
-// 5) Healthcheck del forwarder
+// 5) Health endpoint
 app.get('/forwarder/_health', (_req, res) => res.send('OK'))
 
-// 6) Endpoint de eventos: procesa sólo si cambia la versionId
+// 6) Event endpoint
 app.post('/forwarder/_event', async (req, res) => {
   logStep('📩 [FORWARDER] POST /event', req.body)
   const { uuid } = req.body
   if (!uuid) return res.status(400).json({ error: 'Missing uuid' })
+  if (seen.has(uuid)) {
+    logStep('🔁 Duplicate event, ignored', uuid)
+    return res.json({ status: 'duplicated', uuid })
+  }
+  seen.add(uuid); saveSeen()
 
+  const results = []
   try {
-    // 1) Traer Encounter
-    const encounter = await getFromProxy(`/Encounter/${uuid}`)
-    if (!encounter.resourceType) throw new Error('Invalid FHIR resource')
+    // Encounter
+    const enc = await getFromProxy(`/Encounter/${uuid}`)
+    results.push(await putToNode(enc))
 
-    const versionId = encounter.meta?.versionId
-    if (seenVersions[uuid] === versionId) {
-      logStep('🔁 Same version, skipping', uuid, versionId)
-      return res.json({ status: 'duplicate', uuid, versionId })
-    }
-
-    // 2) Nueva versión: marcar y guardar
-    seenVersions[uuid] = versionId
-    saveSeen()
-    logStep('🔔 New version, processing', uuid, versionId)
-
-    const results = []
-    // 3) Put Encounter
-    results.push(await putToNode(encounter))
-
-    // 4) Put Patient
-    const patId = encounter.subject?.reference?.split('/').pop()
+    // Patient
+    const patId = enc.subject?.reference?.split('/').pop()
     if (patId) {
-      const patient = await getFromProxy(`/Patient/${patId}`)
-      results.push(await putToNode(patient))
+      const pat = await getFromProxy(`/Patient/${patId}`)
+      results.push(await putToNode(pat))
     }
 
-    // 5) Otros recursos
+    // Related
     const types = [
       'Observation','Condition','Procedure','MedicationRequest',
       'Medication','AllergyIntolerance','DiagnosticReport',
@@ -169,7 +164,7 @@ app.post('/forwarder/_event', async (req, res) => {
       }
     }
 
-    logStep('🎉 Processing complete', uuid)
+    logStep('🎉 Done processing', uuid)
     res.json({ status: 'ok', uuid, sent: results.length })
   } catch (err) {
     logStep('❌ ERROR processing:', err.message)
