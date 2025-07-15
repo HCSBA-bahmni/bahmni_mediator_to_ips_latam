@@ -6,15 +6,18 @@
   "defaultChannelConfig": [
     {
       "name": "FHIR Proxy Channel",
-      "urlPattern": "^/fhir/.*$",
+      "urlPattern": "^/proxy/_fhir/.*$",
       "routes": [
         {
           "name": "FHIR Proxy Route",
           "host": "10.68.174.209",
-          "path": "/",
+          "path": "", 
           "port": "7000",
           "primary": true,
-          "type": "http"
+          "type": "http",
+          "transform": {
+            "path": "s|^/proxy/_fhir(/.*)$|/fhir$1|"
+          }
         }
       ],
       "allow": ["admin"],
@@ -42,7 +45,7 @@
   "endpoints": [
     {
       "name": "fhir-proxy-endpoint",
-      "path": "/fhir/*",
+      "path": "/proxy/_fhir/*",
       "method": "*"
     },
     {
