@@ -125,6 +125,8 @@ async function putToNode(resource) {
 
 // Endpoint principal: recibe { uuid } y reenvía Encounter, Patient y recursos relacionados
 app.post('/event', async (req, res) => {
+  console.log('📩 [FORWARDER] Llega POST /event con body:', req.body);
+
   const { uuid } = req.body
   logStep('📩 POST /event', req.body)
 
