@@ -18,13 +18,13 @@ const openhimConfig = {
   urn: mediatorConfig.urn
 }
 
-// Agent para dev con self‑signed
+// HTTPS agent for development (self-signed)
 if (process.env.NODE_ENV === 'development') {
   axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false })
-  console.log('⚠️  DEV MODE: Self‑signed certs accepted')
+  console.log('⚠️  DEV MODE: self‑signed certs accepted')
 }
 
-// 1) Registro y canales → heartbeat
+// 1) Register mediator & channels, then start heartbeat
 registerMediator(openhimConfig, mediatorConfig, err => {
   if (err) {
     console.error('❌ Forwarder registration error:', err)
@@ -51,7 +51,7 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 const app = express()
 app.use(express.json({ limit: '20mb' }))
 
-// 2) Asegurar seen.json y cargar versiones
+// 2) Ensure seen.json exists and load versions
 const SEEN_FILE = './seen.json'
 let seenVersions = {}
 try {
@@ -90,13 +90,20 @@ function logStep(msg, ...data) {
   console.log(new Date().toISOString(), msg, ...data)
 }
 
-// 4) Funciones FHIR proxy
+// 4) FHIR proxy functions
 const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
 
 async function getFromProxy(path) {
   const url = `${baseProxy}${path}`
   logStep('GET (proxy)', url)
   const resp = await axios.get(url, { validateStatus: false })
+  // DEBUG: show HTTP status, headers, body
+  logStep('DEBUG proxy status:', resp.status)
+  logStep('DEBUG proxy headers:', JSON.stringify(resp.headers))
+  const bodyString = typeof resp.data === 'string'
+    ? resp.data
+    : JSON.stringify(resp.data)
+  logStep('DEBUG proxy body (first 500 chars):', bodyString.substring(0, 500))
   return resp.data
 }
 
@@ -107,18 +114,18 @@ async function putToNode(resource) {
   const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
   return retryRequest(async () => {
     logStep('PUT (node)', url)
-    const resp = await axios.put(url, resource, {
+    const r = await axios.put(url, resource, {
       headers: { 'Content-Type': 'application/fhir+json' }
     })
-    logStep('✅ PUT OK', resource.resourceType, resource.id, resp.status)
-    return resp.status
+    logStep('✅ PUT OK', resource.resourceType, resource.id, r.status)
+    return r.status
   })
 }
 
 // 5) Healthcheck del forwarder
 app.get('/forwarder/_health', (_req, res) => res.send('OK'))
 
-// 6) Endpoint de eventos: procesa sólo si cambia la versionId
+// 6) Endpoint de eventos: procesa solo si cambia la versionId
 app.post('/forwarder/_event', async (req, res) => {
   logStep('📩 [FORWARDER] POST /event', req.body)
   const { uuid } = req.body
@@ -127,9 +134,6 @@ app.post('/forwarder/_event', async (req, res) => {
   try {
     // 1) Traer Encounter
     const encounter = await getFromProxy(`/Encounter/${uuid}`)
-    // DEBUG: mostrar contenido crudo recibido
-    logStep('DEBUG raw FHIR resource from proxy:', encounter)
-
     if (!encounter.resourceType) throw new Error('Invalid FHIR resource')
 
     const versionId = encounter.meta?.versionId
