@@ -1,5 +1,10 @@
 import requests, feedparser, time, os, re
+import urllib3
 from dotenv import load_dotenv
+
+# Desactivar warnings de certificados self-signed
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 load_dotenv()
 
 FEED_URL = os.getenv("ATOM_FEED_URL")
@@ -13,7 +18,7 @@ seen = set()
 def extract_encounter_uuid_from_content(entry):
     print(f"[DEBUG] Analizando entry: {entry.get('id', 'sin id')}")
     if hasattr(entry, 'content') and entry.content:
-        print(f"[DEBUG] Content de entry: {entry.content[0].value[:150]}...")  # Imprime primeros 150 chars
+        print(f"[DEBUG] Content de entry: {entry.content[0].value[:150]}...")
         m = re.search(r'/bahmniencounter/([0-9a-fA-F\-]{36})', entry.content[0].value)
         if m:
             print(f"[INFO] UUID extraído: {m.group(1)}")
@@ -35,7 +40,12 @@ def process_feed(feed):
             data = {"uuid": uuid}
             print(f"[INFO] Enviando UUID {uuid} a {ITIMED_ENDPOINT}")
             try:
-                resp = requests.post(ITIMED_ENDPOINT, json=data)
+                resp = requests.post(
+                    ITIMED_ENDPOINT,
+                    json=data,
+                    timeout=10,
+                    verify=False
+                )
                 print("✅ Notificado a ITI:", uuid, "| Status:", resp.status_code)
                 seen.add(uuid)
             except Exception as e:
@@ -43,11 +53,17 @@ def process_feed(feed):
         else:
             print(f"[DEBUG] UUID ya procesado: {uuid}")
 
+
 def get_feed():
     print(f"[INFO] Solicitando feed desde: {FEED_URL}")
     auth = (OPENMRS_USER, OPENMRS_PASS) if OPENMRS_USER else None
     try:
-        r = requests.get(FEED_URL, auth=auth, verify=False)
+        r = requests.get(
+            FEED_URL,
+            auth=auth,
+            verify=False,
+            timeout=10
+        )
         print(f"[INFO] Código de respuesta del feed: {r.status_code}")
         if r.status_code == 200:
             return feedparser.parse(r.text)
@@ -57,6 +73,7 @@ def get_feed():
     except Exception as e:
         print("[ERROR] Al leer feed:", e)
         return None
+
 
 if __name__ == '__main__':
     print("🚀 Feed watcher iniciado.")
