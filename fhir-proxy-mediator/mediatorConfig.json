@@ -11,13 +11,10 @@
         {
           "name": "FHIR Proxy Route",
           "host": "10.68.174.209",
-          "path": "", 
+          "path": "/proxy/_fhir", 
           "port": "7000",
           "primary": true,
-          "type": "http",
-          "transform": {
-            "path": "s|^/proxy/_fhir(/.*)$|/fhir$1|"
-          }
+          "type": "http"
         }
       ],
       "allow": ["admin"],

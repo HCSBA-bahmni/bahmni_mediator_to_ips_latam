@@ -68,8 +68,10 @@ healthPaths.forEach(path => {
   app.get(path, (_req, res) => res.status(200).send('OK'));
 });
 
-app.all('/fhir/*', async (req, res) => {
-  const fhirPath  = req.originalUrl.replace(/^\/fhir/, '')
+app.all(['/fhir/*', '/proxy/_fhir/*'], async (req, res) => {
+  // mapeamos ambos prefijos a /fhir
+  const path = req.originalUrl.replace(/^\/proxy\/_fhir/, '/fhir')
+  const fhirPath  = path.replace(/^\/fhir/, '')
   const targetUrl = `${process.env.OPENMRS_FHIR_URL}${fhirPath}`
   console.log(`[PROXY] ${req.method} → ${targetUrl}`)
 
