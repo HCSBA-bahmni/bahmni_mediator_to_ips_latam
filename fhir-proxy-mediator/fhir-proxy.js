@@ -21,10 +21,10 @@ const openhimConfig = {
 }
 
 // 2) Soporte de configuración dinámica desde la UI
-fetchConfig(openhimConfig).on('config', cfg => {
-  console.log('🔄 Nueva configuración recibida:', cfg)
+//fetchConfig(openhimConfig).on('config', cfg => {
+//  console.log('🔄 Nueva configuración recibida:', cfg)
   // Aquí podrías actualizar timeouts, URLs, etc.
-})
+//})
 
 // 3) HTTPS agent para desarrollo
 let httpsAgent
