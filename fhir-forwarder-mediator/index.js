@@ -24,7 +24,7 @@ if (process.env.NODE_ENV === 'development') {
   console.log('⚠️  DEV MODE: self‑signed certs accepted')
 }
 
-// 1) Register mediator & channels, then heartbeat
+// 1) Register mediator & channels, then start heartbeat
 registerMediator(openhimConfig, mediatorConfig, err => {
   if (err) {
     console.error('❌ Registration error:', err)
@@ -91,11 +91,13 @@ function logStep(msg, ...d) {
 }
 
 // 4) FHIR proxy calls
+// FHIR_PROXY_URL must include the full prefix, e.g.
+//   FHIR_PROXY_URL=https://10.68.174.206:5000/proxy/fhir
 const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
 
 async function getFromProxy(path) {
   // path like "/Encounter/{uuid}" or "/Patient/{id}"
-  const url = `${baseProxy}/fhir${path}`
+  const url = `${baseProxy}${path}`
   logStep('GET (proxy)', url)
   const resp = await axios.get(url, {
     auth: {
@@ -106,7 +108,9 @@ async function getFromProxy(path) {
   })
   logStep('DEBUG proxy status:', resp.status)
   logStep('DEBUG proxy headers:', JSON.stringify(resp.headers))
-  const body = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data)
+  const body = typeof resp.data === 'string'
+    ? resp.data
+    : JSON.stringify(resp.data)
   logStep('DEBUG proxy body (500ch):', body.substring(0,500))
   return resp.data
 }
@@ -145,7 +149,7 @@ app.post('/forwarder/_event', async (req, res) => {
       return res.json({ status:'duplicate', uuid, version:ver })
     }
 
-    // new version
+    // new version → mark + save
     seenVersions[uuid] = ver
     saveSeen()
     logStep('🔔 Processing version', uuid, ver)
@@ -160,7 +164,7 @@ app.post('/forwarder/_event', async (req, res) => {
       results.push(await putToNode(pat))
     }
 
-    // related types
+    // related resources
     const types = [
       'Observation','Condition','Procedure','MedicationRequest',
       'Medication','AllergyIntolerance','DiagnosticReport',
