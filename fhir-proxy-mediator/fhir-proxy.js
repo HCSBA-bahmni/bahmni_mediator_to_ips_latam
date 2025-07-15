@@ -63,7 +63,9 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 const app = express()
 app.use(express.json({ limit: '20mb' }))
 
-app.get('/_health', (_req, res) => res.status(200).send('OK'))
+['/_health', '/proxy/_health'].forEach(path =>
+  app.get(path, (_req, res) => res.status(200).send('OK'))
+)
 
 app.all('/fhir/*', async (req, res) => {
   const fhirPath  = req.originalUrl.replace(/^\/fhir/, '')
