@@ -26,13 +26,37 @@ const openhimConfig = {
 
 console.log('Intentando registrar FHIR Proxy en OpenHIM:', openhimConfig)
 
+// 1) Registro el mediador (sin canales automáticos)
 registerMediator(openhimConfig, mediatorConfig, err => {
   if (err) {
     console.error('❌ Error registrando mediador:', err)
     process.exit(1)
   }
   console.log('✅ Mediador registrado correctamente')
-  });
+
+  // 2) Creo los canales definidos en defaultChannelConfig
+  const channels = mediatorConfig.defaultChannelConfig || []
+  Promise.all(channels.map(ch =>
+    axios.post(
+      `${openhimConfig.apiURL}/channels`,
+      {
+        ...ch,
+        mediator_urn: mediatorConfig.urn
+      },
+      {
+        auth: {
+          username: openhimConfig.username,
+          password: openhimConfig.password
+        },
+        httpsAgent
+      }
+    )
+    .then(() => console.log(`✅ Canal creado: ${ch.name}`))
+    .catch(e => console.error(`❌ Error creando canal ${ch.name}:`, e.response?.data || e.message))
+  ))
+  .then(() => console.log('✅ Todos los canales procesados'))
+})
+
 
 
 
