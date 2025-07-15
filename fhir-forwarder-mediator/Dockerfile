@@ -8,7 +8,7 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 WORKDIR /app
 
 # 4) Copiar package.json y lock para aprovechar cache
-COPY package.json package-lock.json ./
+COPY package.json ./
 
 # 5) Instalar solo dependencias de producción
 RUN npm ci --only=production
