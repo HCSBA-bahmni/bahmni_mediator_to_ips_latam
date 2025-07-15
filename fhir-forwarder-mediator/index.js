@@ -28,13 +28,20 @@ const openhimConfig = {
 }
 
 // Registro en OpenHIM
-registerMediator(openhimConfig, mediatorConfig, true, err => {
-  if (err) {
-    console.error('❌ Error registrando mediador y canales:', err)
-    process.exit(1)
-  }
-  console.log('✅ Mediador y canales registrados correctamente en OpenHIM')
-})
+// Usamos la firma moderna: pasamos un objeto con opciones
+registerMediator(
+  openhimConfig,
+  mediatorConfig,
+  // Le indicamos que registre canales y endpoints
+  { registerChannels: true, registerEndpoints: true },
+  err => {
+     if (err) {
+       console.error('❌ Error registrando mediador y canales:', err)
+       process.exit(1)
+     }
+     console.log('✅ Mediador, endpoints y canales registrados correctamente en OpenHIM')
+   }
+ )
 
 const app = express()
 app.use(express.json({ limit: '20mb' }))
