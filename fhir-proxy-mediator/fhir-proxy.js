@@ -61,11 +61,12 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 
 // 5) Express: health y proxy de FHIR
 const app = express()
-app.use(express.json({ limit: '20mb' }))
+app.use(express.json({ limit: '20mb' }));
 
-['/_health', '/proxy/_health'].forEach(path =>
-  app.get(path, (_req, res) => res.status(200).send('OK'))
-)
+const healthPaths = ['/_health', '/proxy/_health'];
+healthPaths.forEach(path => {
+  app.get(path, (_req, res) => res.status(200).send('OK'));
+});
 
 app.all('/fhir/*', async (req, res) => {
   const fhirPath  = req.originalUrl.replace(/^\/fhir/, '')
