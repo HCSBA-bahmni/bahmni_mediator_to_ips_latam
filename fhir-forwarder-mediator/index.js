@@ -6,8 +6,7 @@ import https from 'https'
 import fs from 'fs'
 import {
   registerMediator,
-  activateHeartbeat,
-  fetchConfig
+  activateHeartbeat
 } from 'openhim-mediator-utils'
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
@@ -22,12 +21,6 @@ const openhimConfig = {
   urn: mediatorConfig.urn
 }
 
-// Optional dynamic config
-if (typeof fetchConfig === 'function') {
-  fetchConfig(openhimConfig).on('config', cfg =>
-    console.log('🔄 Forwarder config updated:', cfg)
-  )
-}
 
 // HTTPS agent in development
 if (process.env.NODE_ENV === 'development') {
