@@ -96,7 +96,13 @@ const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
 async function getFromProxy(path) {
   const url = `${baseProxy}${path}`
   logStep('GET (proxy)', url)
-  const resp = await axios.get(url, { validateStatus: false })
+  const resp = await axios.get(url, {
+    auth: {
+      username: process.env.OPENHIM_USER,
+      password: process.env.OPENHIM_PASS
+    },
+    validateStatus: false
+  })
   // DEBUG: show HTTP status, headers, body
   logStep('DEBUG proxy status:', resp.status)
   logStep('DEBUG proxy headers:', JSON.stringify(resp.headers))
