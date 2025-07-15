@@ -24,10 +24,12 @@
   ],
   "endpoints": [
     {
+      "name": "fhir-proxy-endpoint",
       "path": "/fhir/*",
       "method": "*"
     },
     {
+      "name": "health-endpoint",
       "path": "/_health",
       "method": "get"
     }

@@ -24,10 +24,12 @@
   ],
   "endpoints": [
     {
+      "name": "event-endpoint",
       "path": "/event",
       "method": "post"
     },
     {
+      "name": "health-endpoint",
       "path": "/_health",
       "method": "get"
     }
