@@ -4,10 +4,7 @@ import express from 'express'
 import axios from 'axios'
 import https from 'https'
 import fs from 'fs'
-import {
-  registerMediator,
-  activateHeartbeat
-} from 'openhim-mediator-utils'
+import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils'
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const mediatorConfig = require('./mediatorConfig.json')
@@ -130,6 +127,9 @@ app.post('/forwarder/_event', async (req, res) => {
   try {
     // 1) Traer Encounter
     const encounter = await getFromProxy(`/Encounter/${uuid}`)
+    // DEBUG: mostrar contenido crudo recibido
+    logStep('DEBUG raw FHIR resource from proxy:', encounter)
+
     if (!encounter.resourceType) throw new Error('Invalid FHIR resource')
 
     const versionId = encounter.meta?.versionId
@@ -138,7 +138,7 @@ app.post('/forwarder/_event', async (req, res) => {
       return res.json({ status: 'duplicate', uuid, versionId })
     }
 
-    // 2) Nueva versión: marcar y guardar
+    // 2) Nueva version: marcar y guardar
     seenVersions[uuid] = versionId
     saveSeen()
     logStep('🔔 New version, processing', uuid, versionId)

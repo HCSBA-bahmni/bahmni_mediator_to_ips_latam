@@ -139,6 +139,7 @@ app.post('/forwarder/_event', async (req, res) => {
   const results = []
   try {
     // Encounter
+    console.log('→ Using FHIR_PROXY_URL =', process.env.FHIR_PROXY_URL)
     const enc = await getFromProxy(`/Encounter/${uuid}`)
     results.push(await putToNode(enc))
 

@@ -1,6 +1,3 @@
-Below is the updated `mediatorConfig.json` for your FHIR Proxy Channel, changing the route `path` entries to `/` so that OpenHIM will forward the full request path correctly:
-
-```json
 {
   "urn": "urn:mediator:fhir-proxy",
   "version": "1.0.0",
@@ -57,4 +54,3 @@ Below is the updated `mediatorConfig.json` for your FHIR Proxy Channel, changing
   "heartbeatPath": "/proxy/health",
   "heartbeatInterval": 30000
 }
-```
