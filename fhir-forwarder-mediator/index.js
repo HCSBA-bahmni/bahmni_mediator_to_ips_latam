@@ -21,15 +21,13 @@ const openhimConfig = {
   urn: mediatorConfig.urn
 }
 
-
-// HTTPS agent in development
+// Agent para dev con self‑signed
 if (process.env.NODE_ENV === 'development') {
-  const agent = new https.Agent({ rejectUnauthorized: false })
-  axios.defaults.httpsAgent = agent
+  axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false })
   console.log('⚠️  DEV MODE: Self‑signed certs accepted')
 }
 
-// Register mediator & channels, then start heartbeat
+// 1) Registro y canales → heartbeat
 registerMediator(openhimConfig, mediatorConfig, err => {
   if (err) {
     console.error('❌ Forwarder registration error:', err)
@@ -37,17 +35,17 @@ registerMediator(openhimConfig, mediatorConfig, err => {
   }
   console.log('✅ Forwarder registered')
 
-  const channels = mediatorConfig.defaultChannelConfig || []
-  Promise.all(channels.map(ch =>
-    axios.post(
-      `${openhimConfig.apiURL}/channels`,
-      { ...ch, mediator_urn: mediatorConfig.urn },
-      { auth: { username: openhimConfig.username, password: openhimConfig.password } }
+  Promise.all(
+    mediatorConfig.defaultChannelConfig.map(ch =>
+      axios.post(
+        `${openhimConfig.apiURL}/channels`,
+        { ...ch, mediator_urn: mediatorConfig.urn },
+        { auth: { username: openhimConfig.username, password: openhimConfig.password } }
+      )
+      .then(() => console.log(`✅ Channel created: ${ch.name}`))
+      .catch(e => console.error(`❌ Channel ${ch.name} error:`, e.response?.data || e.message))
     )
-    .then(() => console.log(`✅ Channel created: ${ch.name}`))
-    .catch(e => console.error(`❌ Channel ${ch.name} error:`, e.response?.data || e.message))
-  ))
-  .then(() => {
+  ).then(() => {
     console.log('✅ All channels processed')
     activateHeartbeat(openhimConfig)
   })
@@ -56,30 +54,30 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 const app = express()
 app.use(express.json({ limit: '20mb' }))
 
-// Ensure seen.json exists and is writable
+// 2) Ensure seen.json exists and is writable
 const SEEN_FILE = './seen.json'
 try {
   if (!fs.existsSync(SEEN_FILE)) {
     fs.writeFileSync(SEEN_FILE, JSON.stringify([]), { flag: 'wx' })
   }
 } catch (e) {
-  console.warn('⚠️ Warning creating seen.json:', e.message)
+  console.warn('⚠️ Could not create seen.json:', e.message)
 }
 let seen = new Set()
 try {
   seen = new Set(JSON.parse(fs.readFileSync(SEEN_FILE)))
 } catch {
-  console.warn('No se pudo leer seen.json, iniciando vacío.')
+  console.warn('⚠️ Could not read seen.json, starting empty.')
 }
 function saveSeen() {
   try {
     fs.writeFileSync(SEEN_FILE, JSON.stringify([...seen]))
   } catch (err) {
-    console.error('❌ Error guardando seen.json:', err)
+    console.error('❌ Error writing seen.json:', err)
   }
 }
 
-// Generic retry
+// 3) Retry helper
 const MAX_RETRIES = 3
 async function retryRequest(fn, maxRetries = MAX_RETRIES) {
   let attempt = 0, lastErr
@@ -98,16 +96,18 @@ function logStep(msg, ...data) {
   console.log(new Date().toISOString(), msg, ...data)
 }
 
+// 4) FHIR proxy functions
+const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
 async function getFromProxy(path) {
-  const url = `${process.env.FHIR_PROXY_URL}/fhir${path}`
+  const url = `${baseProxy}/fhir${path}`
   logStep('GET (proxy)', url)
   const resp = await axios.get(url, { validateStatus: false })
   return resp.data
 }
 
 async function putToNode(resource) {
-  if (!resource || !resource.resourceType || !resource.id) {
-    throw new Error('Recurso inválido, no se puede enviar a nodo')
+  if (!resource?.resourceType || !resource.id) {
+    throw new Error('Invalid FHIR resource')
   }
   const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
   return retryRequest(async () => {
@@ -120,35 +120,34 @@ async function putToNode(resource) {
   })
 }
 
-// Health endpoints (strip prefix)
-app.get(['/forwarder/_health'], (_req, res) => res.status(200).send('OK'))
+// 5) Health endpoint
+app.get('/forwarder/_health', (_req, res) => res.send('OK'))
 
-// Event endpoint (strip prefix, then handle /event)
-app.post(['/forwarder/_event'], async (req, res) => {
+// 6) Event endpoint
+app.post('/forwarder/_event', async (req, res) => {
   logStep('📩 [FORWARDER] POST /event', req.body)
   const { uuid } = req.body
-  if (!uuid) return res.status(400).json({ error: 'Falta uuid' })
+  if (!uuid) return res.status(400).json({ error: 'Missing uuid' })
   if (seen.has(uuid)) {
-    logStep('🔁 Evento duplicado, ignorado', uuid)
-    return res.status(200).json({ status: 'duplicado', uuid })
+    logStep('🔁 Duplicate event, ignored', uuid)
+    return res.json({ status: 'duplicated', uuid })
   }
   seen.add(uuid); saveSeen()
-  logStep('🔔 Procesando nuevo evento', uuid)
 
   const results = []
   try {
-    // 1. Encounter
-    const encounter = await getFromProxy(`/Encounter/${uuid}`)
-    results.push(await putToNode(encounter))
+    // Encounter
+    const enc = await getFromProxy(`/Encounter/${uuid}`)
+    results.push(await putToNode(enc))
 
-    // 2. Patient
-    const patientId = encounter.subject?.reference?.split('/').pop()
-    if (patientId) {
-      const patient = await getFromProxy(`/Patient/${patientId}`)
-      results.push(await putToNode(patient))
+    // Patient
+    const patId = enc.subject?.reference?.split('/').pop()
+    if (patId) {
+      const pat = await getFromProxy(`/Patient/${patId}`)
+      results.push(await putToNode(pat))
     }
 
-    // 3. Related resources
+    // Related
     const types = [
       'Observation','Condition','Procedure','MedicationRequest',
       'Medication','AllergyIntolerance','DiagnosticReport',
@@ -163,7 +162,7 @@ app.post(['/forwarder/_event'], async (req, res) => {
       }
     }
 
-    logStep('🎉 Process completed', uuid)
+    logStep('🎉 Done processing', uuid)
     res.json({ status: 'ok', uuid, sent: results.length })
   } catch (err) {
     logStep('❌ ERROR processing:', err.message)
