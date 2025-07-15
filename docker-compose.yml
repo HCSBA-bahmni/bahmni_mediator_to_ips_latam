@@ -7,7 +7,7 @@ services:
 
     build: ./feed-mediator
 
-    env_file: ./env
+    env_file: ./.env
 
     restart: unless-stopped
  
@@ -15,7 +15,7 @@ services:
 
     build: ./fhir-forwarder-mediator
 
-    env_file: ./env
+    env_file: ./.env
 
     ports:
 
@@ -27,7 +27,7 @@ services:
 
     build: ./fhir-proxy-mediator
 
-    env_file: ./env
+    env_file: ./.env
 
     ports:
 
