@@ -23,7 +23,7 @@ if (process.env.NODE_ENV === 'development') {
 const openhimConfig = {
   username: process.env.OPENHIM_USER,
   password: process.env.OPENHIM_PASS,
-  apiURL: process.env.OPENHIM_API_URL || 'http://10.68.174.206:8080',
+  apiURL: process.env.OPENHIM_API || 'http://10.68.174.206:8080',
   trustSelfSigned: true
 }
 
