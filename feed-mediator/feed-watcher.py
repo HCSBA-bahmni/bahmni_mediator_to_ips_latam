@@ -9,10 +9,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 load_dotenv()
 
 FEED_URL = os.getenv("ATOM_FEED_URL")
-ITIMED_ENDPOINT = os.getenv("OPENHIM_ITI_ENDPOINT")
+OPENHIM_EVENT_ENDPOINT = os.getenv("OPENHIM_ITI_ENDPOINT")
 FEED_POLL_INTERVAL = int(os.getenv("FEED_POLL_INTERVAL", "15"))
 OPENMRS_USER = os.getenv("OPENMRS_USER")
 OPENMRS_PASS = os.getenv("OPENMRS_PASS")
+OPENHIM_USER = os.getenv("OPENHIM_USER")
+OPENHIM_PASS = os.getenv("OPENHIM_PASS")
 
 # Persistencia de entries ya procesadas
 SEEN_FILE = "seen_entries.json"
@@ -64,15 +66,19 @@ def process_feed(feed):
             print(f"[WARN] No se pudo extraer UUID de entry: {entry_id}")
             continue
 
-        print(f"[INFO] Enviando UUID {uuid} a {ITIMED_ENDPOINT}")
+        print(f"[INFO] Enviando UUID {uuid} a {OPENHIM_EVENT_ENDPOINT}")
         try:
             resp = requests.post(
-                ITIMED_ENDPOINT,
+                OPENHIM_EVENT_ENDPOINT,
                 json={"uuid": uuid},
+                auth=(OPENHIM_USER, OPENHIM_PASS),
                 timeout=10,
                 verify=False
             )
-            print(f"✅ Notificado a ITI: {uuid} | Status: {resp.status_code}")
+            if resp.status_code == 200 or resp.status_code == 202:
+                print(f"✅ Notificado a ITI: {uuid} | Status: {resp.status_code}")
+            else:
+                print(f"[ERROR] ITI devolvió status: {resp.status_code} | Body: {resp.text}")
         except Exception as e:
             print(f"[ERROR] Al notificar a ITI: {e}")
 
@@ -90,7 +96,7 @@ def get_feed():
         print(f"[INFO] Código de respuesta del feed: {r.status_code}")
         if r.status_code == 200:
             return feedparser.parse(r.text)
-        print(f"[ERROR] Feed status: {r.status_code}")
+        print(f"[ERROR] Feed status: {r.status_code} | Body: {r.text}")
     except Exception as e:
         print(f"[ERROR] Al leer feed: {e}")
     return None
@@ -101,7 +107,7 @@ if __name__ == '__main__':
     while True:
         print("\n🔁 Nueva iteración de polling...")
         feed = get_feed()
-        if feed and feed.entries:
+        if feed and getattr(feed, 'entries', None):
             process_feed(feed)
         else:
             print("[WARN] No se pudo procesar el feed o no hay entries.")
