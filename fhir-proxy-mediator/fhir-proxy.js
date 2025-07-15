@@ -32,6 +32,7 @@ registerMediator(openhimConfig, mediatorConfig, err => {
     process.exit(1)
   }
   console.log('✅ Mediador registrado correctamente')
+  });
 
 
 

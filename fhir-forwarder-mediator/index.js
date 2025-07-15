@@ -34,6 +34,7 @@ registerMediator(openhimConfig, mediatorConfig, err => {
     process.exit(1)
   }
   console.log('✅ Mediador registrado correctamente')
+  });
 
 const app = express()
 app.use(express.json({ limit: '20mb' }))
