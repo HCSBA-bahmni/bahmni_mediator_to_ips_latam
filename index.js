@@ -35,7 +35,7 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 const app = express()
 app.use(express.json({ limit: '20mb' }))
 
-const FHIR_PROXY = process.env.FHIR_PROXY_URL // ej: http://fhir-proxy:7000
+const FHIR_PROXY = process.env.FHIR_PROXY_URL // ej: http://openhim/proxy/_fhir/
 const FHIR_NODE_URL = process.env.FHIR_NODE_URL // ej: http://nodo-fhir:8080
 const MAX_RETRIES = 3
 
