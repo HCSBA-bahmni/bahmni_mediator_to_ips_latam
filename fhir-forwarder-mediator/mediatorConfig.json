@@ -1,4 +1,3 @@
-// mediatorConfig.json (FHIR Event Forwarder Mediator)
 {
   "urn": "urn:mediator:fhir-forwarder",
   "version": "1.0.0",
