@@ -98,8 +98,10 @@ function logStep(msg, ...data) {
 
 // 4) FHIR proxy functions
 const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
+
 async function getFromProxy(path) {
-  const url = `${baseProxy}/fhir${path}`
+  // path llega como "/Encounter/{uuid}"
+  const url = `${baseProxy}${path}`
   logStep('GET (proxy)', url)
   const resp = await axios.get(url, { validateStatus: false })
   return resp.data
