@@ -10,7 +10,7 @@
       "routes": [
         {
           "name": "FHIR Forwarder Event Route",
-          "host": "0.0.0.0",
+          "host": "10.68.174.209",
           "path": "/",
           "port": "8003",
           "primary": true,
@@ -27,7 +27,7 @@
       "routes": [
         {
           "name": "FHIR Forwarder Health Route",
-          "host": "0.0.0.0",
+          "host": "10.68.174.209",
           "path": "/",
           "port": "8003",
           "primary": true,

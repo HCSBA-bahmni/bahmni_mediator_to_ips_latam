@@ -10,7 +10,7 @@
       "routes": [
         {
           "name": "FHIR Proxy Route",
-          "host": "0.0.0.0",
+          "host": "10.68.174.209",
           "path": "/",
           "port": "7000",
           "primary": true,
@@ -27,7 +27,7 @@
       "routes": [
         {
           "name": "FHIR Proxy Health Route",
-          "host": "0.0.0.0",
+          "host": "10.68.174.209",
           "path": "/",
           "port": "7000",
           "primary": true,
