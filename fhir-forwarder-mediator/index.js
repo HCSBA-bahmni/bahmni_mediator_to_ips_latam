@@ -96,24 +96,23 @@ function logStep(msg, ...d) {
 const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
 
 async function getFromProxy(path) {
-  // path like "/Encounter/{uuid}" or "/Patient/{id}"
+  // path es "/Encounter/{uuid}", "/Patient/{id}", etc.
   const url = `${baseProxy}${path}`
   logStep('GET (proxy)', url)
   const resp = await axios.get(url, {
+    validateStatus: false,
     auth: {
-      //username: process.env.OPENHIM_USER,
-      //password: process.env.OPENHIM_PASS
-        username: process.env.OPENMRS_USER,
-        password: process.env.OPENMRS_PASS
-    },
-    validateStatus: false
+      username: process.env.OPENMRS_USER,
+      password: process.env.OPENMRS_PASS
+    }
   })
+  // Logs de depuración
   logStep('DEBUG proxy status:', resp.status)
   logStep('DEBUG proxy headers:', JSON.stringify(resp.headers))
   const body = typeof resp.data === 'string'
     ? resp.data
     : JSON.stringify(resp.data)
-  logStep('DEBUG proxy body (500ch):', body.substring(0,500))
+  logStep('DEBUG proxy body (500ch):', body.substring(0, 500))
   return resp.data
 }
 
