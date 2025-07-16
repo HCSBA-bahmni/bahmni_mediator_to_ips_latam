@@ -102,8 +102,8 @@ async function getFromProxy(path) {
   const resp = await axios.get(url, {
     validateStatus: false,
     auth: {
-      username: process.env.OPENMRS_USER,
-      password: process.env.OPENMRS_PASS
+      username: process.env.OPENHIM_USER,
+      password: process.env.OPENHIM_PASS
     }
   })
   // Logs de depuración
