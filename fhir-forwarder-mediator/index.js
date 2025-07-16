@@ -101,8 +101,10 @@ async function getFromProxy(path) {
   logStep('GET (proxy)', url)
   const resp = await axios.get(url, {
     auth: {
-      username: process.env.OPENHIM_USER,
-      password: process.env.OPENHIM_PASS
+      //username: process.env.OPENHIM_USER,
+      //password: process.env.OPENHIM_PASS
+        username: process.env.OPENMRS_USER,
+        password: process.env.OPENMRS_PASS
     },
     validateStatus: false
   })
