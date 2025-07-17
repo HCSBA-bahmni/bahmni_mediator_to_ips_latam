@@ -163,6 +163,29 @@ async function uploadLocationWithParents(locId) {
   uploadedLocations.add(locId);
 }
 
+// para no reenviar el mismo Encounter dos veces
+const uploadedEncounters = new Set()
+
+async function uploadEncounterWithParents(encId) {
+  if (uploadedEncounters.has(encId)) return
+
+  // 1) fetch del Encounter
+  logStep('🔍 Fetching Encounter…', encId)
+  const encRes = await getFromProxy(`/Encounter/${encId}`)
+
+  // 2) si tiene parent, lo sube primero
+  const parentRef = encRes.partOf?.reference
+  if (parentRef?.startsWith('Encounter/')) {
+    const parentId = parentRef.split('/')[1]
+    await uploadEncounterWithParents(parentId)
+  }
+
+  // 3) Subir este Encounter
+  logStep('📤 Subiendo Encounter…', encId)
+  await putToNode(encRes)
+  uploadedEncounters.add(encId)
+}
+
 
 // 5) PUT al FHIR Node
 async function putToNode(resource) {
@@ -253,9 +276,8 @@ app.post('/forwarder/_event', async (req, res) => {
       }
     }
 
-    // 7.6) Subir Encounter
-    logStep('📤 Subiendo Encounter…', uuid)
-    await putToNode(enc)
+    // 7.6) Subir Encounter (y recursivamente sus padres)
+    await uploadEncounterWithParents(uuid)
     sent++
 
     // 7.7) Subir recursos relacionados
