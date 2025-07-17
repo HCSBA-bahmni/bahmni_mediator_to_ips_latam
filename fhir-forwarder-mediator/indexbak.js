@@ -18,7 +18,7 @@ const openhimConfig = {
   urn: mediatorConfig.urn
 }
 
-// HTTPS agent for development (self‑signed)
+// HTTPS agent for development (self-signed)
 if (process.env.NODE_ENV === 'development') {
   axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false })
   console.log('⚠️  DEV MODE: self‑signed certs accepted')
@@ -96,65 +96,37 @@ function logStep(msg, ...d) {
 const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
 
 async function getFromProxy(path) {
-  // path es "/Encounter/{uuid}", "/Patient/{id}", etc.
   const url = `${baseProxy}${path}`
   logStep('GET (proxy)', url)
   const resp = await axios.get(url, {
     validateStatus: false,
     auth: {
-      username: process.env.OPENHIM_USER,
-      password: process.env.OPENHIM_PASS
+      username: openhimConfig.username,
+      password: openhimConfig.password
     }
   })
-  // Logs de depuración
   logStep('DEBUG proxy status:', resp.status)
-  logStep('DEBUG proxy headers:', JSON.stringify(resp.headers))
-  const body = typeof resp.data === 'string'
-    ? resp.data
-    : JSON.stringify(resp.data)
+  const body = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data)
   logStep('DEBUG proxy body (500ch):', body.substring(0, 500))
   return resp.data
 }
 
-//async function putToNode(resource) {
-//  if (!resource?.resourceType || !resource.id) {
-//    throw new Error('Invalid FHIR resource')
-//  }
-//  const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
-//  return retryRequest(async () => {
-//    logStep('PUT (node)', url)
-//    const r = await axios.put(url, resource, {
-//      headers: {'Content-Type':'application/fhir+json'}
-//    })
-//    logStep('✅ PUT OK', resource.resourceType, resource.id, r.status)
-//    return r.status
-//  })
-//}
-
 // 5) PUT al FHIR Node
 async function putToNode(resource) {
-  const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`;
-  try {
-    logStep('PUT (node)', url);
-    const r = await axios.put(url, resource, {
-      headers:{ 'Content-Type':'application/fhir+json' },
-      validateStatus: false
-    });
-    if (r.status >= 400) {
-      logStep('❌ PUT failed payload:', JSON.stringify(r.data, null, 2));
-      throw new Error(`PUT failed ${r.status}`);
-    }
-    logStep('✅ PUT OK', resource.resourceType, resource.id, r.status);
-    return r.status;
-  } catch (e) {
-    if (e.response?.data) {
-      logStep('❌ Axios error body:', JSON.stringify(e.response.data, null, 2));
-    }
-    throw e;
+  const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
+  logStep('PUT (node)', url)
+  const r = await axios.put(url, resource, {
+    headers: { 'Content-Type': 'application/fhir+json' },
+    validateStatus: false
+  })
+  if (r.status >= 400) {
+    logStep('❌ PUT failed payload:', JSON.stringify(r.data, null, 2))
+    throw new Error(`PUT failed ${r.status}`)
   }
+  logStep('✅ PUT OK', resource.resourceType, resource.id, r.status)
 }
 
-// 6) Health endpoint del forwarder
+// 6) Health endpoint
 app.get('/forwarder/_health', (_req, res) => res.send('OK'))
 
 // 7) Event endpoint
@@ -164,33 +136,19 @@ app.post('/forwarder/_event', async (req, res) => {
   if (!uuid) return res.status(400).json({ error: 'Missing uuid' })
 
   try {
-    // 7.1) Fetch Encounter desde el proxy
+    // 7.1) Traer Encounter
     const enc = await getFromProxy(`/Encounter/${uuid}`)
     if (!enc.resourceType) throw new Error('Invalid FHIR resource')
 
-    // 7.2) Extraer patientId de enc.subject.reference
-    const pid = enc.subject?.reference?.split('/').pop()
-    if (!pid) {
-      throw new Error('Encounter.subject.reference inválido')
-    }
-
-    // (opcional) lógica duplicate comentada:
-    // const ver = enc.meta?.versionId
-    // if (seenVersions[uuid] === ver) {
-    //   logStep('🔁 No version change, skipping', uuid, ver)
-    //   return res.json({ status:'duplicate', uuid, version:ver })
-    // }
-    // seenVersions[uuid] = ver
-    // saveSeen()
-    // logStep('🔔 Processing version', uuid, ver)
-
-    // 7.3) Subir Patient primero
-    const [ , patientId ] = enc.subject.reference.split('/')
+    // 7.2) Subir Patient
+    const patientRef = enc.subject?.reference
+    if (!patientRef) throw new Error('Missing subject.reference')
+    const patientId = patientRef.split('/')[1]
     logStep('📤 Subiendo Patient…', patientId)
     const patient = await getFromProxy(`/Patient/${patientId}`)
     await putToNode(patient)
 
-    // 7.4) Subir Practitioners referenciados en el Encounter
+    // 7.3) Subir Practitioners referenciados en el Encounter
     if (Array.isArray(enc.participant)) {
       for (const p of enc.participant) {
         const indyRef = p.individual?.reference
@@ -203,7 +161,7 @@ app.post('/forwarder/_event', async (req, res) => {
       }
     }
 
-    // 7.5) (Opcional) Subir Locations referenciadas
+    // 7.4) (Opcional) Subir Locations referenciadas
     if (Array.isArray(enc.location)) {
       for (const loc of enc.location) {
         const locRef = loc.location?.reference
@@ -214,13 +172,13 @@ app.post('/forwarder/_event', async (req, res) => {
           await putToNode(location)
         }
       }
-    }    
+    }
 
-    // 7.6) Subir Encounter
+    // 7.5) Subir el Encounter
     logStep('📤 Subiendo Encounter…', uuid)
     await putToNode(enc)
 
-    // 7.7) Subir recursos relacionados
+    // 7.6) Subir recursos relacionados al Encounter
     const types = [
       'Observation','Condition','Procedure','MedicationRequest',
       'Medication','AllergyIntolerance','DiagnosticReport',
