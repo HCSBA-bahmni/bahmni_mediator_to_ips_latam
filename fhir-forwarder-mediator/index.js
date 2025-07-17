@@ -109,23 +109,17 @@ function logStep(msg, ...d) {
 const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
 
 async function getFromProxy(path) {
-  // path es "/Encounter/{uuid}", "/Patient/{id}", etc.
   const url = `${baseProxy}${path}`
   logStep('GET (proxy)', url)
   const resp = await axios.get(url, {
     validateStatus: false,
-    auth: {
-      username: process.env.OPENHIM_USER,
-      password: process.env.OPENHIM_PASS
-    }
+    auth: { username: process.env.OPENHIM_USER, password: process.env.OPENHIM_PASS }
   })
-  // Logs de depuración
   logStep('DEBUG proxy status:', resp.status)
-  logStep('DEBUG proxy headers:', JSON.stringify(resp.headers))
-  const body = typeof resp.data === 'string'
-    ? resp.data
-    : JSON.stringify(resp.data)
-  logStep('DEBUG proxy body (500ch):', body.substring(0, 500))
+  if (resp.status >= 400) {
+    // lanza para que el try/catch te lo capture
+    throw new Error(`${path} returned ${resp.status}`)
+  }
   return resp.data
 }
 
@@ -188,23 +182,28 @@ async function uploadEncounterWithParents(encId) {
 
 // --- Recursive upload for Observation.hasMember ---
 const uploadedObservations = new Set()
+
 async function uploadObservationWithMembers(obsId) {
-  if (uploadedObservations.has(obsId)) return
-  logStep('🔍 Fetching Observation…', obsId)
-  const obs = await getFromProxy(`/Observation/${obsId}`)
+  if (uploadedObservations.has(obsId)) return;
+  uploadedObservations.add(obsId);
+
+  logStep('🔍 Fetching Observation…', obsId);
+  const obs = await getFromProxy(`/Observation/${obsId}`);
   if (Array.isArray(obs.hasMember)) {
     for (const member of obs.hasMember) {
-      const ref = member.reference
+      const ref = member.reference;
       if (ref.startsWith('Observation/')) {
-        const memberId = ref.split('/')[1]
-        await uploadObservationWithMembers(memberId)
+        const memberId = ref.split('/')[1];
+        await uploadObservationWithMembers(memberId);
       }
     }
   }
-  logStep('📤 Subiendo Observation…', obsId)
-  await putToNode(obs)
-  uploadedObservations.add(obsId)
+
+  logStep('📤 Subiendo Observation…', obsId);
+  await putToNode(obs);
+  sent++;  // aquí sumas cada observación anidada también
 }
+
 
 
 
@@ -315,20 +314,29 @@ app.post('/forwarder/_event', async (req, res) => {
     //if (enc.location)    sent += enc.location.length
 
     for (const t of types) {
-      const bundle = await getFromProxy(`/${t}?encounter=${uuid}`)
-      if (bundle.entry) {
-        for (const { resource } of bundle.entry) {
-          if (resource.resourceType === 'Observation') {
-            logStep('📤 Subiendo Observation recursiva…', resource.id)
-            await uploadObservationWithMembers(resource.id)
-          } else {
-            logStep('📤 Subiendo', resource.resourceType, resource.id)
-            await putToNode(resource)
-          }
-          sent++
+      let bundle
+      try {
+        bundle = await getFromProxy(`/${t}?encounter=${uuid}`)
+      } catch (e) {
+        logStep(`⚠️ Skip ${t} search:`, e.message)
+        continue
+      }
+      // Solo procesar Bundles válidos
+      if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry)) continue
+
+      for (const { resource } of bundle.entry) {
+        if (resource.resourceType === 'Observation') {
+          logStep('📤 Subiendo Observation recursiva…', resource.id)
+          await uploadObservationWithMembers(resource.id)
+        } else {
+          logStep('📤 Subiendo', resource.resourceType, resource.id)
+          await putToNode(resource)
         }
+        sent++
       }
     }
+
+
 
     logStep('🎉 Done', uuid)
     res.json({ status:'ok', uuid, sent })
