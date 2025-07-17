@@ -296,46 +296,40 @@ app.post('/forwarder/_event', async (req, res) => {
     sent++
 
     // 7.7) Subir recursos relacionados
-   const types = [
-  'Observation','Condition','Procedure','MedicationRequest',
-  'Medication','AllergyIntolerance','DiagnosticReport',
-  'Immunization','CarePlan','Appointment','DocumentReference'
-    ];
+    const types = [
+      'Observation','Condition','Procedure','MedicationRequest',
+      'Medication','AllergyIntolerance','DiagnosticReport',
+      'Immunization','CarePlan','Appointment','DocumentReference'
+    ]
+    //let sent = 1 /*Encounter*/ + 1 /*Patient*/
+    //if (enc.participant) sent += enc.participant.length
+    //if (enc.location)    sent += enc.location.length
 
     for (const t of types) {
-      let bundle;
-
-      // 1) Intentar search por Encounter
+      let bundle
       try {
-        bundle = await getFromProxy(`/${t}?encounter=${uuid}`);
-      } catch (err) {
-        logStep(`⚠️ Skip ${t} by encounter:`, err.message);
-
-        // 2) Si hubo error 4xx, intentar search por Patient
-        try {
-          bundle = await getFromProxy(`/${t}?patient=${patientId}`);
-          logStep(`ℹ️ Fallback ${t} by patient`);
-        } catch (err2) {
-          logStep(`⚠️ Skip ${t} by patient:`, err2.message);
-          continue;
-        }
+        bundle = await getFromProxy(`/${t}?encounter=${uuid}`)
+      } catch (e) {
+        logStep(`⚠️ Skip ${t} search:`, e.message)
+        continue
       }
-
-      // 3) Procesar sólo si es un Bundle con entradas
-      if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry)) continue;
+      // Solo procesar Bundles válidos
+      if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry)) continue
 
       for (const { resource } of bundle.entry) {
         if (resource.resourceType === 'Observation') {
-          sent += await uploadObservationWithMembers(resource.id);
+          logStep('📤 Subiendo Observation recursiva…', resource.id)
+          await uploadObservationWithMembers(resource.id)
         } else {
-          logStep('📤 Subiendo', resource.resourceType, resource.id);
-          await putToNode(resource);
-          sent++;
+          logStep('📤 Subiendo', resource.resourceType, resource.id)
+          await putToNode(resource)
         }
+        sent++
       }
     }
-    
-    // 7.8) Guardar la versión del Encounter procesado
+
+
+
     logStep('🎉 Done', uuid)
     res.json({ status:'ok', uuid, sent })
   } catch (e) {
