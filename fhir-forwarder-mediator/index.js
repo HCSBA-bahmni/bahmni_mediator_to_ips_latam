@@ -186,6 +186,30 @@ async function uploadEncounterWithParents(encId) {
   uploadedEncounters.add(encId)
 }
 
+// --- Recursive upload for Observation.hasMember ---
+const uploadedObservations = new Set()
+async function uploadObservationWithMembers(obsId) {
+  if (uploadedObservations.has(obsId)) return
+  logStep('🔍 Fetching Observation…', obsId)
+  const obs = await getFromProxy(`/Observation/${obsId}`)
+  if (Array.isArray(obs.hasMember)) {
+    for (const member of obs.hasMember) {
+      const ref = member.reference
+      if (ref.startsWith('Observation/')) {
+        const memberId = ref.split('/')[1]
+        await uploadObservationWithMembers(memberId)
+      }
+    }
+  }
+  logStep('📤 Subiendo Observation…', obsId)
+  await putToNode(obs)
+  uploadedObservations.add(obsId)
+}
+
+
+
+
+
 
 // 5) PUT al FHIR Node
 async function putToNode(resource) {
@@ -294,8 +318,13 @@ app.post('/forwarder/_event', async (req, res) => {
       const bundle = await getFromProxy(`/${t}?encounter=${uuid}`)
       if (bundle.entry) {
         for (const { resource } of bundle.entry) {
-          logStep('📤 Subiendo', resource.resourceType, resource.id)
-          await putToNode(resource)
+          if (resource.resourceType === 'Observation') {
+            logStep('📤 Subiendo Observation recursiva…', resource.id)
+            await uploadObservationWithMembers(resource.id)
+          } else {
+            logStep('📤 Subiendo', resource.resourceType, resource.id)
+            await putToNode(resource)
+          }
           sent++
         }
       }
