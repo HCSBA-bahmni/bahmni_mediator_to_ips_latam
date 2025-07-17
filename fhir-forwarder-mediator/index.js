@@ -131,6 +131,7 @@ async function getFromProxy(path) {
 //  })
 //}
 
+// 5) PUT al FHIR Node
 async function putToNode(resource) {
   const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`;
   try {
@@ -146,7 +147,6 @@ async function putToNode(resource) {
     logStep('✅ PUT OK', resource.resourceType, resource.id, r.status);
     return r.status;
   } catch (e) {
-    // Si axios lanzó antes, intenta también ver e.response
     if (e.response?.data) {
       logStep('❌ Axios error body:', JSON.stringify(e.response.data, null, 2));
     }
@@ -154,67 +154,68 @@ async function putToNode(resource) {
   }
 }
 
-
-
-
-
-
-// 5) Health endpoint
+// 6) Health endpoint del forwarder
 app.get('/forwarder/_health', (_req, res) => res.send('OK'))
 
-// 6) Event endpoint
+// 7) Event endpoint
 app.post('/forwarder/_event', async (req, res) => {
   logStep('📩 POST /event', req.body)
   const { uuid } = req.body
   if (!uuid) return res.status(400).json({ error: 'Missing uuid' })
 
   try {
-    // fetch Encounter
+    // 7.1) Fetch Encounter desde el proxy
     const enc = await getFromProxy(`/Encounter/${uuid}`)
     if (!enc.resourceType) throw new Error('Invalid FHIR resource')
-    const ver = enc.meta?.versionId
 
-    //al menos que se manejen versiones lo siguiente quedara comentado, 
-    //if (seenVersions[uuid] === ver) {
-    //  logStep('🔁 No version change, skipping', uuid, ver)
-    //  return res.json({ status:'duplicate', uuid, version:ver })
-    //}
-
-    // new version → mark + save
-    seenVersions[uuid] = ver
-    saveSeen()
-    logStep('🔔 Processing version', uuid, ver)
-
-    const results = []
-    results.push(await putToNode(enc))
-
-    // patient
+    // 7.2) Extraer patientId de enc.subject.reference
     const pid = enc.subject?.reference?.split('/').pop()
-    if (pid) {
-      const pat = await getFromProxy(`/Patient/${pid}`)
-      results.push(await putToNode(pat))
+    if (!pid) {
+      throw new Error('Encounter.subject.reference inválido')
     }
 
-    // related resources
+    // (opcional) lógica duplicate comentada:
+    // const ver = enc.meta?.versionId
+    // if (seenVersions[uuid] === ver) {
+    //   logStep('🔁 No version change, skipping', uuid, ver)
+    //   return res.json({ status:'duplicate', uuid, version:ver })
+    // }
+    // seenVersions[uuid] = ver
+    // saveSeen()
+    // logStep('🔔 Processing version', uuid, ver)
+
+    // 7.3) Subir Patient primero
+    logStep('📤 Subiendo Patient…', pid)
+    const pat = await getFromProxy(`/Patient/${pid}`)
+    await putToNode(pat)
+
+    // 7.4) Subir Encounter
+    logStep('📤 Subiendo Encounter…', uuid)
+    await putToNode(enc)
+
+    // 7.5) Subir recursos relacionados
     const types = [
       'Observation','Condition','Procedure','MedicationRequest',
       'Medication','AllergyIntolerance','DiagnosticReport',
       'Immunization','CarePlan','Appointment','DocumentReference'
     ]
+    let sent = 2  // patient + encounter
     for (const t of types) {
       const bundle = await getFromProxy(`/${t}?encounter=${uuid}`)
       if (bundle.entry) {
-        for (const {resource} of bundle.entry) {
-          results.push(await putToNode(resource))
+        for (const { resource } of bundle.entry) {
+          logStep('📤 Subiendo', resource.resourceType, resource.id)
+          await putToNode(resource)
+          sent++
         }
       }
     }
 
     logStep('🎉 Done', uuid)
-    res.json({ status:'ok', uuid, sent:results.length })
+    res.json({ status:'ok', uuid, sent })
   } catch (e) {
     logStep('❌ ERROR:', e.message)
-    res.status(500).json({ error:e.message })
+    res.status(500).json({ error: e.message })
   }
 })
 
