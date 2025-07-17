@@ -196,6 +196,9 @@ app.post('/forwarder/_event', async (req, res) => {
   const { uuid } = req.body
   if (!uuid) return res.status(400).json({ error: 'Missing uuid' })
 
+// inicializamos el contador ANTES de usarlo
+  let sent = 0
+
   try {
     // 7.1) Fetch Encounter desde el proxy
     const enc = await getFromProxy(`/Encounter/${uuid}`)
@@ -222,6 +225,7 @@ app.post('/forwarder/_event', async (req, res) => {
     logStep('📤 Subiendo Patient…', patientId)
     const patient = await getFromProxy(`/Patient/${patientId}`)
     await putToNode(patient)
+    sent++
 
     // 7.4) Subir Practitioners referenciados en el Encounter
     if (Array.isArray(enc.participant)) {
@@ -232,6 +236,7 @@ app.post('/forwarder/_event', async (req, res) => {
           logStep('📤 Subiendo Practitioner…', pracId)
           const prac = await getFromProxy(`/Practitioner/${pracId}`)
           await putToNode(prac)
+          sent++
         }
       }
     }
@@ -251,6 +256,7 @@ app.post('/forwarder/_event', async (req, res) => {
     // 7.6) Subir Encounter
     logStep('📤 Subiendo Encounter…', uuid)
     await putToNode(enc)
+    sent++
 
     // 7.7) Subir recursos relacionados
     const types = [
