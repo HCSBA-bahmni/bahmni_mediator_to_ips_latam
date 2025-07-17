@@ -137,9 +137,10 @@ async function getFromProxy(path) {
 //    return r.status
 //  })
 //}
-// Añadir arriba, justo tras la definición de putToNode:
-const uploadedLocations = new Set();
 
+
+// recursion para Location.partOf
+const uploadedLocations = new Set();
 async function uploadLocationWithParents(locId) {
   if (uploadedLocations.has(locId)) return;
   // 1) Traer el Location
@@ -157,9 +158,8 @@ async function uploadLocationWithParents(locId) {
   uploadedLocations.add(locId);
 }
 
-// para no reenviar el mismo Encounter dos veces
+// recursion para Encounter.partOf
 const uploadedEncounters = new Set()
-
 async function uploadEncounterWithParents(encId) {
   if (uploadedEncounters.has(encId)) return
 
@@ -181,33 +181,25 @@ async function uploadEncounterWithParents(encId) {
 }
 
 // --- Recursive upload for Observation.hasMember ---
+// recursion para Observation.hasMember: devuelve cuántos sube
 const uploadedObservations = new Set()
-
 async function uploadObservationWithMembers(obsId) {
-  if (uploadedObservations.has(obsId)) return;
-  uploadedObservations.add(obsId);
+  if (uploadedObservations.has(obsId)) return 0
+  uploadedObservations.add(obsId)
 
-  logStep('🔍 Fetching Observation…', obsId);
-  const obs = await getFromProxy(`/Observation/${obsId}`);
+  const obs = await getFromProxy(`/Observation/${obsId}`)
+  let count = 1
   if (Array.isArray(obs.hasMember)) {
-    for (const member of obs.hasMember) {
-      const ref = member.reference;
-      if (ref.startsWith('Observation/')) {
-        const memberId = ref.split('/')[1];
-        await uploadObservationWithMembers(memberId);
+    for (const m of obs.hasMember) {
+      if (m.reference?.startsWith('Observation/')) {
+        count += await uploadObservationWithMembers(m.reference.split('/')[1])
       }
     }
   }
-
-  logStep('📤 Subiendo Observation…', obsId);
-  await putToNode(obs);
-  sent++;  // aquí sumas cada observación anidada también
+  logStep('📤 Subiendo Observation…', obsId)
+  await putToNode(obs)
+  return count
 }
-
-
-
-
-
 
 
 // 5) PUT al FHIR Node
