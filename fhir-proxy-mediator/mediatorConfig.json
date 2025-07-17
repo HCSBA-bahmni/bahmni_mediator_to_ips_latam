@@ -11,11 +11,12 @@
         {
           "name": "FHIR Proxy Route",
           "host": "10.68.174.209",
-          "path": "/",
           "port": "7000",
+          "path": "/",
           "primary": true,
           "type": "http",
-          "passThroughHeaders": ["authorization"]
+          "passThroughHeaders": ["authorization"],
+          "transform": "s/^\\/proxy//"
         }
       ],
       "allow": ["admin"],
@@ -29,11 +30,12 @@
         {
           "name": "FHIR Proxy Health Route",
           "host": "10.68.174.209",
-          "path": "/_health",
           "port": "7000",
+          "path": "/_health",
           "primary": true,
           "type": "http",
-          "passThroughHeaders": ["authorization"]
+          "passThroughHeaders": ["authorization"],
+          "transform": "s/^\\/proxy//"
         }
       ],
       "allow": ["admin"],
