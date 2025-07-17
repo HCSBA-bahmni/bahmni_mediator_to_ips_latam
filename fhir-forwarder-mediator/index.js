@@ -54,22 +54,35 @@ app.use(express.json({ limit: '20mb' }))
 // 2) seen.json: track last versionId per uuid
 const SEEN_FILE = './seen.json'
 let seenVersions = {}
+
 try {
+  // 2.1) Si no existe, crearlo con {}
   if (!fs.existsSync(SEEN_FILE)) {
-    fs.writeFileSync(SEEN_FILE, JSON.stringify({}), { flag: 'wx' })
+    fs.writeFileSync(SEEN_FILE, '{}', 'utf8')
   }
-  seenVersions = JSON.parse(fs.readFileSync(SEEN_FILE))
+  // 2.2) Leerlo y parsearlo, o inicializar a {} si está vacío
+  const raw = fs.readFileSync(SEEN_FILE, 'utf8').trim()
+  seenVersions = raw ? JSON.parse(raw) : {}
 } catch (e) {
-  console.warn('⚠️ Could not init seen.json:', e.message)
+  console.warn('⚠️ Could not parse seen.json, re-initializing:', e.message)
   seenVersions = {}
+  try {
+    fs.writeFileSync(SEEN_FILE, '{}', 'utf8')
+  } catch (err) {
+    console.error('❌ Could not overwrite seen.json:', err)
+  }
 }
+
 function saveSeen() {
   try {
-    fs.writeFileSync(SEEN_FILE, JSON.stringify(seenVersions))
+    fs.writeFileSync(SEEN_FILE, JSON.stringify(seenVersions), 'utf8')
   } catch (err) {
     console.error('❌ Could not write seen.json:', err)
   }
 }
+
+
+
 
 // 3) retry helper
 const MAX_RETRIES = 3
