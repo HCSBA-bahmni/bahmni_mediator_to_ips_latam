@@ -145,10 +145,12 @@ app.post('/forwarder/_event', async (req, res) => {
     const enc = await getFromProxy(`/Encounter/${uuid}`)
     if (!enc.resourceType) throw new Error('Invalid FHIR resource')
     const ver = enc.meta?.versionId
-    if (seenVersions[uuid] === ver) {
-      logStep('🔁 No version change, skipping', uuid, ver)
-      return res.json({ status:'duplicate', uuid, version:ver })
-    }
+
+    //al menos que se manejen versiones lo siguiente quedara comentado, 
+    //if (seenVersions[uuid] === ver) {
+    //  logStep('🔁 No version change, skipping', uuid, ver)
+    //  return res.json({ status:'duplicate', uuid, version:ver })
+    //}
 
     // new version → mark + save
     seenVersions[uuid] = ver
