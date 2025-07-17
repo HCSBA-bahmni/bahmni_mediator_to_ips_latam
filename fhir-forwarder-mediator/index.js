@@ -107,7 +107,6 @@ function logStep(msg, ...d) {
 // FHIR_PROXY_URL must include the full prefix, e.g.
 //   FHIR_PROXY_URL=https://10.68.174.206:5000/proxy/fhir
 const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
-
 async function getFromProxy(path) {
   const url = `${baseProxy}${path}`
   logStep('GET (proxy)', url)
@@ -123,24 +122,36 @@ async function getFromProxy(path) {
   return resp.data
 }
 
-//async function putToNode(resource) {
-//  if (!resource?.resourceType || !resource.id) {
-//    throw new Error('Invalid FHIR resource')
-//  }
-//  const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
-//  return retryRequest(async () => {
-//    logStep('PUT (node)', url)
-//    const r = await axios.put(url, resource, {
-//      headers: {'Content-Type':'application/fhir+json'}
-//    })
-//    logStep('✅ PUT OK', resource.resourceType, resource.id, r.status)
-//    return r.status
-//  })
-//}
+// 5) PUT al FHIR Node
+async function putToNode(resource) {
+  const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
+  try {
+    logStep('PUT (node)', url)
+    const r = await axios.put(url, resource, {
+      headers:{ 'Content-Type':'application/fhir+json' },
+      validateStatus: false
+    })
+    if (r.status >= 400) {
+      logStep('❌ PUT failed payload:', JSON.stringify(r.data, null, 2))
+      throw new Error(`PUT failed ${r.status}`)
+    }
+    logStep('✅ PUT OK', resource.resourceType, resource.id, r.status)
+    return r.status
+  } catch (e) {
+    if (e.response?.data) {
+      logStep('❌ Axios error body:', JSON.stringify(e.response.data, null, 2))
+    }
+    throw e
+  }
+}
 
+// --- Recursive helpers ---
+const uploadedLocations     = new Set()
+const uploadedEncounters    = new Set()
+const uploadedObservations  = new Set()
+const uploadedPractitioners = new Set()
 
 // recursion para Location.partOf
-const uploadedLocations = new Set();
 async function uploadLocationWithParents(locId) {
   if (uploadedLocations.has(locId)) return;
   // 1) Traer el Location
@@ -159,7 +170,6 @@ async function uploadLocationWithParents(locId) {
 }
 
 // recursion para Encounter.partOf
-const uploadedEncounters = new Set()
 async function uploadEncounterWithParents(encId) {
   if (uploadedEncounters.has(encId)) return
 
@@ -182,7 +192,6 @@ async function uploadEncounterWithParents(encId) {
 
 // --- Recursive upload for Observation.hasMember ---
 // recursion para Observation.hasMember: devuelve cuántos sube
-const uploadedObservations = new Set()
 async function uploadObservationWithMembers(obsId) {
   if (uploadedObservations.has(obsId)) return 0
   uploadedObservations.add(obsId)
@@ -201,28 +210,15 @@ async function uploadObservationWithMembers(obsId) {
   return count
 }
 
-
-// 5) PUT al FHIR Node
-async function putToNode(resource) {
-  const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`;
-  try {
-    logStep('PUT (node)', url);
-    const r = await axios.put(url, resource, {
-      headers:{ 'Content-Type':'application/fhir+json' },
-      validateStatus: false
-    });
-    if (r.status >= 400) {
-      logStep('❌ PUT failed payload:', JSON.stringify(r.data, null, 2));
-      throw new Error(`PUT failed ${r.status}`);
-    }
-    logStep('✅ PUT OK', resource.resourceType, resource.id, r.status);
-    return r.status;
-  } catch (e) {
-    if (e.response?.data) {
-      logStep('❌ Axios error body:', JSON.stringify(e.response.data, null, 2));
-    }
-    throw e;
-  }
+async function uploadPractitioner(pracRef, sentCounter) {
+  const pracId = pracRef.split('/')[1]
+  if (uploadedPractitioners.has(pracId)) return 0
+  logStep('🔍 Fetching Practitioner…', pracId)
+  const prac = await getFromProxy(`/Practitioner/${pracId}`)
+  logStep('📤 Subiendo Practitioner…', pracId)
+  await putToNode(prac)
+  uploadedPractitioners.add(pracId)
+  return 1
 }
 
 // 6) Health endpoint del forwarder
@@ -242,39 +238,38 @@ app.post('/forwarder/_event', async (req, res) => {
     const enc = await getFromProxy(`/Encounter/${uuid}`)
     if (!enc.resourceType) throw new Error('Invalid FHIR resource')
 
-    // 7.2) Extraer patientId de enc.subject.reference
+
+
+
+    // 7.2) Duplicate check
+    //const ver = enc.meta?.versionId
+    //if (seenVersions[uuid] === ver) {
+    //  logStep('🔁 No version change, skipping', uuid, ver)
+    //  return res.json({ status:'duplicate', uuid, version:ver })
+    //}
+    //seenVersions[uuid] = ver
+    //saveSeen()
+    //logStep('🔔 Processing version', uuid, ver)
+
+
+    // 7.3) Extraer patientId de enc.subject.reference
     const pid = enc.subject?.reference?.split('/').pop()
-    if (!pid) {
-      throw new Error('Encounter.subject.reference inválido')
-    }
+    if (!pid) throw new Error('Encounter.subject.reference inválido')
 
-    // (opcional) lógica duplicate comentada:
-    // const ver = enc.meta?.versionId
-    // if (seenVersions[uuid] === ver) {
-    //   logStep('🔁 No version change, skipping', uuid, ver)
-    //   return res.json({ status:'duplicate', uuid, version:ver })
-    // }
-    // seenVersions[uuid] = ver
-    // saveSeen()
-    // logStep('🔔 Processing version', uuid, ver)
 
-    // 7.3) Subir Patient primero
+    // 7.4) Subir Patient 
     const [ , patientId ] = enc.subject.reference.split('/')
     logStep('📤 Subiendo Patient…', patientId)
     const patient = await getFromProxy(`/Patient/${patientId}`)
     await putToNode(patient)
     sent++
 
-    // 7.4) Subir Practitioners referenciados en el Encounter
+    // 7.5) Subir Practitioners referenciados en el Encounter
     if (Array.isArray(enc.participant)) {
       for (const p of enc.participant) {
         const indyRef = p.individual?.reference
         if (indyRef?.startsWith('Practitioner/')) {
-          const pracId = indyRef.split('/')[1]
-          logStep('📤 Subiendo Practitioner…', pracId)
-          const prac = await getFromProxy(`/Practitioner/${pracId}`)
-          await putToNode(prac)
-          sent++
+          sent += await uploadPractitioner(indyRef)
         }
       }
     }
@@ -296,10 +291,10 @@ app.post('/forwarder/_event', async (req, res) => {
     sent++
 
     // 7.7) Subir recursos relacionados
-   const types = [
-  'Observation','Condition','Procedure','MedicationRequest',
-  'Medication','AllergyIntolerance','DiagnosticReport',
-  'Immunization','CarePlan','Appointment','DocumentReference'
+    const types = [
+      'Observation','Condition','Procedure','MedicationRequest',
+      'Medication','AllergyIntolerance','DiagnosticReport',
+      'Immunization','CarePlan','Appointment','DocumentReference'
     ];
 
     for (const t of types) {
@@ -310,30 +305,87 @@ app.post('/forwarder/_event', async (req, res) => {
         bundle = await getFromProxy(`/${t}?encounter=${uuid}`);
       } catch (err) {
         logStep(`⚠️ Skip ${t} by encounter:`, err.message);
-
-        // 2) Si hubo error 4xx, intentar search por Patient
+        // 2) Fallback por Patient
         try {
-          bundle = await getFromProxy(`/${t}?patient=${patientId}`);
-          logStep(`ℹ️ Fallback ${t} by patient`);
-        } catch (err2) {
-          logStep(`⚠️ Skip ${t} by patient:`, err2.message);
-          continue;
+          bundle = await getFromProxy(`/${t}?patient=${pid}`)
+          logStep(`ℹ️ Fallback ${t} by patient`)
+        } catch {
+          logStep(`⚠️ Skip ${t} by patient`)
+          continue
         }
       }
 
-      // 3) Procesar sólo si es un Bundle con entradas
+      // 3) Sólo procesar Bundles con entries
       if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry)) continue;
 
       for (const { resource } of bundle.entry) {
-        if (resource.resourceType === 'Observation') {
-          sent += await uploadObservationWithMembers(resource.id);
-        } else {
-          logStep('📤 Subiendo', resource.resourceType, resource.id);
-          await putToNode(resource);
-          sent++;
+        // --- Pre-upload referenced Practitioners ---
+        const pracRefs = [
+          resource.recorder?.reference,
+          resource.requester?.reference,
+          ...(resource.performer||[]).map(p => p.actor?.reference)
+        ].filter(r => r?.startsWith('Practitioner/'));
+
+        for (const r of pracRefs) {
+          sent += await uploadPractitioner(r);
+        }
+
+        // --- Eliminar recorder si no está subido ---
+        for (const field of ['recorder','requester']) {
+          const ref = resource[field]?.reference
+          if (ref?.startsWith('Practitioner/')) {
+            const id = ref.split('/')[1]
+            if (!uploadedPractitioners.has(id)) {
+              logStep(`⚠️ Omitiendo ${field} no subido:`, id)
+              delete resource[field]
+            }
+          }
+        }
+
+        // --- Filtrar performer[] si no están subidos ---
+        if (Array.isArray(resource.performer)) {
+          resource.performer = resource.performer.filter(p => {
+            const ref = p.actor?.reference;
+            if (ref?.startsWith('Practitioner/')) {
+              const perfId = ref.split('/')[1];
+              if (!uploadedPractitioners.has(perfId)) {
+                logStep('⚠️ Omitiendo performer no subido:', perfId);
+                return false;
+              }
+            }
+            return true;
+          });
+          if (resource.performer.length === 0) delete resource.performer;
+        }
+
+        // --- Subida con retry en caso de fallo por Practitioner faltante ---
+        try {
+          if (resource.resourceType === 'Observation') {
+            sent += await uploadObservationWithMembers(resource.id)
+          } else {
+            logStep('📤 Subiendo', resource.resourceType, resource.id)
+            await putToNode(resource)
+            sent++
+          }
+        } catch (e) {
+          const diag = e.response?.data?.issue?.[0]?.diagnostics || ''
+          if (diag.includes('Resource Practitioner/')) {
+            try {
+              logStep('⚠️ Retry sin referencias Practitioner tras error:', resource.id)
+              delete resource.recorder
+              delete resource.requester
+              await putToNode(resource)
+              sent++
+            } catch (retryErr) {
+              throw retryErr
+            }
+          } else {
+            throw e
+          }
         }
       }
     }
+
     
     // 7.8) Guardar la versión del Encounter procesado
     logStep('🎉 Done', uuid)
