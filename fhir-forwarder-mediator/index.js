@@ -116,20 +116,48 @@ async function getFromProxy(path) {
   return resp.data
 }
 
+//async function putToNode(resource) {
+//  if (!resource?.resourceType || !resource.id) {
+//    throw new Error('Invalid FHIR resource')
+//  }
+//  const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
+//  return retryRequest(async () => {
+//    logStep('PUT (node)', url)
+//    const r = await axios.put(url, resource, {
+//      headers: {'Content-Type':'application/fhir+json'}
+//    })
+//    logStep('✅ PUT OK', resource.resourceType, resource.id, r.status)
+//    return r.status
+//  })
+//}
+
 async function putToNode(resource) {
-  if (!resource?.resourceType || !resource.id) {
-    throw new Error('Invalid FHIR resource')
-  }
-  const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
-  return retryRequest(async () => {
-    logStep('PUT (node)', url)
+  const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`;
+  try {
+    logStep('PUT (node)', url);
     const r = await axios.put(url, resource, {
-      headers: {'Content-Type':'application/fhir+json'}
-    })
-    logStep('✅ PUT OK', resource.resourceType, resource.id, r.status)
-    return r.status
-  })
+      headers:{ 'Content-Type':'application/fhir+json' },
+      validateStatus: false
+    });
+    if (r.status >= 400) {
+      logStep('❌ PUT failed payload:', JSON.stringify(r.data, null, 2));
+      throw new Error(`PUT failed ${r.status}`);
+    }
+    logStep('✅ PUT OK', resource.resourceType, resource.id, r.status);
+    return r.status;
+  } catch (e) {
+    // Si axios lanzó antes, intenta también ver e.response
+    if (e.response?.data) {
+      logStep('❌ Axios error body:', JSON.stringify(e.response.data, null, 2));
+    }
+    throw e;
+  }
 }
+
+
+
+
+
 
 // 5) Health endpoint
 app.get('/forwarder/_health', (_req, res) => res.send('OK'))
