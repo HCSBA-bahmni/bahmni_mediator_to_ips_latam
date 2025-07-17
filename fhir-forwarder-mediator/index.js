@@ -264,9 +264,9 @@ app.post('/forwarder/_event', async (req, res) => {
       'Medication','AllergyIntolerance','DiagnosticReport',
       'Immunization','CarePlan','Appointment','DocumentReference'
     ]
-    let sent = 1 /*Encounter*/ + 1 /*Patient*/
-    if (enc.participant) sent += enc.participant.length
-    if (enc.location)    sent += enc.location.length
+    //let sent = 1 /*Encounter*/ + 1 /*Patient*/
+    //if (enc.participant) sent += enc.participant.length
+    //if (enc.location)    sent += enc.location.length
 
     for (const t of types) {
       const bundle = await getFromProxy(`/${t}?encounter=${uuid}`)
