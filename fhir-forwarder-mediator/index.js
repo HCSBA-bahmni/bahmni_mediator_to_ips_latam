@@ -130,6 +130,26 @@ async function getFromProxy(path) {
 //    return r.status
 //  })
 //}
+// Añadir arriba, justo tras la definición de putToNode:
+const uploadedLocations = new Set();
+
+async function uploadLocationWithParents(locId) {
+  if (uploadedLocations.has(locId)) return;
+  // 1) Traer el Location
+  logStep('🔍 Fetching Location…', locId);
+  const loc = await getFromProxy(`/Location/${locId}`);
+  // 2) Si tiene partOf, sube primero al padre
+  const parentRef = loc.partOf?.reference;
+  if (parentRef && parentRef.startsWith('Location/')) {
+    const parentId = parentRef.split('/')[1];
+    await uploadLocationWithParents(parentId);
+  }
+  // 3) Subir este Location
+  logStep('📤 Subiendo Location…', locId);
+  await putToNode(loc);
+  uploadedLocations.add(locId);
+}
+
 
 // 5) PUT al FHIR Node
 async function putToNode(resource) {
@@ -205,16 +225,15 @@ app.post('/forwarder/_event', async (req, res) => {
 
     // 7.5) (Opcional) Subir Locations referenciadas
     if (Array.isArray(enc.location)) {
-      for (const loc of enc.location) {
-        const locRef = loc.location?.reference
+      for (const locEntry of enc.location) {
+        const locRef = locEntry.location?.reference;
         if (locRef?.startsWith('Location/')) {
-          const locId = locRef.split('/')[1]
-          logStep('📤 Subiendo Location…', locId)
-          const location = await getFromProxy(`/Location/${locId}`)
-          await putToNode(location)
+          const locId = locRef.split('/')[1];
+          await uploadLocationWithParents(locId);
+          sent++;
         }
       }
-    }    
+    }
 
     // 7.6) Subir Encounter
     logStep('📤 Subiendo Encounter…', uuid)
