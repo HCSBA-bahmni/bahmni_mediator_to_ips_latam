@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import axios from 'axios';
 import https from 'https';
+import fs from 'fs';                                        // DEBUG: import fs for saving bundles
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils';
 import { v4 as uuidv4 } from 'uuid';
 import { createRequire } from 'module';
@@ -149,6 +150,15 @@ app.post('/lacpass/_iti65', async (req, res) => {
         { fullUrl: `urn:uuid:${summaryBundle.id}`, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } }
       ]
     };
+
+    // DEBUG: log what and where we send
+    console.log('DEBUG: Sending ProvideBundle to', TARGET_FHIR_URL);
+    console.log('DEBUG: ProvideBundle content:', JSON.stringify(provideBundle, null, 2));
+
+    // DEBUG: save ProvideBundle for debugging later
+    const debugPath = `provideBundle_debug_${Date.now()}.json`;
+    fs.writeFileSync(debugPath, JSON.stringify(provideBundle, null, 2));
+    console.log(`DEBUG: ProvideBundle saved to ${debugPath}`);
 
     // 4) Send ProvideBundle to the national node
     const resp = await axios.post(
