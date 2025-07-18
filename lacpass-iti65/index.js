@@ -3,6 +3,8 @@ import express from 'express';
 import axios from 'axios';
 import https from 'https';
 import fs from 'fs';                                        // DEBUG: import fs for saving bundles
+import os from 'os';                                       // DEBUG: get temp directory
+import path from 'path';                                   // DEBUG: build file paths
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils';
 import { v4 as uuidv4 } from 'uuid';
 import { createRequire } from 'module';
@@ -80,6 +82,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
   // Validate the bundle
   if (!summaryBundle || summaryBundle.resourceType !== 'Bundle') {
+    console.error('❌ Invalid summaryBundle:', JSON.stringify(summaryBundle).slice(0,200));
     return res.status(400).json({ error: 'Invalid Bundle or missing uuid' });
   }
 
@@ -151,12 +154,16 @@ app.post('/lacpass/_iti65', async (req, res) => {
       ]
     };
 
+    // DEBUG: inspect working directory
+    console.log('DEBUG: Current working directory:', process.cwd());
+
     // DEBUG: log what and where we send
     console.log('DEBUG: Sending ProvideBundle to', TARGET_FHIR_URL);
-    console.log('DEBUG: ProvideBundle content:', JSON.stringify(provideBundle, null, 2));
+    console.log('DEBUG: ProvideBundle content (first 500 chars):', JSON.stringify(provideBundle).slice(0, 500));
 
-    // DEBUG: save ProvideBundle for debugging later
-    const debugPath = `provideBundle_debug_${Date.now()}.json`;
+    // DEBUG: save ProvideBundle for debugging later to temp dir
+    const tmpDir = os.tmpdir();
+    const debugPath = path.join(tmpDir, `provideBundle_debug_${Date.now()}.json`);
     fs.writeFileSync(debugPath, JSON.stringify(provideBundle, null, 2));
     console.log(`DEBUG: ProvideBundle saved to ${debugPath}`);
 
@@ -166,6 +173,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       provideBundle,
       { headers: { 'Content-Type': 'application/fhir+json' }, validateStatus: false }
     );
+    console.log('DEBUG: Response data:', JSON.stringify(resp.data).slice(0,500));
     console.log(`⇒ ITI‑65 sent, status ${resp.status}`);
     return res.json({ status: 'sent', code: resp.status });
 
