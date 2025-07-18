@@ -3,7 +3,7 @@ import express from 'express';
 import axios from 'axios';
 import https from 'https';
 import fs from 'fs';                                        // DEBUG: import fs for saving bundles
-import os from 'os';                                       // DEBUG: get temp directory
+import os from 'os';                                       // DEBUG: use temp directory for debug files
 import path from 'path';                                   // DEBUG: build file paths
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils';
 import { v4 as uuidv4 } from 'uuid';
@@ -161,9 +161,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
     console.log('DEBUG: Sending ProvideBundle to', TARGET_FHIR_URL);
     console.log('DEBUG: ProvideBundle content (first 500 chars):', JSON.stringify(provideBundle).slice(0, 500));
 
-    // DEBUG: save ProvideBundle for debugging later to temp dir
-    const tmpDir = os.tmpdir();
-    const debugPath = path.join(tmpDir, `provideBundle_debug_${Date.now()}.json`);
+    // DEBUG: save ProvideBundle to system temp directory
+    const debugPath = path.join(os.tmpdir(), `provideBundle_debug_${Date.now()}.json`);
     fs.writeFileSync(debugPath, JSON.stringify(provideBundle, null, 2));
     console.log(`DEBUG: ProvideBundle saved to ${debugPath}`);
 
