@@ -33,16 +33,17 @@ registerMediator(openhimConfig, mediatorConfig, err => {
     console.error('❌ Registration error:', err);
     process.exit(1);
   }
-  console.log('✅ LAC‑PASS ITI‑65 Mediator registered');
-  Promise.all(
-    mediatorConfig.defaultChannelConfig.map(ch =>
-      axios.post(
-        `${openhimConfig.apiURL}/channels`,
-        { ...ch, mediator_urn: mediatorConfig.urn },
-        { auth: { username: OPENHIM_USER, password: OPENHIM_PASS } }
-      )
-    )
-  ).then(() => activateHeartbeat(openhimConfig));
+  //console.log('✅ LAC‑PASS ITI‑65 Mediator registered');
+  //Promise.all(
+  //  mediatorConfig.defaultChannelConfig.map(ch =>
+  //    axios.post(
+  //      `${openhimConfig.apiURL}/channels`,
+  //      { ...ch, mediator_urn: mediatorConfig.urn },
+  //      { auth: { username: OPENHIM_USER, password: OPENHIM_PASS } }
+  //    )
+  //  )
+  //).then(() => activateHeartbeat(openhimConfig));
+  activateHeartbeat(openhimConfig);
 });
 
 const app = express();
