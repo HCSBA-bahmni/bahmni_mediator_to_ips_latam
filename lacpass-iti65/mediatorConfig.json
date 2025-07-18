@@ -1,0 +1,49 @@
+{
+  "urn": "urn:mediator:lacpass-iti65",
+  "version": "1.0.0",
+  "name": "LAC‑PASS ITI‑65 ProvideBundle Mediator",
+  "description": "Genera un ProvideBundle ITI‑65 a partir del IPS‑Bundle LAC‑PASS y lo envía al nodo nacional",
+  "defaultChannelConfig": [
+    {
+      "name": "ITI‑65 Provide Event Channel",
+      "urlPattern": "^/lacpass/_iti65$",
+      "routes": [
+        {
+          "name": "ITI‑65 Route",
+          "host": "10.68.174.221",
+          "port": "8080",
+          "path": "/fhir",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": []
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["POST"],
+      "type": "http"
+    },
+    {
+      "name": "ITI‑65 Health Channel",
+      "urlPattern": "^/lacpass/_health$",
+      "routes": [
+        {
+          "name": "Health Route",
+          "host": "10.68.174.206",
+          "port": "5000",
+          "path": "/lacpass/_health",
+          "primary": true,
+          "type": "http"
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET"],
+      "type": "http"
+    }
+  ],
+  "endpoints": [
+    { "name": "iti65-endpoint",  "path": "/lacpass/_iti65",  "method": "post" },
+    { "name": "health-endpoint", "path": "/lacpass/_health", "method": "get" }
+  ],
+  "heartbeatPath": "/lacpass/_health",
+  "heartbeatInterval": 30000
+}

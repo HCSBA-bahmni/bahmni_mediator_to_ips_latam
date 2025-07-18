@@ -28,3 +28,12 @@ Por cada recurso obtenido:
     Guardar resultado
 
 Retornar resumen del batch (éxito/error por recurso)
+
+
+OpenMRS AtomFeed
+    ↓ feed-watcher.py
+OpenHIM → /forwarder/_event → FHIR Event Forwarder Mediator (carga Encounter+recursos)
+    ↓ feed-watcher notifica
+OpenHIM → /lacpass/_iti65 → LAC‑PASS ITI‑65 Mediator
+    ↓ construye ProvideBundle
+    └─POST→ 10.68.174.221:8080/fhir (transaction Bundle)

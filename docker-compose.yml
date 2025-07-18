@@ -1,43 +1,34 @@
- 
 version: "3.8"
 
 services:
 
   feed-mediator:
-
     build: ./feed-mediator
-
     env_file: ./.env
-
     restart: unless-stopped
- 
+
   fhir-forwarder-mediator:
-
     build: ./fhir-forwarder-mediator
-
     env_file: ./.env
-
     ports:
-
       - "8003:8003"
-
     restart: unless-stopped
- 
+
   fhir-proxy-mediator:
-
     build: ./fhir-proxy-mediator
-
     env_file: ./.env
-
     ports:
-
       - "7000:7000"
-
     restart: unless-stopped
- 
+
+  lacpass-iti65-mediator:
+    build: ./lacpass-iti65
+    env_file: ./.env
+    # Ajusta el mapeo de puertos según el puerto que exponga tu mediador ITI‑65
+    ports:
+      - "8005:8005"
+    restart: unless-stopped
+
 networks:
-
   default:
-
     name: lacpass-himnet
- 
