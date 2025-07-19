@@ -24,6 +24,18 @@ const {
   NODE_ENV
 } = process.env;
 
+
+// Set up debug directory (inside container)
+const debugDir = DEBUG_DIR
+  ? path.resolve(DEBUG_DIR)
+  : path.join(__dirname, 'tmp');
+try {
+  fs.mkdirSync(debugDir, { recursive: true });
+} catch (err) {
+  console.error(`❌ Could not create debug directory at ${debugDir}:`, err.message);
+}
+
+
 // Configure OpenHIM connection
 const openhimConfig = {
   username: OPENHIM_USER,
@@ -167,7 +179,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
     // DEBUG: inspect and save
     console.log('DEBUG: Sending ProvideBundle to', FHIR_NODO_NACIONAL_SERVER);
-    const debugPath = path.join(os.tmpdir(), `provideBundle_debug_${Date.now()}.json`);
+    const debugPath = path.join(debugDir, `provideBundle_debug_${Date.now()}.json`);
     fs.writeFileSync(debugPath, JSON.stringify(provideBundle, null, 2));
     console.log('DEBUG: saved →', debugPath);
 
