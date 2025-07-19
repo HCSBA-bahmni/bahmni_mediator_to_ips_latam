@@ -29,6 +29,14 @@ services:
       - "8005:8005"
     restart: unless-stopped
 
+  lacpass-iti67-68-mediator:
+    build: ./lacpass-iti67-68
+    env_file: ./.env
+    # Ajusta el mapeo de puertos según el puerto que exponga tu mediador ITI‑67/68
+    ports:
+      - "8006:8006"
+    restart: unless-stopped
+    
 networks:
   default:
     name: lacpass-himnet
