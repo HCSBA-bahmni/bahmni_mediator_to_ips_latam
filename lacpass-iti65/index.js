@@ -106,7 +106,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       summaryBundle.id = originalBundleId;
     }
     
-    // Add core Bundle profile for FhirDocuments slice
+    // 4) Añadir perfil FHIR genérico para slice FhirDocuments
     summaryBundle.meta = summaryBundle.meta || {};
     summaryBundle.meta.profile = [
       'http://hl7.org/fhir/StructureDefinition/Bundle',
@@ -128,11 +128,18 @@ app.post('/lacpass/_iti65', async (req, res) => {
         profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.SubmissionSet'],
         security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
       },
-      extension: [{ url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId', valueIdentifier: { value: bundleUrn } }],
-      identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: `urn:oid:${ssId}` }],
+      extension: [
+        { url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId', valueIdentifier: { value: bundleUrn } }
+      ],
+      identifier: [
+        // Identificador con urn:oid: para cumplir mhd-startswithoid
+        { use: 'usual', system: 'urn:ietf:rfc:3986', value: `urn:oid:${ssId}` }
+      ],
       status: 'current',
       mode: 'working',
-      code: { coding: [{ system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes', code: 'submissionset' }] },
+      code: {
+        coding: [{ system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes', code: 'submissionset' }]
+      },
       subject: { reference: patientRef },
       date: summaryBundle.timestamp,
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
@@ -151,7 +158,10 @@ app.post('/lacpass/_iti65', async (req, res) => {
       type: compositionEntry.resource.type,
       subject: { reference: patientRef },
       date: summaryBundle.timestamp,
-      content: [{ attachment: { contentType: 'application/fhir+json', url: bundleUrn } }]
+      content: [
+        // Solo content.attachment, eliminamos el format para evitar errores de código desconocido
+        { attachment: { contentType: 'application/fhir+json', url: bundleUrn } }
+      ]
     };
 
     // Build ProvideBundle (transaction)
