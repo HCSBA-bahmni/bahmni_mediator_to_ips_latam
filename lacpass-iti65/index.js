@@ -100,7 +100,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
     }
     const bundleUrn = `urn:uuid:${originalBundleId}`;
 
-    // —— FIX: ensure ProvideBundle slices match by adding generic Bundle profile
+    // —— FIX #1 —— Inject the generic FHIR Bundle profile so it matches the FhirDocuments slice
     summaryBundle.meta = summaryBundle.meta || {};
     summaryBundle.meta.profile = ['http://hl7.org/fhir/StructureDefinition/Bundle'];
 
@@ -117,13 +117,30 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
 
     // Normalize Composition.subject.reference
-    compositionEntry.resource.subject.reference = urlMap.get(`Patient/${patientEntry.resource.id}`);
-    // Normalize section entry references
-    compositionEntry.resource.section?.forEach(section => {
-      section.entry?.forEach(item => {
-        const key = item.reference;
-        if (urlMap.has(key)) item.reference = urlMap.get(key);
+    if (compositionEntry) {
+      compositionEntry.resource.subject.reference = urlMap.get(
+        `Patient/${patientEntry.resource.id}`
+      );
+      // Normalize section entry references
+      compositionEntry.resource.section?.forEach(section => {
+        section.entry?.forEach(item => {
+          const key = item.reference;
+          if (urlMap.has(key)) item.reference = urlMap.get(key);
+        });
       });
+    }
+
+    // —— FIX #2 —— Normalize all subject/patient references in summaryBundle entries
+    summaryBundle.entry.forEach(entry => {
+      const res = entry.resource;
+      if (res.subject?.reference) {
+        const orig = res.subject.reference;
+        if (urlMap.has(orig)) res.subject.reference = urlMap.get(orig);
+      }
+      if (res.patient?.reference) {
+        const orig = res.patient.reference;
+        if (urlMap.has(orig)) res.patient.reference = urlMap.get(orig);
+      }
     });
 
     // Build the SubmissionSet (List)
