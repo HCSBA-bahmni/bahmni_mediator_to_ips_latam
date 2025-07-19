@@ -105,10 +105,16 @@ app.post('/lacpass/_iti65', async (req, res) => {
     summaryBundle.meta = summaryBundle.meta || {};
     summaryBundle.meta.profile = ['http://hl7.org/fhir/StructureDefinition/Bundle'];
 
-    // —— FIX #2 —— Remove custom profiles from nested entries
+    // —— FIX #2 —— Remove custom profiles and prune empty meta objects in nested entries
     summaryBundle.entry.forEach(entry => {
-      if (entry.resource.meta && entry.resource.meta.profile) {
-        delete entry.resource.meta.profile;
+      const res = entry.resource;
+      if (res.meta) {
+        if (res.meta.profile) {
+          delete res.meta.profile;
+        }
+        if (Object.keys(res.meta).length === 0) {
+          delete res.meta;
+        }
       }
     });
 
@@ -161,7 +167,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       resourceType: 'List',
       id: ssId,
       text: {
-        status: 'generated',
+        status: 'extensions',
         div: `<div xmlns="http://www.w3.org/1999/xhtml">SubmissionSet para el paciente ${patientEntry.resource.id}</div>`
       },
       meta: {
