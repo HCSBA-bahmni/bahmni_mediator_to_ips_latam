@@ -9,22 +9,22 @@ import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils';
 import { v4 as uuidv4 } from 'uuid';
 import { createRequire } from 'module';
 
-// Load mediator configuration
+// Carga la config del mediador
 const require = createRequire(import.meta.url);
 const mediatorConfig = require('./mediatorConfig.json');
 
-// Read environment variables
+// Variables de entorno
 const {
   OPENHIM_USER,
   OPENHIM_PASS,
   OPENHIM_API,
-  FHIR_NODE_URL,               // e.g. http://10.68.174.222
-  SUMMARY_PROFILE,             // e.g. http://lacpass.racsel.org/StructureDefinition/lac-composition-ddcc
-  FHIR_NODO_NACIONAL_SERVER,   // e.g. http://10.68.174.221:8080/fhir
+  FHIR_NODE_URL,              // ej: http://10.68.174.222
+  SUMMARY_PROFILE,            // ej: http://lacpass.racsel.org/StructureDefinition/lac-composition-ddcc
+  FHIR_NODO_NACIONAL_SERVER,  // ej: http://10.68.174.221:8080/fhir
   NODE_ENV
 } = process.env;
 
-// Configure OpenHIM connection
+// Configuración de OpenHIM
 const openhimConfig = {
   username: OPENHIM_USER,
   password: OPENHIM_PASS,
@@ -33,13 +33,13 @@ const openhimConfig = {
   urn: mediatorConfig.urn
 };
 
-// Accept self‑signed certs in development
+// Aceptar certs autofirmados en dev
 if (NODE_ENV === 'development') {
   axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false });
   console.log('⚠️ DEV MODE: self‑signed certs accepted');
 }
 
-// Register mediator and channels with OpenHIM
+// Registrar canales y heartbeat
 registerMediator(openhimConfig, mediatorConfig, err => {
   if (err) {
     console.error('❌ Registration error:', err);
@@ -48,39 +48,35 @@ registerMediator(openhimConfig, mediatorConfig, err => {
   activateHeartbeat(openhimConfig);
 });
 
-// Initialize Express server
+// Montar servidor
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
-// Health check endpoint
+// Health check
 app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
 
-// Main ITI‑65 processing endpoint
+// Endpoint principal
 app.post('/lacpass/_iti65', async (req, res) => {
   let summaryBundle;
 
-  // 1) Si sólo viene { uuid }, fetch del IPS‑Bundle vía $summary
+  // 1) Si llega sólo { uuid }, traigo el IPS‑Bundle
   if (req.body.uuid) {
-    const uuid = req.body.uuid;
     try {
       const resp = await axios.get(
-        `${FHIR_NODE_URL}/fhir/Patient/${uuid}/$summary`,
-        {
-          params: { profile: SUMMARY_PROFILE },
-          httpsAgent: axios.defaults.httpsAgent
-        }
+        `${FHIR_NODE_URL}/fhir/Patient/${req.body.uuid}/$summary`,
+        { params: { profile: SUMMARY_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
       );
       summaryBundle = resp.data;
-    } catch (err) {
-      console.error('❌ ERROR fetching summary:', err.response?.data || err.message);
-      return res.status(502).json({ error: 'Error fetching summary', details: err.message });
+    } catch (e) {
+      console.error('❌ ERROR fetching summary:', e.response?.data || e.message);
+      return res.status(502).json({ error: 'Error fetching summary', details: e.message });
     }
   } else {
     // 2) Si ya viene el Bundle completo
     summaryBundle = req.body;
   }
 
-  // 3) Validación básica
+  // 3) Validar
   if (!summaryBundle || summaryBundle.resourceType !== 'Bundle') {
     console.error('❌ Invalid summaryBundle:', JSON.stringify(summaryBundle).slice(0,200));
     return res.status(400).json({ error: 'Invalid Bundle or missing uuid' });
@@ -91,7 +87,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const ssId = uuidv4();
     const drId = uuidv4();
 
-    // 4) Build SubmissionSet (List)
+    // 4) Construir SubmissionSet (List)
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
     const patientRef = patientEntry.resource.id.startsWith('urn:')
@@ -102,76 +98,48 @@ app.post('/lacpass/_iti65', async (req, res) => {
       resourceType: 'List',
       id: ssId,
       meta: {
-        profile: [
-          'https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.SubmissionSet'
-        ],
-        security: [
-          { system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }
-        ]
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.SubmissionSet'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
       },
       extension: [{
         url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId',
         valueIdentifier: { value: summaryBundle.identifier?.value }
       }],
-      identifier: [{
-        use: 'usual', system: 'urn:ietf:rfc:3986', value: summaryBundle.identifier?.value
-      }],
+      identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: summaryBundle.identifier?.value }],
       status: 'current',
       mode: 'working',
-      code: {
-        coding: [{
-          system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes',
-          code: 'submissionset'
-        }]
-      },
+      code: { coding: [{ system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes', code: 'submissionset' }] },
       subject: { reference: patientRef },
       date: summaryBundle.timestamp,
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
     };
 
-    // 5) Build DocumentReference
+    // 5) Construir DocumentReference
     const documentReference = {
       resourceType: 'DocumentReference',
       id: drId,
       meta: {
-        profile: [
-          'https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.DocumentReference'
-        ],
-        security: [
-          { system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }
-        ]
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.DocumentReference'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
       },
-      masterIdentifier: {
-        system: 'urn:ietf:rfc:3986',
-        value: summaryBundle.identifier.value
-      },
+      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: summaryBundle.identifier.value },
       status: 'current',
       type: compositionEntry.resource.type,
       subject: { reference: patientRef },
       date: summaryBundle.timestamp,
       content: [{
-        attachment: {
-          contentType: 'application/fhir+json',
-          url: `urn:uuid:${summaryBundle.id}`
-        },
-        format: {
-          system: 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode',
-          code: 'urn:ihe:iti:xds-sd:xml:2008'
-        }
+        attachment: { contentType: 'application/fhir+json', url: `urn:uuid:${summaryBundle.id}` },
+        format: { system: 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode', code: 'urn:ihe:iti:xds-sd:xml:2008' }
       }]
     };
 
-    // 6) Build ProvideBundle (transaction)
+    // 6) Construir ProvideBundle (transaction)
     const provideBundle = {
       resourceType: 'Bundle',
       id: uuidv4(),
       meta: {
-        profile: [
-          'https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.ProvideBundle'
-        ],
-        security: [
-          { system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }
-        ]
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.ProvideBundle'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
       },
       type: 'transaction',
       timestamp: now,
@@ -182,17 +150,17 @@ app.post('/lacpass/_iti65', async (req, res) => {
       ]
     };
 
-    // DEBUG: inspect working directory and first part of bundle
+    // DEBUG: muestra cwd y parte del Bundle
     console.log('DEBUG: cwd=', process.cwd());
     console.log('DEBUG: Sending ProvideBundle to', FHIR_NODO_NACIONAL_SERVER);
     console.log('DEBUG: bundle[:500]=', JSON.stringify(provideBundle).slice(0,500));
 
-    // DEBUG: save ProvideBundle to /tmp for later inspection
+    // DEBUG: guarda en /tmp
     const debugPath = path.join(os.tmpdir(), `provideBundle_debug_${Date.now()}.json`);
-    fs.writeFileSync(debugPath, JSON.stringify(provideBundle, null, 2));
+    fs.writeFileSync(debugPath, JSON.stringify(provideBundle, null,2));
     console.log('DEBUG: saved →', debugPath);
 
-    // 7) Send ProvideBundle to national node
+    // 7) Enviar al nodo nacional
     const resp = await axios.post(
       FHIR_NODO_NACIONAL_SERVER,
       provideBundle,
@@ -201,8 +169,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
     console.log('DEBUG: resp.data[:500]=', JSON.stringify(resp.data).slice(0,500));
     console.log(`⇒ ITI‑65 sent, status ${resp.status}`);
     return res.json({ status:'sent', code: resp.status });
-
-  } catch (e) {
+  }
+  catch (e) {
     console.error('❌ ERROR ITI‑65 Mediator:', e);
     return res.status(500).json({ error: e.message });
   }
@@ -210,4 +178,5 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
 // Start server
 const PORT = process.env.LACPASS_ITI65_PORT || 8005;
-app.listen(PORT, () => console.log(`LACPASS→ITI65 Mediator listening on port ${PORT}`));
+app.listen(PORT,
+  () => console.log(`LACPASS→ITI65 Mediator listening on port ${PORT}`));
