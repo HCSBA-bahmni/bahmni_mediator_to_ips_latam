@@ -100,6 +100,13 @@ app.post('/lacpass/_iti65', async (req, res) => {
     }
     const bundleUrn = `urn:uuid:${originalBundleId}`;
 
+    // —— FIX #1 —— Inject the generic FHIR Bundle profile so it matches the FhirDocuments slice
+    summaryBundle.meta = summaryBundle.meta || {};
+    summaryBundle.meta.profile = [
+      'http://hl7.org/fhir/StructureDefinition/Bundle',
+      ...(summaryBundle.meta.profile || [])
+    ];
+
     // Build a map of resourceType/id => fullUrl for internal reference resolution
     const urlMap = new Map();
     summaryBundle.entry.forEach(entry => {
@@ -112,24 +119,32 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
 
-    // Normalize Composition.subject.reference to match entry fullUrl
-    compositionEntry.resource.subject.reference = urlMap.get(`Patient/${patientEntry.resource.id}`);
+    // —— FIX #2 —— Normalize Composition.subject.reference to match entry fullUrl
+    const compRes = compositionEntry.resource;
+    compRes.subject.reference = urlMap.get(`Patient/${patientEntry.resource.id}`);
 
-    // Normalize Composition.section entries to use fullUrl
-    compositionEntry.resource.section?.forEach(section => {
-      section.entry?.forEach(item => {
-        const key = item.reference;
-        if (urlMap.has(key)) {
-          item.reference = urlMap.get(key);
+    // —— FIX #3 —— Normalize Composition.section entries to use fullUrl
+    if (Array.isArray(compRes.section)) {
+      compRes.section.forEach(section => {
+        if (Array.isArray(section.entry)) {
+          section.entry.forEach(item => {
+            const key = item.reference;
+            if (urlMap.has(key)) {
+              item.reference = urlMap.get(key);
+            }
+          });
         }
       });
-    });
+    }
 
     // Build the SubmissionSet (List)
     const submissionSet = {
       resourceType: 'List',
       id: ssId,
-      meta: { security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }] },
+      meta: {
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.SubmissionSet'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
+      },
       extension: [{
         url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId',
         valueIdentifier: { value: bundleUrn }
@@ -141,7 +156,12 @@ app.post('/lacpass/_iti65', async (req, res) => {
       }],
       status: 'current',
       mode: 'working',
-      code: { coding: [{ system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes', code: 'submissionset' }] },
+      code: {
+        coding: [{
+          system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes',
+          code: 'submissionset'
+        }]
+      },
       subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
       date: summaryBundle.timestamp,
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
@@ -151,23 +171,34 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const documentReference = {
       resourceType: 'DocumentReference',
       id: drId,
-      meta: { security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }] },
+      meta: {
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.DocumentReference'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
+      },
       masterIdentifier: { system: 'urn:ietf:rfc:3986', value: bundleUrn },
       status: 'current',
       type: compositionEntry.resource.type,
       subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
       date: summaryBundle.timestamp,
-      content: [{
-        attachment: { contentType: 'application/fhir+json', url: bundleUrn },
-        format: { system: 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode', code: 'urn:ihe:iti:xds-sd:text:2008' }
-      }]
+      content: [
+        {
+          attachment: { contentType: 'application/fhir+json', url: bundleUrn },
+          format: {
+            system: 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode',
+            code: 'urn:ihe:iti:xds-sd:text:2008'
+          }
+        }
+      ]
     };
 
     // Assemble the ProvideBundle transaction
     const provideBundle = {
       resourceType: 'Bundle',
       id: uuidv4(),
-      meta: { security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }] },
+      meta: {
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.ProvideBundle'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
+      },
       type: 'transaction',
       timestamp: now,
       entry: [
