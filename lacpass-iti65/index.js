@@ -9,6 +9,10 @@ import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils';
 import { v4 as uuidv4 } from 'uuid';
 import { createRequire } from 'module';
 
+// Resolve __dirname in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 // Load mediator configuration
 const require = createRequire(import.meta.url);
 const mediatorConfig = require('./mediatorConfig.json');
@@ -25,9 +29,9 @@ const {
 } = process.env;
 
 
-// Set up debug directory (inside container)
-const debugDir = DEBUG_DIR
-  ? path.resolve(DEBUG_DIR)
+// Determine debug directory from env or default
+const debugDir = process.env.DEBUG_DIR
+  ? path.resolve(process.env.DEBUG_DIR)
   : path.join(__dirname, 'tmp');
 try {
   fs.mkdirSync(debugDir, { recursive: true });
