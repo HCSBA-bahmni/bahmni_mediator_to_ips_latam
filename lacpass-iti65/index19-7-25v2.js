@@ -159,10 +159,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const submissionSet = {
       resourceType: 'List',
       id: ssId,
-      text: {
-        status: 'generated',
-        div: '<div xmlns="http://www.w3.org/1999/xhtml"><h1>Submission Set</h1></div>'
-      },
       meta: {
         profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.SubmissionSet'],
         security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
@@ -172,8 +168,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
         valueIdentifier: { value: bundleUrn }
       }],
       identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: `urn:oid:${ssId}` }],
-      status: 'current',
-      mode: 'working',
+      status: 'current', mode: 'working',
       code: { coding: [{ system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes', code: 'submissionset' }] },
       subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
       date: summaryBundle.timestamp,
@@ -184,10 +179,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const documentReference = {
       resourceType: 'DocumentReference',
       id: drId,
-      text: {
-        status: 'generated',
-        div: '<div xmlns="http://www.w3.org/1999/xhtml"><h1>Document Reference</h1></div>'
-      },
       meta: {
         profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.DocumentReference'],
         security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
