@@ -11,7 +11,7 @@
         {
           "name": "ITI-67 Route",
           "host": "10.68.174.209",
-          "port": "8005",
+          "port": "8006",
           "path": "/lacpass/_iti67",
           "primary": true,
           "type": "http",
@@ -29,7 +29,7 @@
         {
           "name": "ITI-68 Route",
           "host": "10.68.174.209",
-          "port": "8005",
+          "port": "8006",
           "path": "/lacpass/_iti68",
           "primary": true,
           "type": "http",

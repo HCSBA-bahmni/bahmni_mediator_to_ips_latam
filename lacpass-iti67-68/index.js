@@ -2,6 +2,9 @@ import 'dotenv/config';
 import express from 'express';
 import axios from 'axios';
 import https from 'https';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils';
 import { v4 as uuidv4 } from 'uuid';
 import { createRequire } from 'module';
@@ -10,19 +13,19 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const mediatorConfig = require('./mediatorConfig.json');
 
-// Environment variables
+// Read environment variables
 const {
   OPENHIM_USER,
   OPENHIM_PASS,
   OPENHIM_API,
-  FHIR_NODE_URL,
-  SUMMARY_PROFILE,
-  FHIR_NODO_NACIONAL_SERVER,
+  FHIR_NODE_URL,             // e.g. http://10.68.174.222
+  SUMMARY_PROFILE,           // e.g. http://lacpass.racsel.org/StructureDefinition/lac-composition-ddcc
+  FHIR_NODO_NACIONAL_SERVER, // e.g. http://10.68.174.221:8080/fhir
   NODE_ENV
 } = process.env;
 
-// OpenHIM config
-const openhimConfig = {
+// Configure OpenHIM connection
+tconst openhimConfig = {
   username: OPENHIM_USER,
   password: OPENHIM_PASS,
   apiURL: OPENHIM_API,
@@ -30,7 +33,7 @@ const openhimConfig = {
   urn: mediatorConfig.urn
 };
 
-// Accept self-signed certs in development
+// Accept self‑signed certs in development
 if (NODE_ENV === 'development') {
   axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false });
   console.log('⚠️ DEV MODE: self‑signed certs accepted');
@@ -45,81 +48,145 @@ registerMediator(openhimConfig, mediatorConfig, err => {
   activateHeartbeat(openhimConfig);
 });
 
-// Initialize Express
+// Initialize Express server
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
-// Health check
+// Health check endpoint
 app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
 
-// ITI‑67: Provide Document Bundle
-app.post('/lacpass/_iti67', async (req, res) => {
-  const { uuid } = req.body;
-  if (!uuid) return res.status(400).json({ error: 'Missing uuid' });
-  try {
-    // Fetch IPS bundle via $summary
-    const summary = await axios.get(
-      `${FHIR_NODE_URL}/fhir/Patient/${uuid}/$summary`,
-      { params: { profile: SUMMARY_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
-    );
+// Main ITI‑65 processing endpoint
+app.post('/lacpass/_iti65', async (req, res) => {
+  let summaryBundle;
 
-    // Build Provide Document Bundle (ITI‑67)
+  // 1) Fetch summary if only UUID is provided
+  if (req.body.uuid) {
+    try {
+      const resp = await axios.get(
+        `${FHIR_NODE_URL}/fhir/Patient/${req.body.uuid}/$summary`,
+        { params: { profile: SUMMARY_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
+      );
+      summaryBundle = resp.data;
+    } catch (e) {
+      console.error('❌ ERROR fetching summary:', e.response?.data || e.message);
+      return res.status(502).json({ error: 'Error fetching summary', details: e.message });
+    }
+  } else {
+    // 2) Otherwise, use the full Bundle sent by OpenHIM
+    summaryBundle = req.body;
+  }
+
+  // 3) Validate Bundle
+  if (!summaryBundle || summaryBundle.resourceType !== 'Bundle') {
+    console.error('❌ Invalid summaryBundle:', JSON.stringify(summaryBundle).slice(0,200));
+    return res.status(400).json({ error: 'Invalid Bundle or missing uuid' });
+  }
+
+  try {
     const now = new Date().toISOString();
-    const bundleId = uuidv4();
-    const provide = {
+    const ssId = uuidv4();
+    const drId = uuidv4();
+
+    // 3a) Ensure original Bundle has an ID for referencing
+    let originalBundleId = summaryBundle.id;
+    if (!originalBundleId) {
+      originalBundleId = uuidv4();
+      summaryBundle.id = originalBundleId;
+    }
+
+    // 4) Prepare Patient entry
+    const patientPlaceholder = uuidv4();
+    const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
+    const patientResource = { ...patientEntry.resource, id: patientPlaceholder };
+    const patientRef = `urn:uuid:${patientPlaceholder}`;
+
+    // 5) Locate Composition for type
+    const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
+
+    // 6) Build SubmissionSet (List)
+    const submissionSet = {
+      resourceType: 'List',
+      id: ssId,
+      meta: {
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.SubmissionSet'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
+      },
+      extension: [{
+        url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId',
+        valueIdentifier: { value: summaryBundle.identifier?.value }
+      }],
+      identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: summaryBundle.identifier?.value }],
+      status: 'current',
+      mode: 'working',
+      code: { coding: [{ system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes', code: 'submissionset' }] },
+      subject: { reference: patientRef },
+      date: summaryBundle.timestamp,
+      entry: [{ item: { reference: `urn:uuid:${drId}` } }]
+    };
+
+    // 7) Build DocumentReference
+    const documentReference = {
+      resourceType: 'DocumentReference',
+      id: drId,
+      meta: {
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.DocumentReference'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
+      },
+      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: summaryBundle.identifier?.value },
+      status: 'current',
+      type: compositionEntry.resource.type,
+      subject: { reference: patientRef },
+      date: summaryBundle.timestamp,
+      content: [{
+        attachment: { contentType: 'application/fhir+json', url: `urn:uuid:${originalBundleId}` },
+        format: { system: 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode', code: 'urn:ihe:iti:xds-sd:xml:2008' }
+      }]
+    };
+
+    // 8) Build ProvideBundle (transaction) in correct order
+    const provideBundle = {
       resourceType: 'Bundle',
-      id: bundleId,
+      id: uuidv4(),
+      meta: {
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.ProvideBundle'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
+      },
       type: 'transaction',
       timestamp: now,
-      entry: summary.data.entry
-        .filter(e => e.resource)
-        .map(e => ({
-          fullUrl: e.fullUrl,
-          resource: e.resource,
-          request: { method: 'POST', url: e.resource.resourceType }
-        }))
+      entry: [
+        // 8.1) POST List (SubmissionSet)
+        { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
+        // 8.2) POST DocumentReference
+        { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
+        // 8.3) POST original Bundle (FhirDocuments)
+        { fullUrl: `urn:uuid:${originalBundleId}`, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } },
+        // 8.4) PUT Patient
+        { fullUrl: patientRef, resource: patientResource, request: { method: 'PUT', url: `Patient/${patientPlaceholder}` } }
+      ]
     };
+
+    // DEBUG: inspect and save
+    console.log('DEBUG: Sending ProvideBundle to', FHIR_NODO_NACIONAL_SERVER);
+    const debugPath = path.join(os.tmpdir(), `provideBundle_debug_${Date.now()}.json`);
+    fs.writeFileSync(debugPath, JSON.stringify(provideBundle, null, 2));
+    console.log('DEBUG: saved →', debugPath);
 
     // Send to national node
     const resp = await axios.post(
       FHIR_NODO_NACIONAL_SERVER,
-      provide,
+      provideBundle,
       { headers: { 'Content-Type': 'application/fhir+json' }, validateStatus: false }
     );
+
+    console.log(`⇒ ITI‑65 sent, status ${resp.status}`);
     return res.json({ status: 'sent', code: resp.status });
 
   } catch (e) {
-    console.error('❌ ERROR ITI‑67:', e.response?.data || e.message);
-    return res.status(500).json({ error: e.message });
-  }
-});
-
-// ITI‑68: Retrieve Document Set
-app.get('/lacpass/_iti68', async (req, res) => {
-  const { patientId } = req.query;
-  if (!patientId) return res.status(400).json({ error: 'Missing patientId' });
-  try {
-    // Search for DocumentReference by patient
-    const docs = await axios.get(
-      `${FHIR_NODE_URL}/fhir/DocumentReference`,
-      { params: { patient: patientId }, httpsAgent: axios.defaults.httpsAgent }
-    );
-    // Return the set as a Bundle
-    const bundle = {
-      resourceType: 'Bundle',
-      id: uuidv4(),
-      type: 'searchset',
-      total: docs.data.total || (docs.data.entry || []).length,
-      entry: docs.data.entry
-    };
-    return res.json(bundle);
-
-  } catch (e) {
-    console.error('❌ ERROR ITI‑68:', e.response?.data || e.message);
+    console.error('❌ ERROR ITI‑65 Mediator:', e);
     return res.status(500).json({ error: e.message });
   }
 });
 
 // Start server
-const PORT = process.env.LACPASS_MEDIATOR_PORT || 8005;
-app.listen(PORT, () => console.log(`LACPASS Mediator listening on port ${PORT}`));
+const PORT = process.env.LACPASS_ITI65_PORT || 8006;
+app.listen(PORT, () => console.log(`LACPASS→ITI65 Mediator listening on port ${PORT}`));
