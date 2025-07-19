@@ -4,6 +4,7 @@ import axios from 'axios';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils';
 import { v4 as uuidv4 } from 'uuid';
 import { createRequire } from 'module';
@@ -28,7 +29,6 @@ const {
 const debugDir = DEBUG_DIR
   ? path.resolve(DEBUG_DIR)
   : '/tmp';
-
 try {
   fs.mkdirSync(debugDir, { recursive: true });
 } catch (err) {
@@ -43,12 +43,10 @@ const openhimConfig = {
   trustSelfSigned: true,
   urn: mediatorConfig.urn
 };
-
 if (NODE_ENV === 'development') {
   axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false });
   console.log('⚠️ DEV MODE: self-signed certs accepted');
 }
-
 registerMediator(openhimConfig, mediatorConfig, err => {
   if (err) {
     console.error('❌ Registration error:', err);
@@ -59,7 +57,6 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 
 const app = express();
 app.use(express.json({ limit: '20mb' }));
-
 app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
 
 app.post('/lacpass/_iti65', async (req, res) => {
@@ -81,7 +78,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
     // 2) Otherwise, the whole Bundle came in
     summaryBundle = req.body;
   }
-
   if (!summaryBundle || summaryBundle.resourceType !== 'Bundle') {
     console.error('❌ Invalid summaryBundle:', JSON.stringify(summaryBundle).slice(0, 200));
     return res.status(400).json({ error: 'Invalid Bundle or missing uuid' });
@@ -99,6 +95,11 @@ app.post('/lacpass/_iti65', async (req, res) => {
       summaryBundle.id = originalBundleId;
     }
     const bundleUrn = `urn:uuid:${originalBundleId}`;
+
+    // —— Compute size and hash of the Bundle for DocumentReference content ——
+    const bundleString = JSON.stringify(summaryBundle);
+    const bundleSize = Buffer.byteLength(bundleString, 'utf8');
+    const bundleHash = crypto.createHash('sha256').update(bundleString).digest('base64');
 
     // —— FIX #1 —— Inject generic FHIR Bundle profile for FhirDocuments slice
     summaryBundle.meta = summaryBundle.meta || {};
@@ -122,7 +123,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       }
     });
 
-    // Build a map of resourceType/id => fullUrl for internal references
+    // Build URL map for internal references
     const urlMap = new Map();
     summaryBundle.entry.forEach(entry => {
       const { resource } = entry;
@@ -133,18 +134,18 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
 
-    // Normalize Composition.subject and section entry references
+    // Normalize Composition references
     if (compositionEntry) {
       compositionEntry.resource.subject.reference = urlMap.get(`Patient/${patientEntry.resource.id}`);
       compositionEntry.resource.section?.forEach(section => {
         section.entry?.forEach(item => {
-          const key = item.reference;
-          if (urlMap.has(key)) item.reference = urlMap.get(key);
+          if (urlMap.has(item.reference)) {
+            item.reference = urlMap.get(item.reference);
+          }
         });
       });
     }
-
-    // Normalize all subject/patient references in summaryBundle entries
+    // Normalize all subject/patient references
     summaryBundle.entry.forEach(entry => {
       const res = entry.resource;
       if (res.subject?.reference && urlMap.has(res.subject.reference)) {
@@ -155,12 +156,12 @@ app.post('/lacpass/_iti65', async (req, res) => {
       }
     });
 
-    // Build the SubmissionSet (List)
+    // Build SubmissionSet (List) with required narrative
     const submissionSet = {
       resourceType: 'List',
       id: ssId,
       text: {
-        status: 'generated',
+        status: 'extensions',
         div: `<div xmlns="http://www.w3.org/1999/xhtml">SubmissionSet para el paciente ${patientEntry.resource.id}</div>`
       },
       meta: {
@@ -180,17 +181,17 @@ app.post('/lacpass/_iti65', async (req, res) => {
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
     };
 
-    // Build the DocumentReference
+    // Build DocumentReference with size and hash
     const documentReference = {
       resourceType: 'DocumentReference',
       id: drId,
-      text: {
-        status: 'generated',
-        div: '<div xmlns="http://www.w3.org/1999/xhtml">Resumen clínico en formato DocumentReference</div>'
-      },
       meta: {
         profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.DocumentReference'],
         security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
+      },
+      text: {
+        status: 'generated',
+        div: '<div xmlns="http://www.w3.org/1999/xhtml">Resumen clínico en formato DocumentReference</div>'
       },
       masterIdentifier: { system: 'urn:ietf:rfc:3986', value: bundleUrn },
       status: 'current',
@@ -198,12 +199,17 @@ app.post('/lacpass/_iti65', async (req, res) => {
       subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
       date: summaryBundle.timestamp,
       content: [{
-        attachment: { contentType: 'application/fhir+json', url: bundleUrn },
+        attachment: {
+          contentType: 'application/fhir+json',
+          url: bundleUrn,
+          size: bundleSize,
+          hash: bundleHash
+        },
         format: { system: 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode', code: 'urn:ihe:iti:xds-sd:text:2008' }
       }]
     };
 
-    // Assemble the ProvideBundle transaction
+    // Assemble ProvideBundle
     const provideBundle = {
       resourceType: 'Bundle',
       id: uuidv4(),
@@ -221,17 +227,16 @@ app.post('/lacpass/_iti65', async (req, res) => {
       ]
     };
 
-    // Debug‑dump and send
+    // Debug and send
     console.log('DEBUG: Sending ProvideBundle to', FHIR_NODO_NACIONAL_SERVER);
-    const debugPath = path.join(debugDir, `provideBundle_debug_${Date.now()}.json`);
-    fs.writeFileSync(debugPath, JSON.stringify(provideBundle, null, 2));
-    console.log('DEBUG: saved →', debugPath);
+    const debugFile = path.join(debugDir, `provideBundle_${Date.now()}.json`);
+    fs.writeFileSync(debugFile, JSON.stringify(provideBundle, null, 2));
+    console.log('DEBUG: saved →', debugFile);
 
-    const resp = await axios.post(
-      FHIR_NODO_NACIONAL_SERVER,
-      provideBundle,
-      { headers: { 'Content-Type': 'application/fhir+json' }, validateStatus: false }
-    );
+    const resp = await axios.post(FHIR_NODO_NACIONAL_SERVER, provideBundle, {
+      headers: { 'Content-Type': 'application/fhir+json' },
+      validateStatus: false
+    });
     console.log(`⇒ ITI-65 sent, status ${resp.status}`);
     return res.json({ status: 'sent', code: resp.status });
 
