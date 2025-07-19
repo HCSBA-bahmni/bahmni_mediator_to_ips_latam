@@ -25,7 +25,7 @@ const {
 } = process.env;
 
 // Configure OpenHIM connection
-tconst openhimConfig = {
+const openhimConfig = {
   username: OPENHIM_USER,
   password: OPENHIM_PASS,
   apiURL: OPENHIM_API,
