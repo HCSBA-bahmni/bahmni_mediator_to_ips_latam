@@ -107,12 +107,35 @@ app.post('/lacpass/_iti65', async (req, res) => {
       ...(summaryBundle.meta.profile || [])
     ];
 
+    // Build a map of resourceType/id => fullUrl for internal reference resolution
+    const urlMap = new Map();
+    summaryBundle.entry.forEach(entry => {
+      const { resource } = entry;
+      const url = entry.fullUrl || `urn:uuid:${resource.id}`;
+      urlMap.set(`${resource.resourceType}/${resource.id}`, url);
+    });
+
     // Pull out the Patient & Composition entries
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
-    const patientPlaceholder = uuidv4();
-    const patientRef = `urn:uuid:${patientPlaceholder}`;
-    const patientResource = { ...patientEntry.resource, id: patientPlaceholder };
+
+    // —— FIX #2 —— Normalize Composition.subject.reference to match entry fullUrl
+    const compRes = compositionEntry.resource;
+    compRes.subject.reference = urlMap.get(`Patient/${patientEntry.resource.id}`);
+
+    // —— FIX #3 —— Normalize Composition.section entries to use fullUrl
+    if (Array.isArray(compRes.section)) {
+      compRes.section.forEach(section => {
+        if (Array.isArray(section.entry)) {
+          section.entry.forEach(item => {
+            const key = item.reference;
+            if (urlMap.has(key)) {
+              item.reference = urlMap.get(key);
+            }
+          });
+        }
+      });
+    }
 
     // Build the SubmissionSet (List)
     const submissionSet = {
@@ -139,7 +162,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
           code: 'submissionset'
         }]
       },
-      subject: { reference: patientRef },
+      subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
       date: summaryBundle.timestamp,
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
     };
@@ -155,15 +178,14 @@ app.post('/lacpass/_iti65', async (req, res) => {
       masterIdentifier: { system: 'urn:ietf:rfc:3986', value: bundleUrn },
       status: 'current',
       type: compositionEntry.resource.type,
-      subject: { reference: patientRef },
+      subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
       date: summaryBundle.timestamp,
       content: [
         {
           attachment: { contentType: 'application/fhir+json', url: bundleUrn },
-          // —— FIX #2 —— Re‑add a valid format code so the DocumentRefs slice will match
           format: {
             system: 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode',
-            code: 'urn:ihe:iti:xds-sd:2007'
+            code: 'urn:ihe:iti:xds-sd:text:2008'
           }
         }
       ]
@@ -180,26 +202,10 @@ app.post('/lacpass/_iti65', async (req, res) => {
       type: 'transaction',
       timestamp: now,
       entry: [
-        {
-          fullUrl: `urn:uuid:${ssId}`,
-          resource: submissionSet,
-          request: { method: 'POST', url: 'List' }
-        },
-        {
-          fullUrl: `urn:uuid:${drId}`,
-          resource: documentReference,
-          request: { method: 'POST', url: 'DocumentReference' }
-        },
-        {
-          fullUrl: bundleUrn,
-          resource: summaryBundle,
-          request: { method: 'POST', url: 'Bundle' }
-        },
-        {
-          fullUrl: patientRef,
-          resource: patientResource,
-          request: { method: 'PUT', url: `Patient/${patientPlaceholder}` }
-        }
+        { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
+        { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
+        { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } },
+        { fullUrl: urlMap.get(`Patient/${patientEntry.resource.id}`), resource: patientEntry.resource, request: { method: 'PUT', url: `Patient/${patientEntry.resource.id}` } }
       ]
     };
 
