@@ -11,7 +11,7 @@
         {
           "name": "ITI‑65 Provide Route",
           "host": "10.68.174.209",
-          "port": "8005",
+          "port": "8006",
           "path": "/lacpass/_iti65",
           "primary": true,
           "type": "http",
@@ -29,7 +29,7 @@
         {
           "name": "ITI‑65 Health Route",
           "host": "10.68.174.209",
-          "port": "8005",
+          "port": "8006",
           "path": "/lacpass/_health",
           "primary": true,
           "type": "http",
