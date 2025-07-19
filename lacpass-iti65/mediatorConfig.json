@@ -2,7 +2,7 @@
   "urn": "urn:mediator:lacpass-iti65",
   "version": "1.0.0",
   "name": "LAC‑PASS ITI‑65 ProvideBundle Mediator",
-  "description": "Genera un ProvideBundle ITI‑65 a partir del IPS‑Bundle LAC‑PASS y lo envía al nodo nacional",
+  "description": "...",
   "defaultChannelConfig": [
     {
       "name": "ITI‑65 Provide Event Channel",
@@ -10,7 +10,7 @@
       "routes": [
         {
           "name": "ITI‑65 Provide Route",
-          "host": "10.68.174.221",
+          "host": "10.68.174.209",
           "port": "8005",
           "path": "/lacpass/_iti65",
           "primary": true,
@@ -28,7 +28,7 @@
       "routes": [
         {
           "name": "ITI‑65 Health Route",
-          "host": "10.68.174.221",
+          "host": "10.68.174.209",
           "port": "8005",
           "path": "/lacpass/_health",
           "primary": true,
