@@ -3,15 +3,10 @@ import express from 'express';
 import axios from 'axios';
 import https from 'https';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils';
 import { v4 as uuidv4 } from 'uuid';
 import { createRequire } from 'module';
-
-// Resolve __dirname in ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Load mediator configuration
 const require = createRequire(import.meta.url);
@@ -22,23 +17,23 @@ const {
   OPENHIM_USER,
   OPENHIM_PASS,
   OPENHIM_API,
-  FHIR_NODE_URL,             // e.g. http://10.68.174.222
-  SUMMARY_PROFILE,           // e.g. http://lacpass.racsel.org/StructureDefinition/lac-composition-ddcc
-  FHIR_NODO_NACIONAL_SERVER, // e.g. http://10.68.174.221:8080/fhir
+  FHIR_NODE_URL,
+  SUMMARY_PROFILE,
+  FHIR_NODO_NACIONAL_SERVER,
   NODE_ENV
 } = process.env;
 
-
-// Determine debug directory from env or default
+// Determine debug directory: use DEBUG_DIR or default to ./tmp
 const debugDir = process.env.DEBUG_DIR
   ? path.resolve(process.env.DEBUG_DIR)
-  : path.join(__dirname, 'tmp');
+  : path.resolve('./tmp');
+
+// Ensure debug directory exists
 try {
   fs.mkdirSync(debugDir, { recursive: true });
 } catch (err) {
   console.error(`❌ Could not create debug directory at ${debugDir}:`, err.message);
 }
-
 
 // Configure OpenHIM connection
 const openhimConfig = {
@@ -49,10 +44,10 @@ const openhimConfig = {
   urn: mediatorConfig.urn
 };
 
-// Accept self‑signed certs in development
+// Accept self-signed certs in development
 if (NODE_ENV === 'development') {
   axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false });
-  console.log('⚠️ DEV MODE: self‑signed certs accepted');
+  console.log('⚠️ DEV MODE: self-signed certs accepted');
 }
 
 // Register mediator and start heartbeat
@@ -71,7 +66,7 @@ app.use(express.json({ limit: '20mb' }));
 // Health check endpoint
 app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
 
-// Main ITI‑65 processing endpoint
+// Main ITI-65 processing endpoint
 app.post('/lacpass/_iti65', async (req, res) => {
   let summaryBundle;
 
@@ -103,23 +98,23 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const ssId = uuidv4();
     const drId = uuidv4();
 
-    // 3a) Ensure original Bundle has an ID for referencing
+    // Ensure original Bundle has an ID
     let originalBundleId = summaryBundle.id;
     if (!originalBundleId) {
       originalBundleId = uuidv4();
       summaryBundle.id = originalBundleId;
     }
 
-    // 4) Prepare Patient entry
+    // Prepare Patient entry
     const patientPlaceholder = uuidv4();
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const patientResource = { ...patientEntry.resource, id: patientPlaceholder };
     const patientRef = `urn:uuid:${patientPlaceholder}`;
 
-    // 5) Locate Composition for type
+    // Locate Composition for type
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
 
-    // 6) Build SubmissionSet (List)
+    // Build SubmissionSet (List)
     const submissionSet = {
       resourceType: 'List',
       id: ssId,
@@ -140,7 +135,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
     };
 
-    // 7) Build DocumentReference
+    // Build DocumentReference
     const documentReference = {
       resourceType: 'DocumentReference',
       id: drId,
@@ -159,7 +154,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       }]
     };
 
-    // 8) Build ProvideBundle (transaction) in correct order
+    // Build ProvideBundle (transaction)
     const provideBundle = {
       resourceType: 'Bundle',
       id: uuidv4(),
@@ -170,13 +165,9 @@ app.post('/lacpass/_iti65', async (req, res) => {
       type: 'transaction',
       timestamp: now,
       entry: [
-        // 8.1) POST List (SubmissionSet)
         { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
-        // 8.2) POST DocumentReference
         { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
-        // 8.3) POST original Bundle (FhirDocuments)
         { fullUrl: `urn:uuid:${originalBundleId}`, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } },
-        // 8.4) PUT Patient
         { fullUrl: patientRef, resource: patientResource, request: { method: 'PUT', url: `Patient/${patientPlaceholder}` } }
       ]
     };
@@ -194,11 +185,11 @@ app.post('/lacpass/_iti65', async (req, res) => {
       { headers: { 'Content-Type': 'application/fhir+json' }, validateStatus: false }
     );
 
-    console.log(`⇒ ITI‑65 sent, status ${resp.status}`);
+    console.log(`⇒ ITI-65 sent, status ${resp.status}`);
     return res.json({ status: 'sent', code: resp.status });
 
   } catch (e) {
-    console.error('❌ ERROR ITI‑65 Mediator:', e);
+    console.error('❌ ERROR ITI-65 Mediator:', e);
     return res.status(500).json({ error: e.message });
   }
 });
