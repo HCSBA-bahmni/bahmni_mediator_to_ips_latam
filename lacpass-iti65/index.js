@@ -20,13 +20,14 @@ const {
   FHIR_NODE_URL,
   SUMMARY_PROFILE,
   FHIR_NODO_NACIONAL_SERVER,
-  NODE_ENV
+  NODE_ENV,
+  DEBUG_DIR
 } = process.env;
 
-// Determine debug directory: use DEBUG_DIR or default to ./tmp
-const debugDir = process.env.DEBUG_DIR
-  ? path.resolve(process.env.DEBUG_DIR)
-  : path.resolve('./tmp');
+// Determine debug directory: use DEBUG_DIR or default to '/tmp'
+const debugDir = DEBUG_DIR
+  ? path.resolve(DEBUG_DIR)
+  : '/tmp';
 
 // Ensure debug directory exists
 try {
@@ -104,14 +105,19 @@ app.post('/lacpass/_iti65', async (req, res) => {
       originalBundleId = uuidv4();
       summaryBundle.id = originalBundleId;
     }
+    
+    // Add core Bundle profile for FhirDocuments slice
+    summaryBundle.meta = summaryBundle.meta || {};
+    summaryBundle.meta.profile = [
+      'http://hl7.org/fhir/StructureDefinition/Bundle',
+      ...(summaryBundle.meta.profile || [])
+    ];
 
-    // Prepare Patient entry
-    const patientPlaceholder = uuidv4();
+    const bundleUrn = `urn:uuid:${originalBundleId}`;
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
+    const patientPlaceholder = uuidv4();
     const patientResource = { ...patientEntry.resource, id: patientPlaceholder };
     const patientRef = `urn:uuid:${patientPlaceholder}`;
-
-    // Locate Composition for type
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
 
     // Build SubmissionSet (List)
@@ -122,11 +128,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
         profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.SubmissionSet'],
         security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
       },
-      extension: [{
-        url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId',
-        valueIdentifier: { value: summaryBundle.identifier?.value }
-      }],
-      identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: summaryBundle.identifier?.value }],
+      extension: [{ url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId', valueIdentifier: { value: bundleUrn } }],
+      identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: `urn:oid:${ssId}` }],
       status: 'current',
       mode: 'working',
       code: { coding: [{ system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes', code: 'submissionset' }] },
@@ -143,15 +146,12 @@ app.post('/lacpass/_iti65', async (req, res) => {
         profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.DocumentReference'],
         security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
       },
-      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: summaryBundle.identifier?.value },
+      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: bundleUrn },
       status: 'current',
       type: compositionEntry.resource.type,
       subject: { reference: patientRef },
       date: summaryBundle.timestamp,
-      content: [{
-        attachment: { contentType: 'application/fhir+json', url: `urn:uuid:${originalBundleId}` },
-        format: { system: 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode', code: 'urn:ihe:iti:xds-sd:xml:2008' }
-      }]
+      content: [{ attachment: { contentType: 'application/fhir+json', url: bundleUrn } }]
     };
 
     // Build ProvideBundle (transaction)
@@ -167,18 +167,17 @@ app.post('/lacpass/_iti65', async (req, res) => {
       entry: [
         { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
         { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
-        { fullUrl: `urn:uuid:${originalBundleId}`, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } },
+        { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } },
         { fullUrl: patientRef, resource: patientResource, request: { method: 'PUT', url: `Patient/${patientPlaceholder}` } }
       ]
     };
 
-    // DEBUG: inspect and save
+    // DEBUG: save and send
     console.log('DEBUG: Sending ProvideBundle to', FHIR_NODO_NACIONAL_SERVER);
     const debugPath = path.join(debugDir, `provideBundle_debug_${Date.now()}.json`);
     fs.writeFileSync(debugPath, JSON.stringify(provideBundle, null, 2));
     console.log('DEBUG: saved →', debugPath);
 
-    // Send to national node
     const resp = await axios.post(
       FHIR_NODO_NACIONAL_SERVER,
       provideBundle,
