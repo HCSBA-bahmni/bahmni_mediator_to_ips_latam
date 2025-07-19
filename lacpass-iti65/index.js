@@ -161,7 +161,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       id: ssId,
       text: {
         status: 'generated',
-        div: '<div xmlns="http://www.w3.org/1999/xhtml"><h1>Submission Set</h1></div>'
+        div: `<div xmlns="http://www.w3.org/1999/xhtml">SubmissionSet para el paciente ${patientEntry.resource.id}</div>`
       },
       meta: {
         profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.SubmissionSet'],
@@ -186,7 +186,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       id: drId,
       text: {
         status: 'generated',
-        div: '<div xmlns="http://www.w3.org/1999/xhtml"><h1>Document Reference</h1></div>'
+        div: '<div xmlns="http://www.w3.org/1999/xhtml">Resumen clínico en formato DocumentReference</div>'
       },
       meta: {
         profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.DocumentReference'],
