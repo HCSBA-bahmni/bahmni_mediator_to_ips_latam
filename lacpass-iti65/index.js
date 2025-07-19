@@ -161,7 +161,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       resourceType: 'List',
       id: ssId,
       text: {
-        status: 'extensions',
+        status: 'generated',
         div: `<div xmlns="http://www.w3.org/1999/xhtml">SubmissionSet para el paciente ${patientEntry.resource.id}</div>`
       },
       meta: {
