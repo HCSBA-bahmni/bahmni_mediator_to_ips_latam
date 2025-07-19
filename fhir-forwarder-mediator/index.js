@@ -257,12 +257,32 @@ app.post('/forwarder/_event', async (req, res) => {
     if (!pid) throw new Error('Encounter.subject.reference inválido')
 
 
-    // 7.4) Subir Patient 
+    // 7.4.1) Subir Patient 
     const [ , patientId ] = enc.subject.reference.split('/')
     logStep('📤 Subiendo Patient…', patientId)
     const patient = await getFromProxy(`/Patient/${patientId}`)
     await putToNode(patient)
     sent++
+
+
+    // 7.4.2) NOTIFICAR al ITI‑65 Mediator que el Patient ya existe
+    try {
+      logStep('🔔 Notificando ITI‑65 Mediator para', patientId)   // <<-- AQUI
+      await axios.post(
+        `${process.env.OPENHIM_SUMMARY_ENDPOINT}`,                // = https://10.68.174.206:5000/lacpass/_iti65
+        { uuid: patientId },
+        {
+          auth: {
+            username: process.env.OPENHIM_USER,
+            password: process.env.OPENHIM_PASS
+          },
+          httpsAgent: axios.defaults.httpsAgent
+        }
+      )
+      logStep('✅ Mediator ITI‑65 notificado')
+    } catch (e) {
+      console.error('❌ Error notificando ITI‑65 Mediator:', e.response?.data || e.message)
+    }    
 
     // 7.5) Subir Practitioners referenciados en el Encounter
     if (Array.isArray(enc.participant)) {
