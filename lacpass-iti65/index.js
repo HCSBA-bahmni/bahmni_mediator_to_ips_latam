@@ -100,7 +100,11 @@ app.post('/lacpass/_iti65', async (req, res) => {
     }
     const bundleUrn = `urn:uuid:${originalBundleId}`;
 
-    // Build a map of resourceType/id => fullUrl for internal reference resolution
+    // —— FIX: ensure ProvideBundle slices match by adding generic Bundle profile
+    summaryBundle.meta = summaryBundle.meta || {};
+    summaryBundle.meta.profile = ['http://hl7.org/fhir/StructureDefinition/Bundle'];
+
+    // Build a map of resourceType/id => fullUrl for internal references
     const urlMap = new Map();
     summaryBundle.entry.forEach(entry => {
       const { resource } = entry;
@@ -112,16 +116,13 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
 
-    // Normalize Composition.subject.reference to match entry fullUrl
+    // Normalize Composition.subject.reference
     compositionEntry.resource.subject.reference = urlMap.get(`Patient/${patientEntry.resource.id}`);
-
-    // Normalize Composition.section entries to use fullUrl
+    // Normalize section entry references
     compositionEntry.resource.section?.forEach(section => {
       section.entry?.forEach(item => {
         const key = item.reference;
-        if (urlMap.has(key)) {
-          item.reference = urlMap.get(key);
-        }
+        if (urlMap.has(key)) item.reference = urlMap.get(key);
       });
     });
 
@@ -129,18 +130,16 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const submissionSet = {
       resourceType: 'List',
       id: ssId,
-      meta: { security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }] },
+      meta: {
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.SubmissionSet'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
+      },
       extension: [{
         url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId',
         valueIdentifier: { value: bundleUrn }
       }],
-      identifier: [{
-        use: 'usual',
-        system: 'urn:ietf:rfc:3986',
-        value: `urn:oid:${ssId}`       // mhd-startswithoid constraint
-      }],
-      status: 'current',
-      mode: 'working',
+      identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: `urn:oid:${ssId}` }],
+      status: 'current', mode: 'working',
       code: { coding: [{ system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes', code: 'submissionset' }] },
       subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
       date: summaryBundle.timestamp,
@@ -149,12 +148,13 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
     // Build the DocumentReference
     const documentReference = {
-      resourceType: 'DocumentReference',
-      id: drId,
-      meta: { security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }] },
+      resourceType: 'DocumentReference', id: drId,
+      meta: {
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.DocumentReference'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
+      },
       masterIdentifier: { system: 'urn:ietf:rfc:3986', value: bundleUrn },
-      status: 'current',
-      type: compositionEntry.resource.type,
+      status: 'current', type: compositionEntry.resource.type,
       subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
       date: summaryBundle.timestamp,
       content: [{
@@ -165,11 +165,12 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
     // Assemble the ProvideBundle transaction
     const provideBundle = {
-      resourceType: 'Bundle',
-      id: uuidv4(),
-      meta: { security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }] },
-      type: 'transaction',
-      timestamp: now,
+      resourceType: 'Bundle', id: uuidv4(),
+      meta: {
+        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.ProvideBundle'],
+        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
+      },
+      type: 'transaction', timestamp: now,
       entry: [
         { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
         { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
@@ -184,7 +185,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
     fs.writeFileSync(debugPath, JSON.stringify(provideBundle, null, 2));
     console.log('DEBUG: saved →', debugPath);
 
-    // Fire it off
+    // Send transaction
     const resp = await axios.post(
       FHIR_NODO_NACIONAL_SERVER,
       provideBundle,
