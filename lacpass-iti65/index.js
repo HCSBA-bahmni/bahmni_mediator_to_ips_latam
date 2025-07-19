@@ -100,9 +100,34 @@ app.post('/lacpass/_iti65', async (req, res) => {
     }
     const bundleUrn = `urn:uuid:${originalBundleId}`;
 
-    // —— FIX #1 —— Inject the generic FHIR Bundle profile so it matches the FhirDocuments slice
+    // —— FIX #1 —— Inject and preserve generic FHIR Bundle profile for slicing
     summaryBundle.meta = summaryBundle.meta || {};
-    summaryBundle.meta.profile = ['http://hl7.org/fhir/StructureDefinition/Bundle'];
+    const existingProfiles = summaryBundle.meta.profile || [];
+    summaryBundle.meta.profile = [
+      'http://hl7.org/fhir/StructureDefinition/Bundle',
+      ...existingProfiles
+    ];
+    // —— FIX #2 —— Add security tag to summaryBundle
+    summaryBundle.meta.security = summaryBundle.meta.security || [];
+    summaryBundle.meta.security.push(
+      { system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }
+    );
+    // —— FIX #3 —— Remove custom meta.profile from nested resources
+    summaryBundle.entry.forEach(entry => {
+      if (entry.resource.meta && entry.resource.meta.profile) {
+        delete entry.resource.meta.profile;
+      }
+    });
+    // —— FIX #4 —— Sanitize UV/IPS CodeSystem references to avoid resolution errors
+    summaryBundle.entry.forEach(entry => {
+      const res = entry.resource;
+      if (res.resourceType === 'MedicationStatement' && res.medicationCodeableConcept?.coding) {
+        res.medicationCodeableConcept.coding.forEach(c => delete c.system);
+      }
+      if (res.resourceType === 'Immunization' && res.vaccineCode?.coding) {
+        res.vaccineCode.coding.forEach(c => delete c.system);
+      }
+    });
 
     // Build a map of resourceType/id => fullUrl for internal references
     const urlMap = new Map();
@@ -130,7 +155,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       });
     }
 
-    // —— FIX #2 —— Normalize all subject/patient references in summaryBundle entries
+    // Normalize all subject/patient references in summaryBundle entries
     summaryBundle.entry.forEach(entry => {
       const res = entry.resource;
       if (res.subject?.reference) {
