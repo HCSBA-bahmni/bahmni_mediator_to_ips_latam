@@ -130,11 +130,21 @@ app.post('/lacpass/_iti65', async (req, res) => {
     });
 
     // Build URL map for internal references
+    //const urlMap = new Map();
+    //summaryBundle.entry.forEach(entry => {
+    //  const { resource } = entry;
+    // ESTE LÍNEA USA entry.fullUrl, que puede ser una URL absoluta:
+    //  const url = entry.fullUrl || `urn:uuid:${resource.id}`;
+    //  urlMap.set(`${resource.resourceType}/${resource.id}`, url);
+    //});
+
+    // —— Build URL map for internal references using only URNs —— 
     const urlMap = new Map();
     summaryBundle.entry.forEach(entry => {
       const { resource } = entry;
-      const url = entry.fullUrl || `urn:uuid:${resource.id}`;
-      urlMap.set(`${resource.resourceType}/${resource.id}`, url);
+      // Forzamos siempre el URN interno:
+      const urn = `urn:uuid:${resource.id}`;
+      urlMap.set(`${resource.resourceType}/${resource.id}`, urn);
     });
 
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
