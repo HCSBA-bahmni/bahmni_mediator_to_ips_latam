@@ -44,9 +44,19 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
-// Debug
+// Helper to build FHIR URL safely (avoid double /fhir)
+function buildFHIRPath(suffix) {
+  let base = FHIR_NODO_REGIONAL_SERVER || '';
+  base = base.replace(/\/+$/, ''); // strip trailing slash(es)
+  if (!base.toLowerCase().includes('/fhir')) {
+    base = `${base}/fhir`;
+  }
+  return `${base.replace(/\/+$/, '')}/${suffix.replace(/^\/+/, '')}`;
+}
+
+// Debug incoming
 app.use((req, _res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} query=`, req.query);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} query=`, req.query, 'body=', req.body);
   next();
 });
 process.on('uncaughtException', e => console.error('Uncaught exception:', e));
@@ -56,47 +66,48 @@ process.on('unhandledRejection', e => console.error('Unhandled rejection:', e));
 app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
 
 /**
- * ITI-67 simplified as GET:
- * /lacpass/_iti67?identifier=RUN*19547137-1
+ * ITI-67: Provide Document Bundle (proxy de DocumentReference search)
+ * POST /lacpass/_iti67  with JSON body { identifier: "...", uuid: "..." }
  */
-app.get('/lacpass/_iti67', async (req, res) => {
-  const identifier = req.query.identifier;
-  if (!identifier) return res.status(400).json({ error: 'Missing identifier query param' });
+app.post('/lacpass/_iti67', async (req, res) => {
+  const { identifier, uuid } = req.body;
+  const patientId = identifier || uuid;
+  if (!patientId) return res.status(400).json({ error: 'Missing identifier or uuid' });
 
   try {
     const params = {
-      'patient.identifier': identifier,
+      'patient.identifier': patientId,
       status: 'current',
       _format: 'json'
     };
-    // if (SUMMARY_PROFILE_INT) params.profile = SUMMARY_PROFILE_INT; // opcional
+    // opcional: si el servidor soporta profile habilítalo
+    // if (SUMMARY_PROFILE_INT) params.profile = SUMMARY_PROFILE_INT;
 
-    const summary = await axios.get(
-      `${FHIR_NODO_REGIONAL_SERVER}/fhir/DocumentReference`,
-      {
-        params,
-        httpsAgent: axios.defaults.httpsAgent,
-        timeout: 15000
-      }
-    );
+    const url = buildFHIRPath('DocumentReference');
+    const summary = await axios.get(url, {
+      params,
+      httpsAgent: axios.defaults.httpsAgent,
+      timeout: 15000
+    });
     return res.json(summary.data);
   } catch (e) {
-    console.error('❌ ERROR ITI-67 proxy GET:', e.response?.data || e.message);
-    return res.status(500).json({ error: e.response?.data || e.message });
+    console.error('❌ ERROR ITI-67 proxy POST:', e.response?.data || e.message);
+    const errBody = e.response?.data || { message: e.message };
+    return res.status(500).json({ error: errBody });
   }
 });
 
 /**
- * ITI-68 simplified as GET to bundle URL.
- * /lacpass/_iti68?bundleUrl=http://.../fhir/Bundle/XYZ
+ * ITI-68: Retrieve Document Set por bundle URL
+ * GET /lacpass/_iti68?bundleUrl=...
  */
 app.get('/lacpass/_iti68', async (req, res) => {
   let bundleUrl = req.query.bundleUrl;
   if (!bundleUrl) return res.status(400).json({ error: 'Missing bundleUrl query param' });
 
-  // Si viene sin formato completo, podrías permitir que sea relativo al nodo:
   if (!bundleUrl.startsWith('http')) {
-    bundleUrl = `${FHIR_NODO_REGIONAL_SERVER}/${bundleUrl.replace(/^\/+/, '')}`;
+    // relativo al nodo
+    bundleUrl = `${FHIR_NODO_REGIONAL_SERVER.replace(/\/+$/, '')}/${bundleUrl.replace(/^\/+/, '')}`;
   }
 
   try {
@@ -108,7 +119,8 @@ app.get('/lacpass/_iti68', async (req, res) => {
     return res.json(bundle.data);
   } catch (e) {
     console.error('❌ ERROR ITI-68 proxy GET:', e.response?.data || e.message);
-    return res.status(500).json({ error: e.response?.data || e.message });
+    const errBody = e.response?.data || { message: e.message };
+    return res.status(500).json({ error: errBody });
   }
 });
 
