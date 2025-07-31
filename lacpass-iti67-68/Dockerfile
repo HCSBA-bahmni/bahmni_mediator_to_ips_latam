@@ -17,7 +17,7 @@ RUN npm ci --only=production
 COPY . .
 
 # 7) Expose the port where the mediator listens
-EXPOSE 8005
+EXPOSE 8006
 
 # 8) Define a healthcheck para orquestadores
 HEALTHCHECK --interval=30s --timeout=5s \
