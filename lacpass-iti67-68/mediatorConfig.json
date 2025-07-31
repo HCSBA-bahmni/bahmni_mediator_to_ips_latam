@@ -1,6 +1,6 @@
 {
   "urn": "urn:mediator:lacpass-iti67-68",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "LAC-PASS ITI-67-68 Bundle Mediator",
   "description": "Mediador que implementa ITI-67 Provide Document Bundle e ITI-68 Retrieve Document Set",
   "defaultChannelConfig": [
