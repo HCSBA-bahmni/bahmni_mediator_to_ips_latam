@@ -52,44 +52,32 @@ app.use(express.json({ limit: '20mb' }));
 // Health check
 app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
 
-// ITI‑67: Provide Document Bundle
+// ITI-67: Provide Document Bundle acting as proxy
 app.post('/lacpass/_iti67', async (req, res) => {
-  const { uuid } = req.body;
-  if (!uuid) return res.status(400).json({ error: 'Missing uuid' });
+  const { identifier} = req.body; // aquí es RUN*19547137-1
+  if (!identifier) return res.status(400).json({ error: 'Missing uuid' });
+
   try {
-    // Fetch IPS bundle via $summary
+    // Consulta igual que tu curl directo
     const summary = await axios.get(
-      `${FHIR_NODO_REGIONAL_SERVER}/fhir/Patient/${uuid}/$summary`,
-      { params: { profile: SUMMARY_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
+      `${FHIR_NODE_URL}/fhir/DocumentReference`,
+      {
+        params: {
+          'patient.identifier': identifier,
+          status: 'current',
+          _format: 'json',
+          profile: SUMMARY_PROFILE // si el servidor lo soporta; sino omitir
+        },
+        httpsAgent: axios.defaults.httpsAgent
+      }
     );
 
-    // Build Provide Document Bundle (ITI‑67)
-    const now = new Date().toISOString();
-    const bundleId = uuidv4();
-    const provide = {
-      resourceType: 'Bundle',
-      id: bundleId,
-      type: 'transaction',
-      timestamp: now,
-      entry: summary.data.entry
-        .filter(e => e.resource)
-        .map(e => ({
-          fullUrl: e.fullUrl,
-          resource: e.resource,
-          request: { method: 'POST', url: e.resource.resourceType }
-        }))
-    };
-
-    // Send to national node
-    const resp = await axios.post(
-      FHIR_NODO_REGIONAL_SERVER,
-      provide,
-      { headers: { 'Content-Type': 'application/fhir+json' }, validateStatus: false }
-    );
-    return res.json({ status: 'sent', code: resp.status });
+    // Si lo que necesitas es exactamente el bundle tal cual viene del servidor FHIR,
+    // lo reenvías directamente:
+    return res.status(200).json(summary.data);
 
   } catch (e) {
-    console.error('❌ ERROR ITI‑67:', e.response?.data || e.message);
+    console.error('❌ ERROR ITI-67 proxy:', e.response?.data || e.message);
     return res.status(500).json({ error: e.message });
   }
 });
