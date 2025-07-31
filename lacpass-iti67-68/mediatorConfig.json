@@ -6,7 +6,7 @@
   "defaultChannelConfig": [
     {
       "name": "ITI-67 Provide Document Channel",
-      "urlPattern": "^/lacpass/_iti67$",
+      "urlPattern": "^/regional/_iti67$",
       "routes": [
         {
           "name": "ITI-67 Route",
@@ -15,25 +15,25 @@
           "type": "http",
           "host": "10.68.174.209",
           "port": 8006,
-          "path": "/lacpass/_iti67",
+          "path": "/regional/_iti67",
           "secured": false,
           "passThroughHeaders": ["Authorization"],
           "routeTransform": ""
         }
       ],
       "allow": ["admin"],
-      "methods": ["POST"],
+      "methods": ["GET","POST"],
       "type": "http"
     },
     {
       "name": "ITI-68 Retrieve Document Channel",
-      "urlPattern": "^/lacpass/_iti68$",
+      "urlPattern": "^/regional/_iti68$",
       "routes": [
         {
           "name": "ITI-68 Route",
           "host": "10.68.174.209",
           "port": "8006",
-          "path": "/lacpass/_iti68",
+          "path": "/regional/_iti68",
           "primary": true,
           "type": "http",
           "passThroughHeaders": []
@@ -45,9 +45,10 @@
     }
   ],
   "endpoints": [
-    { "name": "iti67-endpoint", "path": "/lacpass/_iti67", "method": "post" },
-    { "name": "iti68-endpoint", "path": "/lacpass/_iti68", "method": "get" }
+    { "name": "iti67-endpoint", "path": "/regional/_iti67", "method": "post" },
+    { "name": "iti67-get-endpoint", "path": "/regional/_iti67", "method": "get" },
+    { "name": "iti68-endpoint", "path": "/regional/_iti68", "method": "get" }
   ],
-  "heartbeatPath": "/lacpass/_health",
+  "heartbeatPath": "/regional/_health",
   "heartbeatInterval": 30000
 }

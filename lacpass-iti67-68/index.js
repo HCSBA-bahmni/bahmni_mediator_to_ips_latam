@@ -63,13 +63,38 @@ process.on('uncaughtException', e => console.error('Uncaught exception:', e));
 process.on('unhandledRejection', e => console.error('Unhandled rejection:', e));
 
 // Health
-app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
+app.get('/regional/_health', (_req, res) => res.status(200).send('OK'));
 
 /**
  * ITI-67: Provide Document Bundle (proxy de DocumentReference search)
  * POST /lacpass/_iti67  with JSON body { identifier: "...", uuid: "..." }
  */
-app.post('/lacpass/_iti67', async (req, res) => {
+
+app.get('/regional/_iti67', async (req, res) => {
+  const patientId = req.query.identifier || req.query.uuid;
+  if (!patientId) return res.status(400).json({ error: 'Missing identifier or uuid' });
+
+  try {
+    const params = {
+      'patient.identifier': patientId,
+      status: 'current',
+      _format: 'json'
+    };
+    const url = buildFHIRPath('DocumentReference');
+    const summary = await axios.get(url, {
+      params,
+      httpsAgent: axios.defaults.httpsAgent,
+      timeout: 15000
+    });
+    return res.json(summary.data);
+  } catch (e) {
+    console.error('❌ ERROR ITI-67 proxy GET:', e.response?.data || e.message);
+    const errBody = e.response?.data || { message: e.message };
+    return res.status(500).json({ error: errBody });
+  }
+});
+
+app.post('/regional/_iti67', async (req, res) => {
   const { identifier, uuid } = req.body;
   const patientId = identifier || uuid;
   if (!patientId) return res.status(400).json({ error: 'Missing identifier or uuid' });
@@ -80,9 +105,6 @@ app.post('/lacpass/_iti67', async (req, res) => {
       status: 'current',
       _format: 'json'
     };
-    // opcional: si el servidor soporta profile habilítalo
-    // if (SUMMARY_PROFILE_INT) params.profile = SUMMARY_PROFILE_INT;
-
     const url = buildFHIRPath('DocumentReference');
     const summary = await axios.get(url, {
       params,
@@ -101,12 +123,11 @@ app.post('/lacpass/_iti67', async (req, res) => {
  * ITI-68: Retrieve Document Set por bundle URL
  * GET /lacpass/_iti68?bundleUrl=...
  */
-app.get('/lacpass/_iti68', async (req, res) => {
+app.get('/regional/_iti68', async (req, res) => {
   let bundleUrl = req.query.bundleUrl;
   if (!bundleUrl) return res.status(400).json({ error: 'Missing bundleUrl query param' });
 
   if (!bundleUrl.startsWith('http')) {
-    // relativo al nodo
     bundleUrl = `${FHIR_NODO_REGIONAL_SERVER.replace(/\/+$/, '')}/${bundleUrl.replace(/^\/+/, '')}`;
   }
 
@@ -123,6 +144,7 @@ app.get('/lacpass/_iti68', async (req, res) => {
     return res.status(500).json({ error: errBody });
   }
 });
+
 
 // Start
 const PORT = process.env.LACPASS_MEDIATOR_PORT || 8006;
