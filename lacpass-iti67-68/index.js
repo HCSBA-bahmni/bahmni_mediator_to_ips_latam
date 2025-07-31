@@ -15,9 +15,8 @@ const {
   OPENHIM_USER,
   OPENHIM_PASS,
   OPENHIM_API,
-  FHIR_NODE_URL,
+  FHIR_NODO_REGIONAL_SERVER,
   SUMMARY_PROFILE,
-  FHIR_NODO_NACIONAL_SERVER,
   NODE_ENV
 } = process.env;
 
@@ -60,7 +59,7 @@ app.post('/lacpass/_iti67', async (req, res) => {
   try {
     // Consulta igual que tu curl directo
     const summary = await axios.get(
-      `${FHIR_NODE_URL}/fhir/DocumentReference`,
+      `${FHIR_NODO_REGIONAL_SERVER}/fhir/DocumentReference`,
       {
         params: {
           'patient.identifier': identifier,
