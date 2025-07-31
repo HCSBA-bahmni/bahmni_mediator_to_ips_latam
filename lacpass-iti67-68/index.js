@@ -10,18 +10,16 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const mediatorConfig = require('./mediatorConfig.json');
 
-// Environment variables (asegúrate de exportar estos)
 const {
   OPENHIM_USER,
   OPENHIM_PASS,
   OPENHIM_API,
   FHIR_NODO_REGIONAL_SERVER,
-  SUMMARY_PROFILE_INT,
+  SUMMARY_PROFILE_INT, // lo dejamos, pero no se fuerza si da error
   NODE_ENV,
   LACPASS_MEDIATOR_PORT
 } = process.env;
 
-// OpenHIM config
 const openhimConfig = {
   username: OPENHIM_USER,
   password: OPENHIM_PASS,
@@ -30,13 +28,11 @@ const openhimConfig = {
   urn: mediatorConfig.urn
 };
 
-// Accept self-signed certs in development
 if (NODE_ENV === 'development') {
   axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false });
   console.log('⚠️ DEV MODE: self-signed certs accepted');
 }
 
-// Register mediator and start heartbeat
 registerMediator(openhimConfig, mediatorConfig, err => {
   if (err) {
     console.error('❌ Registration error:', err);
@@ -45,17 +41,15 @@ registerMediator(openhimConfig, mediatorConfig, err => {
   activateHeartbeat(openhimConfig);
 });
 
-// Initialize Express
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
-// Debug middleware
+// Debug incoming
 app.use((req, _res, next) => {
-  console.log(`[${new Date().toISOString()}] Incoming ${req.method} ${req.originalUrl} body=`, req.body);
+  console.log(`[${new Date().toISOString()}] Incoming ${req.method} ${req.originalUrl} body=`, req.body, 'query=', req.query);
   next();
 });
 
-// Global error visibility
 process.on('uncaughtException', e => {
   console.error('Uncaught exception:', e);
 });
@@ -63,10 +57,9 @@ process.on('unhandledRejection', e => {
   console.error('Unhandled rejection:', e);
 });
 
-// Health check
 app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
 
-// ITI-67: Provide Document Bundle acting as proxy
+// ITI-67: proxy de DocumentReference search por identifier/uuid
 app.post('/lacpass/_iti67', async (req, res) => {
   const { identifier, uuid } = req.body;
   const patientId = identifier || uuid;
@@ -78,7 +71,8 @@ app.post('/lacpass/_iti67', async (req, res) => {
       status: 'current',
       _format: 'json'
     };
-    if (SUMMARY_PROFILE_INT) params.profile = SUMMARY_PROFILE_INT;
+    // opcional: habilitar solo si sabes que el servidor acepta ese filtro sin romper
+    // if (SUMMARY_PROFILE_INT) params.profile = SUMMARY_PROFILE_INT;
 
     const summary = await axios.get(
       `${FHIR_NODO_REGIONAL_SERVER}/fhir/DocumentReference`,
@@ -97,15 +91,21 @@ app.post('/lacpass/_iti67', async (req, res) => {
   }
 });
 
-// ITI-68: Retrieve Document Set
+// ITI-68: Retrieve Document Set por identifier (usa patient.identifier)
 app.get('/lacpass/_iti68', async (req, res) => {
+  // asumimos que patientId es un identifier tipo RUN*...
   const { patientId } = req.query;
   if (!patientId) return res.status(400).json({ error: 'Missing patientId' });
+
   try {
+    const params = {
+      'patient.identifier': patientId
+    };
+
     const docs = await axios.get(
       `${FHIR_NODO_REGIONAL_SERVER}/fhir/DocumentReference`,
       {
-        params: { patient: patientId },
+        params,
         httpsAgent: axios.defaults.httpsAgent,
         timeout: 15000
       }
@@ -126,6 +126,5 @@ app.get('/lacpass/_iti68', async (req, res) => {
   }
 });
 
-// Start server
 const PORT = process.env.LACPASS_MEDIATOR_PORT || 8006;
 app.listen(PORT, () => console.log(`LACPASS Mediator listening on port ${PORT}`));
