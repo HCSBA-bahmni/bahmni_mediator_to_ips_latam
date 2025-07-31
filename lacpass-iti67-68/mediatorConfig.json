@@ -1,7 +1,7 @@
 {
-  "urn": "urn:mediator:lacpass-iti6x",
+  "urn": "urn:mediator:lacpass-iti67-68",
   "version": "1.0.0",
-  "name": "LAC-PASS ITI-6X Bundle Mediator",
+  "name": "LAC-PASS ITI-67-68 Bundle Mediator",
   "description": "Mediador que implementa ITI-67 Provide Document Bundle e ITI-68 Retrieve Document Set",
   "defaultChannelConfig": [
     {
@@ -10,12 +10,15 @@
       "routes": [
         {
           "name": "ITI-67 Route",
-          "host": "10.68.174.209",
-          "port": "8006",
-          "path": "/lacpass/_iti67",
           "primary": true,
+          "enabled": true,
           "type": "http",
-          "passThroughHeaders": []
+          "host": "10.68.174.209",
+          "port": 8006,
+          "path": "/lacpass/_iti67",
+          "secured": false,
+          "passThroughHeaders": ["Authorization"],
+          "routeTransform": ""
         }
       ],
       "allow": ["admin"],
