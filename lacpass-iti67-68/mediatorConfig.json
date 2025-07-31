@@ -11,7 +11,7 @@
       "host": "10.68.174.209",
       "port": 8006,
       "urlPattern": "^/regional/DocumentReference$",
-      "methods": [ "GET" ],
+      "methods": ["GET"],
       "checkProvider": false,
       "type": "http",
       "primaryUrl": "http://10.68.174.209:8006/regional/DocumentReference",
@@ -23,7 +23,7 @@
       "host": "10.68.174.209",
       "port": 8006,
       "urlPattern": "^/regional/Bundle/.*$",
-      "methods": [ "GET" ],
+      "methods": ["GET"],
       "checkProvider": false,
       "type": "http",
       "primaryUrl": "http://10.68.174.209:8006/regional/Bundle/",
@@ -35,12 +35,29 @@
       "host": "10.68.174.209",
       "port": 8006,
       "urlPattern": "^/regional/_health$",
-      "methods": [ "GET" ],
+      "methods": ["GET"],
       "checkProvider": false,
       "type": "http",
       "primaryUrl": "http://10.68.174.209:8006/regional/_health",
       "secondaryUrl": "",
       "properties": {}
+    }
+  ],
+  "endpoints": [
+    {
+      "name": "DocumentReference Endpoint",
+      "endpointType": "http",
+      "endpoint": "http://10.68.174.209:8006/regional/DocumentReference"
+    },
+    {
+      "name": "Bundle Endpoint",
+      "endpointType": "http",
+      "endpoint": "http://10.68.174.209:8006/regional/Bundle/"
+    },
+    {
+      "name": "Health Endpoint",
+      "endpointType": "http",
+      "endpoint": "http://10.68.174.209:8006/regional/_health"
     }
   ]
 }

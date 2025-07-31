@@ -17,7 +17,7 @@ RUN npm ci --only=production
 COPY . .
 
 # 7) Expone el puerto donde corre el mediador ITI‑65
-EXPOSE 8006
+EXPOSE 8005
 
 # 8) Define un healthcheck para orquestadores (ajusta la ruta si tu mediador tiene otro endpoint)
 HEALTHCHECK --interval=30s --timeout=5s \

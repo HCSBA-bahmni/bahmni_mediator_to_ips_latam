@@ -1,63 +1,50 @@
 {
-  "urn": "urn:mediator:regional-fhir-proxy",
+  "urn": "urn:mediator:lacpass-iti65",
   "version": "1.0.0",
-  "name": "Regional FHIR Proxy",
-  "description": "Proxy simplificado para DocumentReference (ITI-67) y Bundle (ITI-68)",
-  "baseURL": "http://10.68.174.209:8006",
-  "routes": [],
-  "channels": [
+  "name": "LAC‑PASS ITI‑65 ProvideBundle Mediator",
+  "description": "...",
+  "defaultChannelConfig": [
     {
-      "name": "ITI-67 DocumentReference Search",
-      "host": "10.68.174.209",
-      "port": 8006,
-      "urlPattern": "^/regional/DocumentReference$",
-      "methods": ["GET"],
-      "checkProvider": false,
-      "type": "http",
-      "primaryUrl": "http://10.68.174.209:8006/regional/DocumentReference",
-      "secondaryUrl": "",
-      "properties": {}
+      "name": "ITI‑65 Provide Event Channel",
+      "urlPattern": "^/lacpass/_iti65$",
+      "routes": [
+        {
+          "name": "ITI‑65 Provide Route",
+          "host": "10.68.174.209",
+          "port": "8005",
+          "path": "/lacpass/_iti65",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": []
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["POST"],
+      "type": "http"
     },
     {
-      "name": "ITI-68 Bundle Retrieve",
-      "host": "10.68.174.209",
-      "port": 8006,
-      "urlPattern": "^/regional/Bundle/.*$",
+      "name": "ITI‑65 Health Channel",
+      "urlPattern": "^/lacpass/_health$",
+      "routes": [
+        {
+          "name": "ITI‑65 Health Route",
+          "host": "10.68.174.209",
+          "port": "8005",
+          "path": "/lacpass/_health",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": []
+        }
+      ],
+      "allow": ["admin"],
       "methods": ["GET"],
-      "checkProvider": false,
-      "type": "http",
-      "primaryUrl": "http://10.68.174.209:8006/regional/Bundle/",
-      "secondaryUrl": "",
-      "properties": {}
-    },
-    {
-      "name": "Health",
-      "host": "10.68.174.209",
-      "port": 8006,
-      "urlPattern": "^/regional/_health$",
-      "methods": ["GET"],
-      "checkProvider": false,
-      "type": "http",
-      "primaryUrl": "http://10.68.174.209:8006/regional/_health",
-      "secondaryUrl": "",
-      "properties": {}
+      "type": "http"
     }
   ],
   "endpoints": [
-    {
-      "name": "DocumentReference Endpoint",
-      "endpointType": "http",
-      "endpoint": "http://10.68.174.209:8006/regional/DocumentReference"
-    },
-    {
-      "name": "Bundle Endpoint",
-      "endpointType": "http",
-      "endpoint": "http://10.68.174.209:8006/regional/Bundle/"
-    },
-    {
-      "name": "Health Endpoint",
-      "endpointType": "http",
-      "endpoint": "http://10.68.174.209:8006/regional/_health"
-    }
-  ]
+    { "name": "iti65-endpoint",  "path": "/lacpass/_iti65",  "method": "post" },
+    { "name": "health-endpoint", "path": "/lacpass/_health", "method": "get" }
+  ],
+  "heartbeatPath": "/lacpass/_health",
+  "heartbeatInterval": 30000
 }
