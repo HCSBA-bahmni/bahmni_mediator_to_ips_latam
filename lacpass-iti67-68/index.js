@@ -15,7 +15,7 @@ const {
   OPENHIM_PASS,
   OPENHIM_API,
   FHIR_NODO_REGIONAL_SERVER,
-  SUMMARY_PROFILE_INT, // lo dejamos, pero no se fuerza si da error
+  SUMMARY_PROFILE_INT, // opcional, no se fuerza si da error
   NODE_ENV,
   LACPASS_MEDIATOR_PORT
 } = process.env;
@@ -44,35 +44,32 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
-// Debug incoming
+// Debug
 app.use((req, _res, next) => {
-  console.log(`[${new Date().toISOString()}] Incoming ${req.method} ${req.originalUrl} body=`, req.body, 'query=', req.query);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} query=`, req.query);
   next();
 });
+process.on('uncaughtException', e => console.error('Uncaught exception:', e));
+process.on('unhandledRejection', e => console.error('Unhandled rejection:', e));
 
-process.on('uncaughtException', e => {
-  console.error('Uncaught exception:', e);
-});
-process.on('unhandledRejection', e => {
-  console.error('Unhandled rejection:', e);
-});
-
+// Health
 app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
 
-// ITI-67: proxy de DocumentReference search por identifier/uuid
-app.post('/lacpass/_iti67', async (req, res) => {
-  const { identifier, uuid } = req.body;
-  const patientId = identifier || uuid;
-  if (!patientId) return res.status(400).json({ error: 'Missing identifier or uuid' });
+/**
+ * ITI-67 simplified as GET:
+ * /lacpass/_iti67?identifier=RUN*19547137-1
+ */
+app.get('/lacpass/_iti67', async (req, res) => {
+  const identifier = req.query.identifier;
+  if (!identifier) return res.status(400).json({ error: 'Missing identifier query param' });
 
   try {
     const params = {
-      'patient.identifier': patientId,
+      'patient.identifier': identifier,
       status: 'current',
       _format: 'json'
     };
-    // opcional: habilitar solo si sabes que el servidor acepta ese filtro sin romper
-    // if (SUMMARY_PROFILE_INT) params.profile = SUMMARY_PROFILE_INT;
+    // if (SUMMARY_PROFILE_INT) params.profile = SUMMARY_PROFILE_INT; // opcional
 
     const summary = await axios.get(
       `${FHIR_NODO_REGIONAL_SERVER}/fhir/DocumentReference`,
@@ -82,49 +79,39 @@ app.post('/lacpass/_iti67', async (req, res) => {
         timeout: 15000
       }
     );
-
-    return res.status(200).json(summary.data);
+    return res.json(summary.data);
   } catch (e) {
-    console.error('❌ ERROR ITI-67 proxy:', e.response?.data || e.message);
-    const errBody = e.response?.data || { message: e.message };
-    return res.status(500).json({ error: errBody });
+    console.error('❌ ERROR ITI-67 proxy GET:', e.response?.data || e.message);
+    return res.status(500).json({ error: e.response?.data || e.message });
   }
 });
 
-// ITI-68: Retrieve Document Set por identifier (usa patient.identifier)
+/**
+ * ITI-68 simplified as GET to bundle URL.
+ * /lacpass/_iti68?bundleUrl=http://.../fhir/Bundle/XYZ
+ */
 app.get('/lacpass/_iti68', async (req, res) => {
-  // asumimos que patientId es un identifier tipo RUN*...
-  const { patientId } = req.query;
-  if (!patientId) return res.status(400).json({ error: 'Missing patientId' });
+  let bundleUrl = req.query.bundleUrl;
+  if (!bundleUrl) return res.status(400).json({ error: 'Missing bundleUrl query param' });
+
+  // Si viene sin formato completo, podrías permitir que sea relativo al nodo:
+  if (!bundleUrl.startsWith('http')) {
+    bundleUrl = `${FHIR_NODO_REGIONAL_SERVER}/${bundleUrl.replace(/^\/+/, '')}`;
+  }
 
   try {
-    const params = {
-      'patient.identifier': patientId
-    };
-
-    const docs = await axios.get(
-      `${FHIR_NODO_REGIONAL_SERVER}/fhir/DocumentReference`,
-      {
-        params,
-        httpsAgent: axios.defaults.httpsAgent,
-        timeout: 15000
-      }
-    );
-
-    const bundle = {
-      resourceType: 'Bundle',
-      id: uuidv4(),
-      type: 'searchset',
-      total: docs.data.total || (docs.data.entry || []).length,
-      entry: docs.data.entry
-    };
-    return res.json(bundle);
+    const bundle = await axios.get(bundleUrl, {
+      params: { _format: 'json' },
+      httpsAgent: axios.defaults.httpsAgent,
+      timeout: 15000
+    });
+    return res.json(bundle.data);
   } catch (e) {
-    console.error('❌ ERROR ITI-68:', e.response?.data || e.message);
-    const errBody = e.response?.data || { message: e.message };
-    return res.status(500).json({ error: errBody });
+    console.error('❌ ERROR ITI-68 proxy GET:', e.response?.data || e.message);
+    return res.status(500).json({ error: e.response?.data || e.message });
   }
 });
 
+// Start
 const PORT = process.env.LACPASS_MEDIATOR_PORT || 8006;
 app.listen(PORT, () => console.log(`LACPASS Mediator listening on port ${PORT}`));
