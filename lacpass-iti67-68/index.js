@@ -53,33 +53,37 @@ app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
 
 // ITI-67: Provide Document Bundle acting as proxy
 app.post('/lacpass/_iti67', async (req, res) => {
-  const { identifier} = req.body; // aquí es RUN*19547137-1
-  if (!identifier) return res.status(400).json({ error: 'Missing uuid' });
+  const { identifier, uuid } = req.body;
+  const patientId = identifier || uuid;
+  if (!patientId) return res.status(400).json({ error: 'Missing identifier or uuid' });
 
   try {
-    // Consulta igual que tu curl directo
+    // Construye params
+    const params = {
+      'patient.identifier': patientId,
+      status: 'current',
+      _format: 'json'
+    };
+    if (SUMMARY_PROFILE_INT) params.profile = SUMMARY_PROFILE_INT;
+
+    // Consulta al nodo regional (FHIR_NODO_REGIONAL_SERVER)
     const summary = await axios.get(
       `${FHIR_NODO_REGIONAL_SERVER}/fhir/DocumentReference`,
       {
-        params: {
-          'patient.identifier': identifier,
-          status: 'current',
-          _format: 'json',
-          profile: SUMMARY_PROFILE // si el servidor lo soporta; sino omitir
-        },
-        httpsAgent: axios.defaults.httpsAgent
+        params,
+        httpsAgent: axios.defaults.httpsAgent,
+        timeout: 10000
       }
     );
 
-    // Si lo que necesitas es exactamente el bundle tal cual viene del servidor FHIR,
-    // lo reenvías directamente:
+    // Devuelve el bundle tal cual
     return res.status(200).json(summary.data);
-
   } catch (e) {
     console.error('❌ ERROR ITI-67 proxy:', e.response?.data || e.message);
-    return res.status(500).json({ error: e.message });
+    return res.status(500).json({ error: e.response?.data || e.message });
   }
 });
+
 
 // ITI‑68: Retrieve Document Set
 app.get('/lacpass/_iti68', async (req, res) => {
