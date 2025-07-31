@@ -1,6 +1,6 @@
 {
-  "name": "direct-fhir-forwarder",
-  "version": "1.0.0",
+  "name": "lacpass-iti67-68",
+  "version": "1.0.1",
   "main": "index.js",
   "type": "module",
   "scripts": {

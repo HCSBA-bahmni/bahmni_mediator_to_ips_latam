@@ -1,54 +1,46 @@
 {
-  "urn": "urn:mediator:lacpass-iti67-68",
-  "version": "1.0.1",
-  "name": "LAC-PASS ITI-67-68 Bundle Mediator",
-  "description": "Mediador que implementa ITI-67 Provide Document Bundle e ITI-68 Retrieve Document Set",
-  "defaultChannelConfig": [
+  "urn": "urn:mediator:regional-fhir-proxy",
+  "version": "1.0.0",
+  "name": "Regional FHIR Proxy",
+  "description": "Proxy simplificado para DocumentReference (ITI-67) y Bundle (ITI-68)",
+  "baseURL": "http://10.68.174.209:8006",
+  "routes": [],
+  "channels": [
     {
-      "name": "ITI-67 Provide Document Channel",
-      "urlPattern": "^/regional/_iti67$",
-      "routes": [
-        {
-          "name": "ITI-67 Route",
-          "primary": true,
-          "enabled": true,
-          "type": "http",
-          "host": "10.68.174.209",
-          "port": 8006,
-          "path": "/regional/_iti67",
-          "secured": false,
-          "passThroughHeaders": ["Authorization"],
-          "routeTransform": ""
-        }
-      ],
-      "allow": ["admin"],
-      "methods": ["GET","POST"],
-      "type": "http"
+      "name": "ITI-67 DocumentReference Search",
+      "host": "10.68.174.209",
+      "port": 8006,
+      "urlPattern": "^/regional/DocumentReference$",
+      "methods": [ "GET" ],
+      "checkProvider": false,
+      "type": "http",
+      "primaryUrl": "http://10.68.174.209:8006/regional/DocumentReference",
+      "secondaryUrl": "",
+      "properties": {}
     },
     {
-      "name": "ITI-68 Retrieve Document Channel",
-      "urlPattern": "^/regional/_iti68$",
-      "routes": [
-        {
-          "name": "ITI-68 Route",
-          "host": "10.68.174.209",
-          "port": "8006",
-          "path": "/regional/_iti68",
-          "primary": true,
-          "type": "http",
-          "passThroughHeaders": []
-        }
-      ],
-      "allow": ["admin"],
-      "methods": ["GET"],
-      "type": "http"
+      "name": "ITI-68 Bundle Retrieve",
+      "host": "10.68.174.209",
+      "port": 8006,
+      "urlPattern": "^/regional/Bundle/.*$",
+      "methods": [ "GET" ],
+      "checkProvider": false,
+      "type": "http",
+      "primaryUrl": "http://10.68.174.209:8006/regional/Bundle/",
+      "secondaryUrl": "",
+      "properties": {}
+    },
+    {
+      "name": "Health",
+      "host": "10.68.174.209",
+      "port": 8006,
+      "urlPattern": "^/regional/_health$",
+      "methods": [ "GET" ],
+      "checkProvider": false,
+      "type": "http",
+      "primaryUrl": "http://10.68.174.209:8006/regional/_health",
+      "secondaryUrl": "",
+      "properties": {}
     }
-  ],
-  "endpoints": [
-    { "name": "iti67-endpoint", "path": "/regional/_iti67", "method": "post" },
-    { "name": "iti67-get-endpoint", "path": "/regional/_iti67", "method": "get" },
-    { "name": "iti68-endpoint", "path": "/regional/_iti68", "method": "get" }
-  ],
-  "heartbeatPath": "/regional/_health",
-  "heartbeatInterval": 30000
+  ]
 }
