@@ -59,7 +59,7 @@ app.post('/lacpass/_iti67', async (req, res) => {
   try {
     // Fetch IPS bundle via $summary
     const summary = await axios.get(
-      `${FHIR_NODE_URL}/fhir/Patient/${uuid}/$summary`,
+      `${FHIR_NODO_REGIONAL_SERVER}/fhir/Patient/${uuid}/$summary`,
       { params: { profile: SUMMARY_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
     );
 
@@ -82,7 +82,7 @@ app.post('/lacpass/_iti67', async (req, res) => {
 
     // Send to national node
     const resp = await axios.post(
-      FHIR_NODO_NACIONAL_SERVER,
+      FHIR_NODO_REGIONAL_SERVER,
       provide,
       { headers: { 'Content-Type': 'application/fhir+json' }, validateStatus: false }
     );
@@ -101,7 +101,7 @@ app.get('/lacpass/_iti68', async (req, res) => {
   try {
     // Search for DocumentReference by patient
     const docs = await axios.get(
-      `${FHIR_NODE_URL}/fhir/DocumentReference`,
+      `${FHIR_NODO_REGIONAL_SERVER}/fhir/DocumentReference`,
       { params: { patient: patientId }, httpsAgent: axios.defaults.httpsAgent }
     );
     // Return the set as a Bundle
