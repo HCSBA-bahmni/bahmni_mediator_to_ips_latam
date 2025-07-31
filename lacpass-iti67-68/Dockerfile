@@ -21,7 +21,7 @@ EXPOSE 8006
 
 # 8) Define a healthcheck para orquestadores
 HEALTHCHECK --interval=30s --timeout=5s \
-  CMD wget --quiet --tries=1 --spider http://localhost:8005/lacpass/_health || exit 1
+  CMD wget --quiet --tries=1 --spider http://localhost:8006/lacpass/_health || exit 1
 
 # 9) Cambia a usuario no-root para mayor seguridad
 USER appuser

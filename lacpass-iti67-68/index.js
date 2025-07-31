@@ -10,14 +10,15 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const mediatorConfig = require('./mediatorConfig.json');
 
-// Environment variables
+// Environment variables (asegúrate de exportar estos)
 const {
   OPENHIM_USER,
   OPENHIM_PASS,
   OPENHIM_API,
   FHIR_NODO_REGIONAL_SERVER,
-  SUMMARY_PROFILE,
-  NODE_ENV
+  SUMMARY_PROFILE_INT,
+  NODE_ENV,
+  LACPASS_MEDIATOR_PORT
 } = process.env;
 
 // OpenHIM config
@@ -32,7 +33,7 @@ const openhimConfig = {
 // Accept self-signed certs in development
 if (NODE_ENV === 'development') {
   axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false });
-  console.log('⚠️ DEV MODE: self‑signed certs accepted');
+  console.log('⚠️ DEV MODE: self-signed certs accepted');
 }
 
 // Register mediator and start heartbeat
@@ -48,6 +49,20 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
+// Debug middleware
+app.use((req, _res, next) => {
+  console.log(`[${new Date().toISOString()}] Incoming ${req.method} ${req.originalUrl} body=`, req.body);
+  next();
+});
+
+// Global error visibility
+process.on('uncaughtException', e => {
+  console.error('Uncaught exception:', e);
+});
+process.on('unhandledRejection', e => {
+  console.error('Unhandled rejection:', e);
+});
+
 // Health check
 app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
 
@@ -58,7 +73,6 @@ app.post('/lacpass/_iti67', async (req, res) => {
   if (!patientId) return res.status(400).json({ error: 'Missing identifier or uuid' });
 
   try {
-    // Construye params
     const params = {
       'patient.identifier': patientId,
       status: 'current',
@@ -66,36 +80,37 @@ app.post('/lacpass/_iti67', async (req, res) => {
     };
     if (SUMMARY_PROFILE_INT) params.profile = SUMMARY_PROFILE_INT;
 
-    // Consulta al nodo regional (FHIR_NODO_REGIONAL_SERVER)
     const summary = await axios.get(
       `${FHIR_NODO_REGIONAL_SERVER}/fhir/DocumentReference`,
       {
         params,
         httpsAgent: axios.defaults.httpsAgent,
-        timeout: 10000
+        timeout: 15000
       }
     );
 
-    // Devuelve el bundle tal cual
     return res.status(200).json(summary.data);
   } catch (e) {
     console.error('❌ ERROR ITI-67 proxy:', e.response?.data || e.message);
-    return res.status(500).json({ error: e.response?.data || e.message });
+    const errBody = e.response?.data || { message: e.message };
+    return res.status(500).json({ error: errBody });
   }
 });
 
-
-// ITI‑68: Retrieve Document Set
+// ITI-68: Retrieve Document Set
 app.get('/lacpass/_iti68', async (req, res) => {
   const { patientId } = req.query;
   if (!patientId) return res.status(400).json({ error: 'Missing patientId' });
   try {
-    // Search for DocumentReference by patient
     const docs = await axios.get(
       `${FHIR_NODO_REGIONAL_SERVER}/fhir/DocumentReference`,
-      { params: { patient: patientId }, httpsAgent: axios.defaults.httpsAgent }
+      {
+        params: { patient: patientId },
+        httpsAgent: axios.defaults.httpsAgent,
+        timeout: 15000
+      }
     );
-    // Return the set as a Bundle
+
     const bundle = {
       resourceType: 'Bundle',
       id: uuidv4(),
@@ -104,10 +119,10 @@ app.get('/lacpass/_iti68', async (req, res) => {
       entry: docs.data.entry
     };
     return res.json(bundle);
-
   } catch (e) {
-    console.error('❌ ERROR ITI‑68:', e.response?.data || e.message);
-    return res.status(500).json({ error: e.message });
+    console.error('❌ ERROR ITI-68:', e.response?.data || e.message);
+    const errBody = e.response?.data || { message: e.message };
+    return res.status(500).json({ error: errBody });
   }
 });
 
