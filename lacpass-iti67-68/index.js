@@ -82,7 +82,7 @@ app.get('/regional/Bundle/:id', async (req, res) => {
   try {
     const url = `${fhirBase()}/Bundle/${encodeURIComponent(req.params.id)}`;
     const response = await axios.get(url, {
-      params: { _format: 'json', status: 'current', ...req.query },
+      params: { _format: 'json', ...req.query },
       httpsAgent: axios.defaults.httpsAgent,
       timeout: 15000
     });
