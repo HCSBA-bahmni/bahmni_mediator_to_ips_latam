@@ -30,7 +30,6 @@
           "name": "ITI-68 Bundle Route",
           "host": "10.68.174.209",
           "port": "8006",
-          "path": "/regional/Bundle",
           "primary": true,
           "type": "http",
           "passThroughHeaders": []
