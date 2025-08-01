@@ -96,4 +96,5 @@ app.get('/regional/Bundle/:id', async (req, res) => {
 
 // start
 const PORT = process.env.LACPASS_MEDIATOR_PORT || 8006;
-app.listen(PORT, () => console.log(`Mediator listening on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Mediator listening on port ${PORT}`));
+
