@@ -1,0 +1,58 @@
+{
+  "urn": "urn:mediator:pdqm-mediator",
+  "version": "1.0.0",
+  "name": "PDQm Patient Lookup Mediator",
+  "description": "Mediador PDQm (ITI-78) para consultas de pacientes, con fallback local",
+  "defaultChannelConfig": [
+    {
+      "name": "PDQm Patient Lookup Channel",
+      "urlPattern": "^/pdqm/_lookup$",
+      "routes": [
+        {
+          "name": "PDQm Patient Lookup Route",
+          "host": "10.68.174.209",
+          "port": "8007",
+          "path": "/pdqm/_lookup",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": ["Authorization", "Content-Type", "Accept"]
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["POST"],
+      "type": "http"
+    },
+    {
+      "name": "PDQm Health Channel",
+      "urlPattern": "^/pdqm/_health$",
+      "routes": [
+        {
+          "name": "PDQm Health Route",
+          "host": "10.68.174.209",
+          "port": "8007",
+          "path": "/pdqm/_health",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": []
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET"],
+      "type": "http"
+    }
+  ],
+  "endpoints": [
+    {
+      "name": "pdqm-patient-lookup-endpoint",
+      "path": "/pdqm/_lookup",
+      "method": "post"
+    },
+    {
+      "name": "pdqm-health-endpoint",
+      "path": "/pdqm/_health",
+      "method": "get"
+    }
+  ],
+  "heartbeatPath": "/pdqm/_health",
+  "heartbeatInterval": 30000
+}
