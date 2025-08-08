@@ -1,0 +1,50 @@
+{
+  "urn": "urn:mediator:terminology-validator",
+  "version": "1.0.0",
+  "name": "Terminology Validator Mediator",
+  "description": "Valida códigos contra el Terminology Server usando $validate-code",
+  "defaultChannelConfig": [
+    {
+      "name": "Terminology Validate Channel",
+      "urlPattern": "^/termino/_validate$",
+      "routes": [
+        {
+          "name": "Terminology Validate Route",
+          "host": "10.68.174.209",
+          "port": "8002",
+          "path": "/termino/_validate",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": []
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["POST"],
+      "type": "http"
+    },
+    {
+      "name": "Terminology Health Channel",
+      "urlPattern": "^/termino/_health$",
+      "routes": [
+        {
+          "name": "Terminology Health Route",
+          "host": "10.68.174.209",
+          "port": "8002",
+          "path": "/termino/_health",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": []
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET"],
+      "type": "http"
+    }
+  ],
+  "endpoints": [
+    { "name": "terminology-validate-endpoint", "path": "/termino/_validate", "method": "post" },
+    { "name": "health-endpoint", "path": "/termino/_health", "method": "get" }
+  ],
+  "heartbeatPath": "/termino/_health",
+  "heartbeatInterval": 30000
+}

@@ -16,12 +16,12 @@ RUN npm ci --only=production
 # 6) Copia el resto del código de la aplicación
 COPY . .
 
-# 7) Expone el puerto donde corre el mediador ITI‑65
-EXPOSE 8006
+# 7) Expone el puerto donde corre el Terminology Mediator
+EXPOSE 8002
 
-# 8) Define un healthcheck para orquestadores (ajusta la ruta si tu mediador tiene otro endpoint)
+# 8) Define un healthcheck para orquestadores
 HEALTHCHECK --interval=30s --timeout=5s \
-  CMD wget --quiet --tries=1 --spider http://localhost:8006/_health || exit 1
+  CMD wget --quiet --tries=1 --spider http://localhost:8002/termino/_health || exit 1
 
 # 9) Cambia a usuario no-root para mayor seguridad
 USER appuser
