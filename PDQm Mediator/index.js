@@ -128,5 +128,5 @@ app.post('/pdqm/_lookup', async (req, res) => {
     }
 });
 
-const PORT_PDQM = PDQM_PORT || 8001;
+const PORT_PDQM = PDQM_PORT || 8007;
 app.listen(PORT_PDQM, () => console.log(`PDQm Mediator listening on port ${PORT_PDQM}`));
