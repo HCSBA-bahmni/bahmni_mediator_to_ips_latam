@@ -38,7 +38,15 @@ services:
     ports:
       - "8006:8006"
     restart: unless-stopped
-    
+
+  lacpass-iti78-mediator:
+    build: ./PDQm Mediator
+    env_file: ./.env
+    # Ajusta el mapeo de puertos según el puerto que exponga tu mediador ITI‑67/68
+    ports:
+      - "8007:8007"
+    restart: unless-stopped
+
 networks:
   default:
     name: lacpass-himnet
