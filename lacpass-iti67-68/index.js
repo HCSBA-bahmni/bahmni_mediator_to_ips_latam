@@ -13,7 +13,8 @@ const {
   OPENHIM_API,
   FHIR_NODO_REGIONAL_SERVER,
   NODE_ENV,
-  LACPASS_MEDIATOR_PORT
+  LACPASS_MEDIATOR_PORT,
+  CORS_ORIGIN // origen permitido (ej: https://TU-BAHMNI)
 } = process.env;
 
 const openhimConfig = {
@@ -39,6 +40,29 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 
 const app = express();
 app.use(express.json({ limit: '20mb' }));
+
+// CORS middleware (antes de rutas)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (CORS_ORIGIN) {
+    // permite solo el origen configurado
+    if (origin === CORS_ORIGIN) {
+      res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
+    }
+  } else if (origin) {
+    // fallback: reflejar origen (o usar '*')
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204); // sin autenticación / lógica adicional
+  }
+  next();
+});
 
 // normalize base FHIR endpoint
 function fhirBase() {
