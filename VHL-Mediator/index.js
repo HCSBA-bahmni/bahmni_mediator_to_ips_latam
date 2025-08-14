@@ -19,7 +19,8 @@ const {
     VHL_PASSCODE = '1234',
     VHL_EXPIRES_DAYS = '30',
     VHL_BASIC_USER,
-    VHL_BASIC_PASS
+    VHL_BASIC_PASS,
+    CORS_ORIGIN
 } = process.env;
 
 // ======== OpenHIM mediator registration ========
@@ -50,12 +51,29 @@ registerMediator(openhimConfig, mediatorConfig, (err) => {
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 
-// CORS simple (ajusta origen según tu front)
+// CORS middleware (antes de rutas)
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-    res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    if (req.method === 'OPTIONS') return res.sendStatus(200);
+    const origin = req.headers.origin;
+
+    if (CORS_ORIGIN) {
+        // convierte la lista de orígenes en un array
+        const allowedOrigins = CORS_ORIGIN.split(',').map(o => o.trim());
+
+        if (allowedOrigins.includes(origin)) {
+            res.setHeader('Access-Control-Allow-Origin', origin);
+        }
+    } else if (origin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
+
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
     next();
 });
 
