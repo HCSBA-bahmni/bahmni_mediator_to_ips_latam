@@ -1,27 +1,58 @@
 {
-  "urn": "urn:uuid:3d2aa0a7-6b19-4d3f-b5a3-3a9f8dc3e3aa",
+  "urn": "urn:mediator:vhl-generator",
+  "version": "1.0.0",
   "name": "VHL Generator Mediator",
   "description": "Emite VHL (HC1) desde un Bundle FHIR (IPS) usando el servicio v2/vshcIssuance",
-  "version": "1.0.0",
-  "defaultConfig": {
-    "matchContentTypes": ["application/json", "application/fhir+json"],
-    "routes": [
-      {
-        "name": "Generate VHL",
-        "path": "/vhl/_generate",
-        "methods": ["POST"],
-        "type": "http"
-      }
-    ]
-  },
-  "endpoints": [
+  "defaultChannelConfig": [
     {
-      "name": "VHL Local Endpoint",
-      "host": "localhost",
-      "port": 8008,
-      "primary": true,
-      "path": "/vhl/_generate",
+      "name": "VHL Generate Channel",
+      "urlPattern": "^/vhl/_generate$",
+      "routes": [
+        {
+          "name": "VHL Generate Route",
+          "host": "10.68.174.209",
+          "port": "8008",
+          "path": "/vhl/_generate",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": ["Accept", "Content-Type", "Authorization"]
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["POST"],
+      "type": "http"
+    },
+    {
+      "name": "VHL Health Channel",
+      "urlPattern": "^/vhl/_health$",
+      "routes": [
+        {
+          "name": "VHL Health Route",
+          "host": "10.68.174.209",
+          "port": "8008",
+          "path": "/vhl/_health",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": []
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET"],
       "type": "http"
     }
-  ]
+  ],
+  "endpoints": [
+    {
+      "name": "vhl-issue-endpoint",
+      "path": "/vhl/_generate",
+      "method": "post"
+    },
+    {
+      "name": "vhl-health-endpoint",
+      "path": "/vhl/_health",
+      "method": "get"
+    }
+  ],
+  "heartbeatPath": "/vhl/_health",
+  "heartbeatInterval": 30000
 }
