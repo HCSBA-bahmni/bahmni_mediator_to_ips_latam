@@ -123,7 +123,7 @@ app.post('/vhl/_generate', async (req, res) => {
 });
 
 // Arrancar server
-const PORT = process.env.VHL_PORT || 8003;
+const PORT = process.env.VHL_PORT || 8008;
 app.listen(PORT, () => {
     console.log(`VHL Mediator listening on http://localhost:${PORT}`);
 });
