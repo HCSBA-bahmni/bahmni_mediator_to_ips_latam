@@ -15,11 +15,71 @@
           "path": "/vhl/_generate",
           "primary": true,
           "type": "http",
-          "passThroughHeaders": ["Accept", "Content-Type", "Authorization"]
+          "passThroughHeaders": [
+            "Accept",
+            "Content-Type",
+            "Authorization"
+          ]
         }
       ],
-      "allow": ["admin"],
-      "methods": ["POST"],
+      "allow": [
+        "admin"
+      ],
+      "methods": [
+        "POST"
+      ],
+      "type": "http"
+    },
+    {
+      "name": "VHL Validate Channel",
+      "urlPattern": "^/vhl/_validate$",
+      "routes": [
+        {
+          "name": "VHL Validate Route",
+          "host": "10.68.174.209",
+          "port": "8008",
+          "path": "/vhl/_validate",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": [
+            "Accept",
+            "Content-Type",
+            "Authorization"
+          ]
+        }
+      ],
+      "allow": [
+        "admin"
+      ],
+      "methods": [
+        "POST"
+      ],
+      "type": "http"
+    },
+    {
+      "name": "VHL Resolve Channel",
+      "urlPattern": "^/vhl/_resolve$",
+      "routes": [
+        {
+          "name": "VHL Resolve Route",
+          "host": "10.68.174.209",
+          "port": "8008",
+          "path": "/vhl/_resolve",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": [
+            "Accept",
+            "Content-Type",
+            "Authorization"
+          ]
+        }
+      ],
+      "allow": [
+        "admin"
+      ],
+      "methods": [
+        "POST"
+      ],
       "type": "http"
     },
     {
@@ -36,8 +96,12 @@
           "passThroughHeaders": []
         }
       ],
-      "allow": ["admin"],
-      "methods": ["GET"],
+      "allow": [
+        "admin"
+      ],
+      "methods": [
+        "GET"
+      ],
       "type": "http"
     }
   ],
@@ -45,6 +109,16 @@
     {
       "name": "vhl-issue-endpoint",
       "path": "/vhl/_generate",
+      "method": "post"
+    },
+    {
+      "name": "vhl-validate-endpoint",
+      "path": "/vhl/_validate",
+      "method": "post"
+    },
+    {
+      "name": "vhl-resolve-endpoint",
+      "path": "/vhl/_resolve",
       "method": "post"
     },
     {
