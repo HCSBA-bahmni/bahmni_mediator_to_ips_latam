@@ -322,23 +322,41 @@ app.post('/forwarder/_event', async (req, res) => {
       'Medication','AllergyIntolerance','DiagnosticReport'
     ];
 
-    for (const t of types) {
+    //este bloque busca primero por encuentro y luego por paciente. para el ips necesito que pregunte por todo. 
+    //for (const t of types) {
+    //  let bundle;
+
+      // 1) Intentar search por Encounter
+    //  try {
+    //    bundle = await getFromProxy(`/${t}?encounter=${uuid}`);
+    //  } catch (err) {
+    //    logStep(`⚠️ Skip ${t} by encounter:`, err.message);
+        // 2) Fallback por Patient
+    //    try {
+    //      bundle = await getFromProxy(`/${t}?patient=${pid}`)
+    //      logStep(`ℹ️ Fallback ${t} by patient`)
+    //    } catch {
+    //      logStep(`⚠️ Skip ${t} by patient`)
+    //      continue
+    //    }
+    //  }
+
+        for (const t of types) {
       let bundle;
 
       // 1) Intentar search por Encounter
       try {
-        bundle = await getFromProxy(`/${t}?encounter=${uuid}`);
-      } catch (err) {
-        logStep(`⚠️ Skip ${t} by encounter:`, err.message);
-        // 2) Fallback por Patient
-        try {
-          bundle = await getFromProxy(`/${t}?patient=${pid}`)
-          logStep(`ℹ️ Fallback ${t} by patient`)
-        } catch {
-          logStep(`⚠️ Skip ${t} by patient`)
-          continue
+        bundle = await getFromProxy(`/${t}?patient=${encodeURIComponent(pid)}`);
+        if (!bundle?.entry?.length) {
+          logStep(`ⓘ ${t}: 0 resultados para patient=${pid}`);
+          continue;
         }
+        logStep(`✓ ${t} by patient`);
+      } catch (err) {
+        logStep(`⚠️ Skip ${t} by patient: ${err?.message ?? err}`);
+        continue;
       }
+
 
       // 3) Sólo procesar Bundles con entries
       if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry)) continue;
