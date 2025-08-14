@@ -311,10 +311,15 @@ app.post('/forwarder/_event', async (req, res) => {
     sent++
 
     // 7.7) Subir recursos relacionados
+    //const types = [
+    //  'Observation','Condition','Procedure','MedicationRequest',
+    //  'Medication','AllergyIntolerance','DiagnosticReport',
+    //  'Immunization','CarePlan','Appointment','DocumentReference'
+    //];
+
     const types = [
       'Observation','Condition','Procedure','MedicationRequest',
-      'Medication','AllergyIntolerance','DiagnosticReport',
-      'Immunization','CarePlan','Appointment','DocumentReference'
+      'Medication','AllergyIntolerance','DiagnosticReport'
     ];
 
     for (const t of types) {
