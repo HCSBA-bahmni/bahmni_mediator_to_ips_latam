@@ -85,6 +85,8 @@ app.get('/health', (req, res) => res.json({status: 'ok'}));
 const isoPlusDays = (days = 30) =>
     new Date(Date.now() + Number(days) * 24 * 60 * 60 * 1000).toISOString();
 
+
+
 // POST /vhl/_generate
 // Body: (Bundle FHIR) - objeto o string
 app.post('/vhl/_generate', async (req, res) => {
@@ -197,7 +199,7 @@ app.post('/vhl/_validate', async (req, res) => {
 
 // ====== helper para headers con Basic opcional ======
 function buildUpstreamJsonHeaders() {
-    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+    const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json, application/*+json, text/plain, */*' };
     if (process.env.VHL_BASIC_USER && process.env.VHL_BASIC_PASS) {
         const basic = Buffer.from(`${process.env.VHL_BASIC_USER}:${process.env.VHL_BASIC_PASS}`).toString('base64');
         headers.Authorization = `Basic ${basic}`;
