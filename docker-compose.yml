@@ -47,6 +47,14 @@ services:
       - "8007:8007"
     restart: unless-stopped
 
+  vhl-mediator:
+    build: ./VHL-Mediator
+    env_file: ./.env
+    # Ajusta el mapeo de puertos según el puerto que exponga tu mediador ITI‑67/68
+    ports:
+      - "8008:8008"
+    restart: unless-stopped
+
 networks:
   default:
     name: lacpass-himnet

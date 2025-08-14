@@ -1,0 +1,27 @@
+{
+  "urn": "urn:uuid:3d2aa0a7-6b19-4d3f-b5a3-3a9f8dc3e3aa",
+  "name": "VHL Generator Mediator",
+  "description": "Emite VHL (HC1) desde un Bundle FHIR (IPS) usando el servicio v2/vshcIssuance",
+  "version": "1.0.0",
+  "defaultConfig": {
+    "matchContentTypes": ["application/json", "application/fhir+json"],
+    "routes": [
+      {
+        "name": "Generate VHL",
+        "path": "/vhl/_generate",
+        "methods": ["POST"],
+        "type": "http"
+      }
+    ]
+  },
+  "endpoints": [
+    {
+      "name": "VHL Local Endpoint",
+      "host": "localhost",
+      "port": 8008,
+      "primary": true,
+      "path": "/vhl/_generate",
+      "type": "http"
+    }
+  ]
+}
