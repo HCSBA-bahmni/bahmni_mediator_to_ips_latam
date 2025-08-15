@@ -57,6 +57,13 @@ services:
       - "8008:8008"
     restart: unless-stopped
 
+  fhir-forwarder-inmunization-mediator:
+    build: ./fhir-forwarder-inmunization-mediator
+    env_file: ./.env
+    ports:
+      - "8009:8009"
+    restart: unless-stopped
+
 networks:
   default:
     name: lacpass-himnet

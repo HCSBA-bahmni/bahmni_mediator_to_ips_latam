@@ -1,18 +1,18 @@
 {
-  "urn": "urn:mediator:fhir-forwarder",
+  "urn": "urn:mediator:fhir-forwarder-immunization",
   "version": "1.0.0",
-  "name": "FHIR Event Forwarder Mediator",
+  "name": "FHIR Event Forwarder immunization Mediator",
   "description": "Reenvía recursos FHIR desde OpenMRS proxy a un nodo nacional vía OpenHIM",
   "defaultChannelConfig": [
     {
       "name": "FHIR Forwarder Event Channel",
-      "urlPattern": "^/forwarder/_event$",
+      "urlPattern": "^/forwarderimmunization/_event$",
       "routes": [
         {
           "name": "FHIR Forwarder Event Route",
           "host": "10.68.174.209",
-          "path": "/forwarder/_event",
-          "port": "8003",
+          "path": "/forwarderimmunization/_event",
+          "port": "8009",
           "primary": true,
           "type": "http"
         }
@@ -23,13 +23,13 @@
     },
     {
       "name": "FHIR Forwarder Health Channel",
-      "urlPattern": "^/forwarder/_health$",
+      "urlPattern": "^/forwarderimmunization/_health$",
       "routes": [
         {
           "name": "FHIR Forwarder Health Route",
           "host": "10.68.174.209",
-          "path": "/forwarder/_health",
-          "port": "8003",
+          "path": "/forwarderimmunization/_health",
+          "port": "8009",
           "primary": true,
           "type": "http"
         }
@@ -40,9 +40,9 @@
     }
   ],
   "endpoints": [
-    { "name": "event-endpoint",  "path": "/forwarder/_event",  "method": "post" },
-    { "name": "health-endpoint", "path": "/forwarder/_health", "method": "get" }
+    { "name": "event-endpoint",  "path": "/forwarderimmunization/_event",  "method": "post" },
+    { "name": "health-endpoint", "path": "/forwarderimmunization/_health", "method": "get" }
   ],
-  "heartbeatPath": "/forwarder/_health",
+  "heartbeatPath": "/forwarderimmunization/_health",
   "heartbeatInterval": 30000
 }
