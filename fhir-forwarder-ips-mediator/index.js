@@ -1,4 +1,5 @@
-// index.merged.js (FHIR Event Forwarder Mediator — versión integrada y extendida)
+// index.hcsba-org-only.seen.js
+// FHIR Event Forwarder Mediator — SOLO default Organization (HCSBA) + control de duplicados con seen.json
 import 'dotenv/config'
 import express from 'express'
 import axios from 'axios'
@@ -18,11 +19,59 @@ const openhimConfig = {
   urn: mediatorConfig.urn
 }
 
-// HTTPS agent for development (self‑signed)
+// HTTPS agent for development (self-signed)
+const devAgent = new https.Agent({ rejectUnauthorized: false })
 if (process.env.NODE_ENV === 'development') {
-  axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false })
-  console.log('⚠️  DEV MODE: self‑signed certs accepted')
+  axios.defaults.httpsAgent = devAgent
+  console.log('⚠️  DEV MODE: self-signed certs accepted')
 }
+
+// -------- Defaults (SOLO Organization) --------
+const DEF_ORG_ENABLED = (process.env.DEFAULT_ORG_ENABLED || 'true').toLowerCase() === 'true'
+const DEF_ORG_ID   = process.env.DEFAULT_ORG_ID   || 'hcsba'
+const DEF_ORG_NAME = process.env.DEFAULT_ORG_NAME || 'Hospital Clínico San Borja Arriarán'
+const DEF_ORG_RUT  = process.env.DEFAULT_ORG_RUT  || '61.608.604-9'
+const DEF_ORG_URL  = process.env.DEFAULT_ORG_URL  || 'https://www.hcsba.cl/'
+const DEF_ORG_PHONE= process.env.DEFAULT_ORG_PHONE|| '+56 2 25749000'
+const DEF_ADDR_LINE= process.env.DEFAULT_ORG_ADDRESS_LINE || 'Avenida Santa Rosa 1234'
+const DEF_ADDR_CITY= process.env.DEFAULT_ORG_CITY || 'Santiago'
+const DEF_ADDR_DIST= process.env.DEFAULT_ORG_DISTRICT || 'Santiago Centro'
+const DEF_ADDR_STATE=process.env.DEFAULT_ORG_STATE || 'Región Metropolitana'
+const DEF_ADDR_COUNTRY=process.env.DEFAULT_ORG_COUNTRY || 'CL'
+
+function buildDefaultOrganization(){
+  return {
+    resourceType: 'Organization',
+    id: DEF_ORG_ID,
+    active: true,
+    name: DEF_ORG_NAME,
+    alias: ['HCSBA','Hospital San Borja Arriarán'],
+    identifier: [{
+      use: 'official',
+      type: {
+        coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'TAX', display: 'Tax ID number' }],
+        text: 'RUT'
+      },
+      system: 'https://www.superdesalud.gob.cl/registro',
+      value: DEF_ORG_RUT
+    }],
+    telecom: [
+      { system: 'phone', value: DEF_ORG_PHONE },
+      { system: 'url', value: DEF_ORG_URL }
+    ],
+    address: [{
+      use: 'work',
+      type: 'physical',
+      line: [DEF_ADDR_LINE],
+      district: DEF_ADDR_DIST,
+      city: DEF_ADDR_CITY,
+      state: DEF_ADDR_STATE,
+      country: DEF_ADDR_COUNTRY
+    }]
+  }
+}
+
+function logStep(msg, ...d) { console.log(new Date().toISOString(), msg, ...d) }
 
 // 1) Register mediator & channels, then start heartbeat
 registerMediator(openhimConfig, mediatorConfig, err => {
@@ -58,58 +107,26 @@ registerMediator(openhimConfig, mediatorConfig, err => {
 const app = express()
 app.use(express.json({ limit: '20mb' }))
 
-// 2) seen.json: track last versionId per uuid
+// 2) seen.json: track last versionId per Encounter UUID
 const SEEN_FILE = './seen.json'
 let seenVersions = {}
-
 try {
-  // 2.1) Si no existe, crearlo con {}
-  if (!fs.existsSync(SEEN_FILE)) {
-    fs.writeFileSync(SEEN_FILE, '{}', 'utf8')
-  }
-  // 2.2) Leerlo y parsearlo, o inicializar a {} si está vacío
+  if (!fs.existsSync(SEEN_FILE)) fs.writeFileSync(SEEN_FILE, '{}', 'utf8')
   const raw = fs.readFileSync(SEEN_FILE, 'utf8').trim()
   seenVersions = raw ? JSON.parse(raw) : {}
 } catch (e) {
   console.warn('⚠️ Could not parse seen.json, re-initializing:', e.message)
   seenVersions = {}
-  try {
-    fs.writeFileSync(SEEN_FILE, '{}', 'utf8')
-  } catch (err) {
+  try { fs.writeFileSync(SEEN_FILE, '{}', 'utf8') } catch (err) {
     console.error('❌ Could not overwrite seen.json:', err)
   }
 }
-
 function saveSeen() {
-  try {
-    fs.writeFileSync(SEEN_FILE, JSON.stringify(seenVersions), 'utf8')
-  } catch (err) {
-    console.error('❌ Could not write seen.json:', err)
-  }
+  try { fs.writeFileSync(SEEN_FILE, JSON.stringify(seenVersions), 'utf8') }
+  catch (err) { console.error('❌ Could not write seen.json:', err) }
 }
 
-// 3) retry helper
-const MAX_RETRIES = 3
-async function retryRequest(fn, max = MAX_RETRIES) {
-  let attempt = 0, lastErr
-  while (attempt < max) {
-    try { return await fn() }
-    catch (e) {
-      lastErr = e; attempt++
-      console.warn(`⏳ Retry ${attempt}/${max}:`, e.message)
-      await new Promise(r => setTimeout(r, 500 * attempt))
-    }
-  }
-  throw lastErr
-}
-
-function logStep(msg, ...d) {
-  console.log(new Date().toISOString(), msg, ...d)
-}
-
-// 4) FHIR proxy calls
-// FHIR_PROXY_URL must include the full prefix, e.g.
-//   FHIR_PROXY_URL=https://10.68.174.206:5000/proxy/fhir
+// 3) Sources
 const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
 async function getFromProxy(path) {
   const url = `${baseProxy}${path}`
@@ -119,14 +136,37 @@ async function getFromProxy(path) {
     auth: { username: process.env.OPENHIM_USER, password: process.env.OPENHIM_PASS }
   })
   logStep('DEBUG proxy status:', resp.status)
-  if (resp.status >= 400) {
-    // lanza para que el try/catch te lo capture
-    throw new Error(`${path} returned ${resp.status}`)
-  }
+  if (resp.status >= 400) throw new Error(`${path} returned ${resp.status}`)
   return resp.data
 }
 
-// 5) PUT al FHIR Node con detección de dependencias faltantes (Encounter/Location/Organization)
+// Optional OpenMRS fallback (read-only) for Location/Encounter/Practitioner
+const devAgent = new https.Agent({ rejectUnauthorized: false }) // reuse from above if needed
+const baseOMRS = (process.env.OPENMRS_FHIR_URL || '').replace(/\/$/, '')
+const omrsAuth = process.env.OPENMRS_USER && process.env.OPENMRS_PASS
+  ? { username: process.env.OPENMRS_USER, password: process.env.OPENMRS_PASS }
+  : null
+async function getFromOpenMRS(path) {
+  if (!baseOMRS || !omrsAuth) throw new Error('OpenMRS fallback not configured')
+  const url = `${baseOMRS}${path}`
+  logStep('GET (openmrs)', url)
+  const resp = await axios.get(url, {
+    validateStatus:false,
+    auth: omrsAuth,
+    httpsAgent: axios.defaults.httpsAgent || devAgent,
+    headers: { Accept: 'application/fhir+json' }
+  })
+  logStep('DEBUG openmrs status:', resp.status)
+  if (resp.status >= 400) throw new Error(`${path} returned ${resp.status}`)
+  return resp.data
+}
+function isGoneOrMissingError(err) {
+  const m = String(err?.message || '').match(/ returned (\d{3})/)
+  const code = m ? parseInt(m[1], 10) : undefined
+  return code === 404 || code === 410
+}
+
+// 4) PUT destino con retry de dependencias
 async function putToNode(resource) {
   const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
   const doPut = async () => {
@@ -137,7 +177,6 @@ async function putToNode(resource) {
     })
     if (r.status >= 400) {
       logStep('❌ PUT failed payload:', JSON.stringify(r.data, null, 2))
-      // Detectar faltantes conocidos en el diagnóstico del OperationOutcome
       const diag = r?.data?.issue?.[0]?.diagnostics || ''
       const mEnc = typeof diag === 'string' ? diag.match(/Resource Encounter\/([A-Za-z0-9\-\.]{1,64})/) : null
       const mLoc = typeof diag === 'string' ? diag.match(/Resource Location\/([A-Za-z0-9\-\.]{1,64})/) : null
@@ -148,121 +187,168 @@ async function putToNode(resource) {
     return { status: r.status }
   }
 
-  // Primer intento
   let res = await doPut()
-
-  // Intentar resolver faltantes comunes y reintentar
   if (res.missingLocationId) { await uploadLocationWithParents(res.missingLocationId); res = await doPut() }
   if (res.missingOrganizationId) { await uploadOrganization(res.missingOrganizationId); res = await doPut() }
   if (res.missingEncounterId) { await uploadEncounterWithParents(res.missingEncounterId); res = await doPut() }
-
   if (res.status >= 400) throw new Error(`PUT failed ${res.status}`)
   return res.status
 }
 
-// --- Caches
+// 5) Caches
 const uploadedLocations     = new Set()
 const uploadedEncounters    = new Set()
 const uploadedObservations  = new Set()
 const uploadedPractitioners = new Set()
 const uploadedOrganizations = new Set()
 
-// Helpers de subida de dependencias
-async function uploadOrganization(orgId){
-  if (uploadedOrganizations.has(orgId)) return 0
-  logStep('🔍 Fetching Organization…', orgId)
-  const org = await getFromProxy(`/Organization/${orgId}`)
-  logStep('📤 Subiendo Organization…', orgId)
-  await putToNode(org)
-  uploadedOrganizations.add(orgId)
-  return 1
-}
-
-// Asegurar Encounter referenciado en un recurso (y sus dependencias)
-async function ensureEncounterRefs(resource) {
-  const encRef = resource?.encounter?.reference
-  if (encRef?.startsWith('Encounter/')) {
-    const encId = encRef.split('/')[1]
-    if (!uploadedEncounters.has(encId)) {
-      await uploadEncounterWithParents(encId)
-    }
+async function ensureDefaultOrganization(){
+  if (!DEF_ORG_ENABLED) return
+  if (!uploadedOrganizations.has(DEF_ORG_ID)) {
+    const org = buildDefaultOrganization()
+    logStep('🏥 Asegurando Organization por defecto…', DEF_ORG_ID)
+    await putToNode(org)
+    uploadedOrganizations.add(DEF_ORG_ID)
   }
 }
 
-// recursion para Location.partOf
+async function uploadOrganization(orgId){
+  if (uploadedOrganizations.has(orgId)) return 0
+  try {
+    logStep('🔍 Fetching Organization…', orgId)
+    const org = await getFromProxy(`/Organization/${orgId}`)
+    logStep('📤 Subiendo Organization…', orgId)
+    await putToNode(org)
+    uploadedOrganizations.add(orgId)
+    return 1
+  } catch (e) {
+    if (DEF_ORG_ENABLED && (isGoneOrMissingError(e) || /Unknown resource type 'Organization'/.test(String(e)))) {
+      await ensureDefaultOrganization()
+      return 0
+    }
+    throw e
+  }
+}
+
 async function uploadLocationWithParents(locId) {
   if (uploadedLocations.has(locId)) return;
-  // 1) Traer el Location
-  logStep('🔍 Fetching Location…', locId);
-  const loc = await getFromProxy(`/Location/${locId}`);
-  // 2) Si tiene partOf, sube primero al padre
+  let loc
+  try {
+    logStep('🔍 Fetching Location…', locId);
+    loc = await getFromProxy(`/Location/${locId}`);
+  } catch (e) {
+    if (isGoneOrMissingError(e) && baseOMRS && omrsAuth) {
+      try { loc = await getFromOpenMRS(`/Location/${locId}`) }
+      catch (e2) { if (isGoneOrMissingError(e2)) { logStep('🗑️  Location no disponible, se omite:', locId); return } else throw e2 }
+    } else { if (isGoneOrMissingError(e)) { logStep('🗑️  Location no disponible, se omite:', locId); return } throw e }
+  }
   const parentRef = loc.partOf?.reference;
-  if (parentRef && parentRef.startsWith('Location/')) {
+  if (parentRef?.startsWith('Location/')) {
     const parentId = parentRef.split('/')[1];
     await uploadLocationWithParents(parentId);
   }
-  // 3) Subir este Location
   logStep('📤 Subiendo Location…', locId);
   await putToNode(loc);
   uploadedLocations.add(locId);
 }
 
-// recursion para Encounter.partOf + dependencias (Location/Org/Practitioner)
+async function uploadPractitioner(pracRef) {
+  const pracId = pracRef.split('/')[1]
+  if (uploadedPractitioners.has(pracId)) return 0
+  let prac
+  try {
+    logStep('🔍 Fetching Practitioner…', pracId)
+    prac = await getFromProxy(`/Practitioner/${pracId}`)
+  } catch (e) {
+    if (isGoneOrMissingError(e) && baseOMRS && omrsAuth) {
+      try { prac = await getFromOpenMRS(`/Practitioner/${pracId}`) }
+      catch (e2) { if (isGoneOrMissingError(e2)) { logStep('🗑️  Practitioner no disponible, se omite:', pracId); return 0 } else throw e2 }
+    } else { if (isGoneOrMissingError(e)) { logStep('🗑️  Practitioner no disponible, se omite:', pracId); return 0 } throw e }
+  }
+  logStep('📤 Subiendo Practitioner…', pracId)
+  await putToNode(prac)
+  uploadedPractitioners.add(pracId)
+  return 1
+}
+
 async function uploadEncounterWithParents(encId) {
   if (uploadedEncounters.has(encId)) return
+  let encRes
+  try {
+    logStep('🔍 Fetching Encounter…', encId)
+    encRes = await getFromProxy(`/Encounter/${encId}`)
+  } catch (e) {
+    if (isGoneOrMissingError(e) && baseOMRS && omrsAuth) {
+      try { encRes = await getFromOpenMRS(`/Encounter/${encId}`) }
+      catch (e2) { if (isGoneOrMissingError(e2)) { logStep('🗑️  Encounter no disponible, se omite:', encId); return } else throw e2 }
+    } else { throw e }
+  }
 
-  // 1) fetch del Encounter
-  logStep('🔍 Fetching Encounter…', encId)
-  const encRes = await getFromProxy(`/Encounter/${encId}`)
-
-  // 2) si tiene parent, lo sube primero
+  // padres
   const parentRef = encRes.partOf?.reference
   if (parentRef?.startsWith('Encounter/')) {
     const parentId = parentRef.split('/')[1]
     await uploadEncounterWithParents(parentId)
   }
 
-  // 2.b) Organization serviceProvider
+  // serviceProvider
   const orgRef = encRes.serviceProvider?.reference
   if (orgRef?.startsWith('Organization/')) {
-    await uploadOrganization(orgRef.split('/')[1])
-  }
-
-  // 2.c) Location[] y sus partOf
-  if (Array.isArray(encRes.location)) {
-    for (const locEntry of encRes.location) {
-      const locRef = locEntry.location?.reference;
-      if (locRef?.startsWith('Location/')) {
-        await uploadLocationWithParents(locRef.split('/')[1]);
-      }
+    try { await uploadOrganization(orgRef.split('/')[1]) }
+    catch (e) {
+      if (DEF_ORG_ENABLED && (isGoneOrMissingError(e) || /Unknown resource type 'Organization'/.test(String(e)))) {
+        await ensureDefaultOrganization()
+        encRes.serviceProvider = { reference: `Organization/${DEF_ORG_ID}` }
+      } else throw e
     }
+  } else if (DEF_ORG_ENABLED) {
+    await ensureDefaultOrganization()
+    encRes.serviceProvider = { reference: `Organization/${DEF_ORG_ID}` }
   }
 
-  // 2.d) Practitioners de participant[]
+  // locations (respetar reales; quitar inexistentes)
+  if (Array.isArray(encRes.location)) {
+    const filtered = []
+    for (const locEntry of encRes.location) {
+      const locRef = locEntry.location?.reference
+      if (!locRef?.startsWith('Location/')) { filtered.push(locEntry); continue }
+      const locId = locRef.split('/')[1]
+      try { await uploadLocationWithParents(locId); filtered.push(locEntry) }
+      catch (e) { if (isGoneOrMissingError(e)) { logStep('🧹 Quitando Location inexistente:', locId) } else throw e }
+    }
+    encRes.location = filtered
+    if (encRes.location.length === 0) delete encRes.location
+  }
+
+  // participants
   if (Array.isArray(encRes.participant)) {
+    const filteredP = []
     for (const p of encRes.participant) {
       const indyRef = p.individual?.reference
-      if (indyRef?.startsWith('Practitioner/')) {
-        await uploadPractitioner(indyRef)
-      }
+      if (!indyRef?.startsWith('Practitioner/')) { filteredP.push(p); continue }
+      try { await uploadPractitioner(indyRef); filteredP.push(p) }
+      catch (e) { if (isGoneOrMissingError(e)) { logStep('🧹 Quitando participant inexistente:', indyRef) } else throw e }
     }
+    encRes.participant = filteredP
+    if (encRes.participant.length === 0) delete encRes.participant
   }
 
-  // 3) Subir este Encounter
   logStep('📤 Subiendo Encounter…', encId)
   await putToNode(encRes)
   uploadedEncounters.add(encId)
 }
 
-// --- Recursive upload for Observation.hasMember ---
+// --- Observations ---
 async function uploadObservationWithMembers(obsId) {
   if (uploadedObservations.has(obsId)) return 0
   uploadedObservations.add(obsId)
 
   const obs = await getFromProxy(`/Observation/${obsId}`)
-
-  // Asegurar Encounter antes del PUT
-  await ensureEncounterRefs(obs)
+  const encRef = obs?.encounter?.reference
+  if (encRef?.startsWith('Encounter/')) {
+    const encId = encRef.split('/')[1]
+    await uploadEncounterWithParents(encId)
+  }
 
   let count = 1
   if (Array.isArray(obs.hasMember)) {
@@ -277,18 +363,7 @@ async function uploadObservationWithMembers(obsId) {
   return count
 }
 
-async function uploadPractitioner(pracRef) {
-  const pracId = pracRef.split('/')[1]
-  if (uploadedPractitioners.has(pracId)) return 0
-  logStep('🔍 Fetching Practitioner…', pracId)
-  const prac = await getFromProxy(`/Practitioner/${pracId}`)
-  logStep('📤 Subiendo Practitioner…', pracId)
-  await putToNode(prac)
-  uploadedPractitioners.add(pracId)
-  return 1
-}
-
-// 6) Health endpoint del forwarder
+// 6) Health
 app.get('/forwarder/_health', (_req, res) => res.send('OK'))
 
 // 7) Event endpoint
@@ -297,194 +372,117 @@ app.post('/forwarder/_event', async (req, res) => {
   const { uuid } = req.body
   if (!uuid) return res.status(400).json({ error: 'Missing uuid' })
 
-  // inicializamos el contador ANTES de usarlo
   let sent = 0
+  let encVersion = null
 
   try {
-    // 7.1) Fetch Encounter desde el proxy
     const enc = await getFromProxy(`/Encounter/${uuid}`)
     if (!enc.resourceType) throw new Error('Invalid FHIR resource')
 
-    // 7.2) Duplicate check (opcional)
-    // const ver = enc.meta?.versionId
-    // if (seenVersions[uuid] === ver) {
-    //   logStep('🔁 No version change, skipping', uuid, ver)
-    //   return res.json({ status:'duplicate', uuid, version:ver })
-    // }
-    // seenVersions[uuid] = ver
-    // saveSeen()
-    // logStep('🔔 Processing version', uuid, ver)
+    // --- Duplicate check (by meta.versionId)
+    encVersion = enc?.meta?.versionId || null
+    if (encVersion && seenVersions[uuid] === encVersion) {
+      logStep('🔁 No version change, skipping', uuid, encVersion)
+      return res.json({ status:'duplicate', uuid, version: encVersion })
+    }
 
-    // 7.3) Extraer patientId de enc.subject.reference
     const pid = enc.subject?.reference?.split('/').pop()
     if (!pid) throw new Error('Encounter.subject.reference inválido')
 
-    // 7.4.1) Subir Patient 
-    const [ , patientId ] = enc.subject.reference.split('/')
+    // Patient
+    const [, patientId ] = enc.subject.reference.split('/')
     logStep('📤 Subiendo Patient…', patientId)
     const patient = await getFromProxy(`/Patient/${patientId}`)
-    await putToNode(patient)
-    sent++
+    await putToNode(patient); sent++
 
-    // 7.4.2) NOTIFICAR al ITI‑65 Mediator que el Patient ya existe
+    // Notificar ITI-65
     try {
-      logStep('🔔 Notificando ITI‑65 Mediator para', patientId)
+      logStep('🔔 Notificando ITI-65 Mediator para', patientId)
       await axios.post(
         `${process.env.OPENHIM_SUMMARY_ENDPOINT}`,
         { uuid: patientId },
         {
-          auth: {
-            username: process.env.OPENHIM_USER,
-            password: process.env.OPENHIM_PASS
-          },
-          httpsAgent: axios.defaults.httpsAgent
+          auth: { username: process.env.OPENHIM_USER, password: process.env.OPENHIM_PASS },
+          httpsAgent: axios.defaults.httpsAgent || devAgent
         }
       )
-      logStep('✅ Mediator ITI‑65 notificado')
+      logStep('✅ Mediator ITI-65 notificado')
     } catch (e) {
-      console.error('❌ Error notificando ITI‑65 Mediator:', e.response?.data || e.message)
-    }    
-
-    // 7.5) Subir Practitioners referenciados en el Encounter
-    if (Array.isArray(enc.participant)) {
-      for (const p of enc.participant) {
-        const indyRef = p.individual?.reference
-        if (indyRef?.startsWith('Practitioner/')) {
-          sent += await uploadPractitioner(indyRef)
-        }
-      }
+      console.error('❌ Error notificando ITI-65 Mediator:', e.response?.data || e.message)
     }
 
-    // 7.5) (Opcional) Subir Locations referenciadas
-    if (Array.isArray(enc.location)) {
-      for (const locEntry of enc.location) {
-        const locRef = locEntry.location?.reference;
-        if (locRef?.startsWith('Location/')) {
-          const locId = locRef.split('/')[1];
-          await uploadLocationWithParents(locId);
-          sent++;
-        }
-      }
-    }
+    // Encounter (solo default Org; Location real u omitida)
+    await uploadEncounterWithParents(uuid); sent++
 
-    // Organization serviceProvider
-    const orgRef = enc.serviceProvider?.reference
-    if (orgRef?.startsWith('Organization/')) {
-      await uploadOrganization(orgRef.split('/')[1])
-      sent++
-    }
-
-    // 7.6) Subir Encounter (y recursivamente sus padres y dependencias)
-    await uploadEncounterWithParents(uuid)
-    sent++
-
-    // 7.7) Subir recursos relacionados (IPS-friendly: por patient)
-    const types = [
-      'Observation','Condition','Procedure','MedicationRequest',
-      'Medication','AllergyIntolerance','DiagnosticReport'
-      // 'Immunization','CarePlan','Appointment','DocumentReference' // si luego lo necesitas
-    ];
+    // Tipos por paciente (IPS-friendly)
+    const types = ['Observation','Condition','Procedure','MedicationRequest','Medication','AllergyIntolerance','DiagnosticReport']
 
     for (const t of types) {
       let bundle;
-
-      // 1) Intentar search por paciente
       try {
         bundle = await getFromProxy(`/${t}?patient=${encodeURIComponent(pid)}`);
-        if (!bundle?.entry?.length) {
-          logStep(`ⓘ ${t}: 0 resultados para patient=${pid}`);
-          continue;
-        }
+        if (!bundle?.entry?.length) { logStep(`ⓘ ${t}: 0 resultados para patient=${pid}`); continue; }
         logStep(`✓ ${t} by patient`);
-      } catch (err) {
-        logStep(`⚠️ Skip ${t} by patient: ${err?.message ?? err}`);
-        continue;
-      }
+      } catch (err) { logStep(`⚠️ Skip ${t} by patient:`, err?.message ?? err); continue; }
 
-      // 3) Sólo procesar Bundles con entries
       if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry)) continue;
 
       for (const { resource } of bundle.entry) {
-        // 0) Asegura Encounter referenciado (clave para evitar 400)
-        await ensureEncounterRefs(resource)
+        const eRef = resource?.encounter?.reference
+        if (eRef?.startsWith('Encounter/')) await uploadEncounterWithParents(eRef.split('/')[1])
 
-        // --- Pre-upload referenced Practitioners ---
+        // Practitioners
         const pracRefs = [
           resource.recorder?.reference,
           resource.requester?.reference,
           ...(resource.performer||[]).map(p => p.actor?.reference)
         ].filter(r => r?.startsWith('Practitioner/'));
-
         for (const r of pracRefs) {
-          sent += await uploadPractitioner(r);
+          try { await uploadPractitioner(r); sent++ }
+          catch (e) { if (!isGoneOrMissingError(e)) throw e }
         }
 
-        // --- Eliminar recorder/requester si no está subido ---
+        // limpiar recorder/requester si no quedaron
         for (const field of ['recorder','requester']) {
           const ref = resource[field]?.reference
           if (ref?.startsWith('Practitioner/')) {
             const id = ref.split('/')[1]
-            if (!uploadedPractitioners.has(id)) {
-              logStep(`⚠️ Omitiendo ${field} no subido:`, id)
-              delete resource[field]
-            }
+            if (!uploadedPractitioners.has(id)) { logStep(`⚠️ Omitiendo ${field} no subido:`, id); delete resource[field] }
           }
         }
-
-        // --- Filtrar performer[] si no están subidos ---
         if (Array.isArray(resource.performer)) {
           resource.performer = resource.performer.filter(p => {
-            const ref = p.actor?.reference;
+            const ref = p.actor?.reference
             if (ref?.startsWith('Practitioner/')) {
-              const perfId = ref.split('/')[1];
-              if (!uploadedPractitioners.has(perfId)) {
-                logStep('⚠️ Omitiendo performer no subido:', perfId);
-                return false;
-              }
+              const id = ref.split('/')[1]
+              if (!uploadedPractitioners.has(id)) { logStep('⚠️ Omitiendo performer no subido:', id); return false }
             }
-            return true;
-          });
-          if (resource.performer.length === 0) delete resource.performer;
+            return true
+          })
+          if (resource.performer.length === 0) delete resource.performer
         }
 
-        // --- Subida con retry de dependencias comunes
-        try {
-          if (resource.resourceType === 'Observation') {
-            sent += await uploadObservationWithMembers(resource.id)
-          } else {
-            logStep('📤 Subiendo', resource.resourceType, resource.id)
-            await putToNode(resource)
-            sent++
-          }
-        } catch (e) {
-          const diag = e.response?.data?.issue?.[0]?.diagnostics || ''
-          if (diag.includes('Resource Practitioner/')) {
-            try {
-              logStep('⚠️ Retry sin referencias Practitioner tras error:', resource.id)
-              delete resource.recorder
-              delete resource.requester
-              await putToNode(resource)
-              sent++
-            } catch (retryErr) {
-              throw retryErr
-            }
-          } else {
-            throw e
-          }
-        }
+        if (resource.resourceType === 'Observation') { sent += await uploadObservationWithMembers(resource.id) }
+        else { logStep('📤 Subiendo', resource.resourceType, resource.id); await putToNode(resource); sent++ }
       }
     }
 
-    // 7.8) Guardar la versión del Encounter procesado (si usas el control)
-    // saveSeen()
+    // --- Persist seen version AFTER successful processing
+    if (encVersion) {
+      seenVersions[uuid] = encVersion
+      saveSeen()
+    }
 
     logStep('🎉 Done', uuid)
-    res.json({ status:'ok', uuid, sent })
+    res.json({ status:'ok', uuid, version: encVersion || undefined, sent })
   } catch (e) {
     logStep('❌ ERROR:', e.message)
     res.status(500).json({ error: e.message })
   }
 })
+
+// 8) Health
+app.get('/forwarder/_health', (_req, res) => res.send('OK'))
 
 const PORT = process.env.FORWARDER_MEDIATOR_PORT || 8003
 app.listen(PORT, () => logStep(`FHIR Forwarder on port ${PORT}`))
