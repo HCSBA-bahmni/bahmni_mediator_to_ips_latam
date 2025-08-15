@@ -39,6 +39,24 @@
       "allow": ["admin"],
       "methods": ["GET"],
       "type": "http"
+    },
+    {
+      "name": "PDQm Patient Search Channel",
+      "urlPattern": "^/Patient$",
+      "routes": [
+        {
+          "name": "PDQm Patient Search Route",
+          "host": "10.68.174.209",
+          "port": "8007",
+          "path": "/Patient",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": ["Authorization", "Content-Type", "Accept"]
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET"],
+      "type": "http"
     }
   ],
   "endpoints": [
@@ -50,6 +68,11 @@
     {
       "name": "pdqm-health-endpoint",
       "path": "/pdqm/_health",
+      "method": "get"
+    },
+    {
+      "name": "pdqm-patient-search-endpoint",
+      "path": "/Patient",
       "method": "get"
     }
   ],
