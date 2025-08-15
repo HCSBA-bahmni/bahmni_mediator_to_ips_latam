@@ -1,5 +1,6 @@
-// index.hcsba-org-only.seen.fix1.js
-// FHIR Event Forwarder Mediator — SOLO default Organization (HCSBA) + seen.json (FIX: devAgent duplicate)
+// index.hcsba-org-only.seen.fix2.js
+// FHIR Event Forwarder Mediator — SOLO default Organization (HCSBA) + seen.json
+// Fixes: keep Encounter.location only if uploaded; strip missing Location on retry.
 import 'dotenv/config'
 import express from 'express'
 import axios from 'axios'
@@ -165,6 +166,19 @@ function isGoneOrMissingError(err) {
   return code === 404 || code === 410
 }
 
+// helper: strip missing location from Encounter before retry
+function stripEncounterLocation(resource, locId) {
+  if (resource?.resourceType !== 'Encounter') return
+  const ref = `Location/${locId}`
+  const before = Array.isArray(resource.location) ? resource.location.length : 0
+  if (Array.isArray(resource.location)) {
+    resource.location = resource.location.filter(le => le?.location?.reference !== ref)
+    if (resource.location.length === 0) delete resource.location
+  }
+  const after = Array.isArray(resource.location) ? resource.location.length : 0
+  if (before !== after) logStep('🧹 Stripped missing Location from Encounter:', ref)
+}
+
 // 4) PUT destino con retry de dependencias
 async function putToNode(resource) {
   const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
@@ -187,7 +201,15 @@ async function putToNode(resource) {
   }
 
   let res = await doPut()
-  if (res.missingLocationId) { await uploadLocationWithParents(res.missingLocationId); res = await doPut() }
+
+  if (res.missingLocationId) {
+    await uploadLocationWithParents(res.missingLocationId)
+    // Si no logramos subir la Location, quita la referencia del Encounter antes del retry
+    if (resource.resourceType === 'Encounter' && !uploadedLocations.has(res.missingLocationId)) {
+      stripEncounterLocation(resource, res.missingLocationId)
+    }
+    res = await doPut()
+  }
   if (res.missingOrganizationId) { await uploadOrganization(res.missingOrganizationId); res = await doPut() }
   if (res.missingEncounterId) { await uploadEncounterWithParents(res.missingEncounterId); res = await doPut() }
   if (res.status >= 400) throw new Error(`PUT failed ${res.status}`)
@@ -312,8 +334,15 @@ async function uploadEncounterWithParents(encId) {
       const locRef = locEntry.location?.reference
       if (!locRef?.startsWith('Location/')) { filtered.push(locEntry); continue }
       const locId = locRef.split('/')[1]
-      try { await uploadLocationWithParents(locId); filtered.push(locEntry) }
-      catch (e) { if (isGoneOrMissingError(e)) { logStep('🧹 Quitando Location inexistente:', locId) } else throw e }
+      try {
+        await uploadLocationWithParents(locId)
+        // ✅ Solo conservar si efectivamente se subió
+        if (uploadedLocations.has(locId)) filtered.push(locEntry)
+        else logStep('🧹 Quitando Location no subida:', locId)
+      } catch (e) {
+        if (isGoneOrMissingError(e)) { logStep('🧹 Quitando Location inexistente:', locId) }
+        else throw e
+      }
     }
     encRes.location = filtered
     if (encRes.location.length === 0) delete encRes.location
