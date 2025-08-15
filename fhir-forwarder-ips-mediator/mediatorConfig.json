@@ -1,0 +1,48 @@
+{
+  "urn": "urn:mediator:fhir-forwarder",
+  "version": "1.0.0",
+  "name": "FHIR Event Forwarder Mediator",
+  "description": "Reenvía recursos FHIR desde OpenMRS proxy a un nodo nacional vía OpenHIM",
+  "defaultChannelConfig": [
+    {
+      "name": "FHIR Forwarder Event Channel",
+      "urlPattern": "^/forwarder/_event$",
+      "routes": [
+        {
+          "name": "FHIR Forwarder Event Route",
+          "host": "10.68.174.209",
+          "path": "/forwarder/_event",
+          "port": "8003",
+          "primary": true,
+          "type": "http"
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["POST"],
+      "type": "http"
+    },
+    {
+      "name": "FHIR Forwarder Health Channel",
+      "urlPattern": "^/forwarder/_health$",
+      "routes": [
+        {
+          "name": "FHIR Forwarder Health Route",
+          "host": "10.68.174.209",
+          "path": "/forwarder/_health",
+          "port": "8003",
+          "primary": true,
+          "type": "http"
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET"],
+      "type": "http"
+    }
+  ],
+  "endpoints": [
+    { "name": "event-endpoint",  "path": "/forwarder/_event",  "method": "post" },
+    { "name": "health-endpoint", "path": "/forwarder/_health", "method": "get" }
+  ],
+  "heartbeatPath": "/forwarder/_health",
+  "heartbeatInterval": 30000
+}

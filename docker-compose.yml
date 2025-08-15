@@ -7,8 +7,8 @@ services:
     env_file: ./.env
     restart: unless-stopped
 
-  fhir-forwarder-mediator:
-    build: ./fhir-forwarder-mediator
+  fhir-forwarder-ips-mediator:
+    build: ./fhir-forwarder-ips-mediator
     env_file: ./.env
     ports:
       - "8003:8003"

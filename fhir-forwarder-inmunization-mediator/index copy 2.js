@@ -25,27 +25,48 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 // 1) Register mediator & channels, then start heartbeat
-registerMediator(openhimConfig, mediatorConfig, err => {
+registerMediator(openhimConfig, mediatorConfig, async err => {
   if (err) {
     console.error('❌ Registration error:', err)
     process.exit(1)
   }
   console.log('✅ Forwarder registered')
 
-  Promise.all(
-    mediatorConfig.defaultChannelConfig.map(ch =>
-      axios.post(
+  const auth = { username: openhimConfig.username, password: openhimConfig.password }
+
+  async function listChannels() {
+    const resp = await axios.get(`${openhimConfig.apiURL}/channels`, { auth })
+    if (!Array.isArray(resp.data)) throw new Error('Unexpected channels list response')
+    return resp.data
+  }
+
+  async function ensureChannel(ch) {
+    try {
+      const channels = await listChannels()
+      const exists = channels.some(c => c.name === ch.name)
+      if (exists) {
+        console.log(`ℹ️ Channel exists: ${ch.name} (skip)`)
+        return
+      }
+      await axios.post(
         `${openhimConfig.apiURL}/channels`,
         { ...ch, mediator_urn: mediatorConfig.urn },
-        { auth: { username: openhimConfig.username, password: openhimConfig.password } }
+        { auth }
       )
-      .then(() => console.log(`✅ Channel created: ${ch.name}`))
-      .catch(e => console.error(`❌ Channel ${ch.name} error:`, e.response?.data || e.message))
-    )
-  ).then(() => {
-    console.log('✅ All channels processed')
-    activateHeartbeat(openhimConfig)
-  })
+      console.log(`✅ Channel created: ${ch.name}`)
+    } catch (e) {
+      console.error(`❌ Channel ${ch.name} error:`, e.response?.data || e.message)
+    }
+  }
+
+  for (const ch of mediatorConfig.defaultChannelConfig) {
+    // serial para mensajes más claros
+    // eslint-disable-next-line no-await-in-loop
+    await ensureChannel(ch)
+  }
+
+  console.log('✅ All channels processed')
+  activateHeartbeat(openhimConfig)
 })
 
 const app = express()
@@ -322,41 +343,23 @@ app.post('/forwarder/_event', async (req, res) => {
       'Medication','AllergyIntolerance','DiagnosticReport'
     ];
 
-    //este bloque busca primero por encuentro y luego por paciente. para el ips necesito que pregunte por todo. 
-    //for (const t of types) {
-    //  let bundle;
-
-      // 1) Intentar search por Encounter
-    //  try {
-    //    bundle = await getFromProxy(`/${t}?encounter=${uuid}`);
-    //  } catch (err) {
-    //    logStep(`⚠️ Skip ${t} by encounter:`, err.message);
-        // 2) Fallback por Patient
-    //    try {
-    //      bundle = await getFromProxy(`/${t}?patient=${pid}`)
-    //      logStep(`ℹ️ Fallback ${t} by patient`)
-    //    } catch {
-    //      logStep(`⚠️ Skip ${t} by patient`)
-    //      continue
-    //    }
-    //  }
-
-        for (const t of types) {
+    for (const t of types) {
       let bundle;
 
-      // 1) Intentar search por paciente
+      // 1) Intentar search por Encounter
       try {
-        bundle = await getFromProxy(`/${t}?patient=${encodeURIComponent(pid)}`);
-        if (!bundle?.entry?.length) {
-          logStep(`ⓘ ${t}: 0 resultados para patient=${pid}`);
-          continue;
-        }
-        logStep(`✓ ${t} by patient`);
+        bundle = await getFromProxy(`/${t}?encounter=${uuid}`);
       } catch (err) {
-        logStep(`⚠️ Skip ${t} by patient: ${err?.message ?? err}`);
-        continue;
+        logStep(`⚠️ Skip ${t} by encounter:`, err.message);
+        // 2) Fallback por Patient
+        try {
+          bundle = await getFromProxy(`/${t}?patient=${pid}`)
+          logStep(`ℹ️ Fallback ${t} by patient`)
+        } catch {
+          logStep(`⚠️ Skip ${t} by patient`)
+          continue
+        }
       }
-
 
       // 3) Sólo procesar Bundles con entries
       if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry)) continue;
