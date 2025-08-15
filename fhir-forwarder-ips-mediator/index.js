@@ -1,5 +1,5 @@
-// index.hcsba-org-only.seen.js
-// FHIR Event Forwarder Mediator — SOLO default Organization (HCSBA) + control de duplicados con seen.json
+// index.hcsba-org-only.seen.fix1.js
+// FHIR Event Forwarder Mediator — SOLO default Organization (HCSBA) + seen.json (FIX: devAgent duplicate)
 import 'dotenv/config'
 import express from 'express'
 import axios from 'axios'
@@ -141,7 +141,6 @@ async function getFromProxy(path) {
 }
 
 // Optional OpenMRS fallback (read-only) for Location/Encounter/Practitioner
-const devAgent = new https.Agent({ rejectUnauthorized: false }) // reuse from above if needed
 const baseOMRS = (process.env.OPENMRS_FHIR_URL || '').replace(/\/$/, '')
 const omrsAuth = process.env.OPENMRS_USER && process.env.OPENMRS_PASS
   ? { username: process.env.OPENMRS_USER, password: process.env.OPENMRS_PASS }
@@ -480,9 +479,6 @@ app.post('/forwarder/_event', async (req, res) => {
     res.status(500).json({ error: e.message })
   }
 })
-
-// 8) Health
-app.get('/forwarder/_health', (_req, res) => res.send('OK'))
 
 const PORT = process.env.FORWARDER_MEDIATOR_PORT || 8003
 app.listen(PORT, () => logStep(`FHIR Forwarder on port ${PORT}`))
