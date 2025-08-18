@@ -17,7 +17,7 @@ RUN npm ci --only=production
 COPY . .
 
 # 7) Expone el puerto donde corre el Terminology Mediator
-EXPOSE 8002
+EXPOSE 8010
 
 # 8) Define un healthcheck para orquestadores
 HEALTHCHECK --interval=30s --timeout=5s \

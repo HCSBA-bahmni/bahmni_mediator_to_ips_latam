@@ -93,3 +93,91 @@ TERMINO_TIMEOUT=20000
 
 # CORS (opcional, separado por comas)
 CORS_ORIGIN=https://10.68.174.205,https://localhost
+
+# features globales
+FEATURE_PDQ_ENABLED=true
+FEATURE_TS_ENABLED=true
+
+# subfeatures terminológicas (opcional; si no las pones, quedan en true)
+FEATURE_TS_EXPAND_ENABLED=true
+FEATURE_TS_VALIDATE_VS_ENABLED=true
+FEATURE_TS_VALIDATE_CS_ENABLED=true
+FEATURE_TS_TRANSLATE_ENABLED=true
+
+
+# =================== PDQm (Patient Demographics) ===================
+PDQM_PORT=8007
+PDQM_FHIR_URL=http://127.0.0.1:8649/pdqm-fhir-simulator/IHE/fhir
+PDQM_FHIR_TOKEN=           # opcional si upstream requiere Auth (Bearer)
+PDQM_TIMEOUT_MS=10000
+
+# Whitelist de parámetros de búsqueda permitidos
+PDQM_ALLOWED_SEARCH_PARAMS=identifier,name,family,given,birthdate,gender,telecom,address,address-city,address-postalcode,_count,_offset,_sort,_include,_revinclude
+
+# Si el cliente envía id/_id, remapear a identifier
+PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES=id,_id
+
+# Componer system|value automáticamente si falta el system
+PDQM_DEFAULT_IDENTIFIER_SYSTEM=urn:oid:2.16.756.888801.3.4
+
+# Códigos HTTP que gatillan fallback (además de errores de red)
+PDQM_FALLBACK_HTTP_STATUSES=400,404,408,429,500,502,503
+PDQM_ENABLE_FALLBACK_FOR_401_403=false
+PDQM_ENABLE_ALIASES=true
+
+# =================== Terminology (FHIR Terminology Server) ===================
+TERMINOLOGY_BASE_URL=http://15.228.12.79:8180/fhir
+TS_TIMEOUT_MS=15000
+TS_DISPLAY_LANGUAGE=es
+TS_ACTIVE_ONLY=true
+
+# Dominios disponibles (agrega más separando por coma)
+TS_DOMAINS=conditions,procedures,medications,vaccines
+TS_DEFAULT_DOMAIN=conditions
+
+# -------- Defaults globales para $translate (si un dominio no define) --------
+TS_TRANSLATE_DEFAULT_CONCEPTMAP_URL=
+TS_TRANSLATE_DEFAULT_SOURCE_VS=
+TS_TRANSLATE_DEFAULT_TARGET_VS=
+TS_TRANSLATE_DEFAULT_SOURCE_SYSTEM=http://snomed.info/sct
+TS_TRANSLATE_DEFAULT_TARGET_SYSTEM=http://hl7.org/fhir/sid/icd-10
+
+# =================== CONDITIONS ===================
+CONDITIONS_VS_EXPAND_URI=http://snomed.info/sct?fhir_vs=ecl/%3C%3C404684003
+CONDITIONS_VS_VALIDATE_URI=http://snomed.info/sct?fhir_vs=ecl/%3C%3C404684003
+CONDITIONS_CS_URI=http://snomed.info/sct
+CONDITIONS_TRANSLATE_CONCEPTMAP_URL=              # ej: http://.../ConceptMap/sct2icd10|1.0
+CONDITIONS_TRANSLATE_SOURCE_VS=http://snomed.info/sct?fhir_vs=ecl/%3C%3C404684003
+CONDITIONS_TRANSLATE_TARGET_VS=
+CONDITIONS_TRANSLATE_SOURCE_SYSTEM=http://snomed.info/sct
+CONDITIONS_TRANSLATE_TARGET_SYSTEM=http://hl7.org/fhir/sid/icd-10
+
+# =================== PROCEDURES ===================
+PROCEDURES_VS_EXPAND_URI=http://snomed.info/sct?fhir_vs=ecl/%3C%3C71388002
+PROCEDURES_VS_VALIDATE_URI=http://snomed.info/sct?fhir_vs=ecl/%3C%3C71388002
+PROCEDURES_CS_URI=http://snomed.info/sct
+PROCEDURES_TRANSLATE_CONCEPTMAP_URL=
+PROCEDURES_TRANSLATE_SOURCE_VS=http://snomed.info/sct?fhir_vs=ecl/%3C%3C71388002
+PROCEDURES_TRANSLATE_TARGET_VS=
+PROCEDURES_TRANSLATE_SOURCE_SYSTEM=http://snomed.info/sct
+PROCEDURES_TRANSLATE_TARGET_SYSTEM=http://hl7.org/fhir/sid/icd-10-pcs
+
+# =================== MEDICATIONS ===================
+MEDICATIONS_VS_EXPAND_URI=http://snomed.info/sct?fhir_vs=ecl/%3C%3C763158003
+MEDICATIONS_VS_VALIDATE_URI=http://snomed.info/sct?fhir_vs=ecl/%3C%3C763158003
+MEDICATIONS_CS_URI=http://snomed.info/sct
+MEDICATIONS_TRANSLATE_CONCEPTMAP_URL=
+MEDICATIONS_TRANSLATE_SOURCE_VS=http://snomed.info/sct?fhir_vs=ecl/%3C%3C763158003
+MEDICATIONS_TRANSLATE_TARGET_VS=
+MEDICATIONS_TRANSLATE_SOURCE_SYSTEM=http://snomed.info/sct
+MEDICATIONS_TRANSLATE_TARGET_SYSTEM=http://www.whocc.no/atc
+
+# =================== VACCINES ===================
+VACCINES_VS_EXPAND_URI=
+VACCINES_VS_VALIDATE_URI=
+VACCINES_CS_URI=http://snomed.info/sct
+VACCINES_TRANSLATE_CONCEPTMAP_URL=
+VACCINES_TRANSLATE_SOURCE_VS=
+VACCINES_TRANSLATE_TARGET_VS=
+VACCINES_TRANSLATE_SOURCE_SYSTEM=http://snomed.info/sct
+VACCINES_TRANSLATE_TARGET_SYSTEM=http://hl7.org/fhir/sid/icd-10

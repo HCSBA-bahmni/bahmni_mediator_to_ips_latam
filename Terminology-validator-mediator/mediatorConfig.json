@@ -1,9 +1,27 @@
 {
-  "urn": "urn:mediator:terminology-validator",
+  "urn": "urn:mediator:terminology-proxy",
   "version": "1.0.0",
-  "name": "Terminology Validator Mediator",
-  "description": "Valida códigos contra el Terminology Server usando $validate-code",
+  "name": "FHIR Terminology Proxy Mediator",
+  "description": "Proxy para CodeSystem, ValueSet, ConceptMap y operaciones terminológicas",
   "defaultChannelConfig": [
+    {
+      "name": "Terminology Proxy Channel",
+      "urlPattern": "^/termino/fhir/.*$",
+      "routes": [
+        {
+          "name": "Terminology Proxy Route",
+          "host": "10.68.174.209",
+          "port": "8010",
+          "path": "/termino/fhir",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": ["Authorization", "Accept", "Content-Type"]
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      "type": "http"
+    },
     {
       "name": "Terminology Validate Channel",
       "urlPattern": "^/termino/_validate$",
@@ -11,7 +29,7 @@
         {
           "name": "Terminology Validate Route",
           "host": "10.68.174.209",
-          "port": "8002",
+          "port": "8010",
           "path": "/termino/_validate",
           "primary": true,
           "type": "http",
@@ -29,7 +47,7 @@
         {
           "name": "Terminology Health Route",
           "host": "10.68.174.209",
-          "port": "8002",
+          "port": "8010",
           "path": "/termino/_health",
           "primary": true,
           "type": "http",
@@ -42,8 +60,9 @@
     }
   ],
   "endpoints": [
-    { "name": "terminology-validate-endpoint", "path": "/termino/_validate", "method": "post" },
-    { "name": "health-endpoint", "path": "/termino/_health", "method": "get" }
+    { "name": "proxy",   "path": "/termino/fhir", "method": "any" },
+    { "name": "validate","path": "/termino/_validate", "method": "post" },
+    { "name": "health",  "path": "/termino/_health", "method": "get" }
   ],
   "heartbeatPath": "/termino/_health",
   "heartbeatInterval": 30000
