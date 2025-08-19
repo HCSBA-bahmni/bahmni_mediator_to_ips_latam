@@ -407,12 +407,12 @@ app.post('/forwarder/_event', async (req, res) => {
     const enc = await getFromProxy(`/Encounter/${uuid}`)
     if (!enc.resourceType) throw new Error('Invalid FHIR resource')
 
-    // --- Duplicate check (by meta.versionId)
-    encVersion = enc?.meta?.versionId || null
-    if (encVersion && seenVersions[uuid] === encVersion) {
-      logStep('🔁 No version change, skipping', uuid, encVersion)
-      return res.json({ status:'duplicate', uuid, version: encVersion })
-    }
+    // --- Duplicate check (by meta.versionId) no me funciona bien. ver despues, lo dejo comentado
+    //encVersion = enc?.meta?.versionId || null
+    //if (encVersion && seenVersions[uuid] === encVersion) {
+    //  logStep('🔁 No version change, skipping', uuid, encVersion)
+    //  return res.json({ status:'duplicate', uuid, version: encVersion })
+    //}
 
     const pid = enc.subject?.reference?.split('/').pop()
     if (!pid) throw new Error('Encounter.subject.reference inválido')
