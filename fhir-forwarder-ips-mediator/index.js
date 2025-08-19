@@ -442,8 +442,8 @@ app.post('/forwarder/_event', async (req, res) => {
     // Encounter (solo default Org; Location real u omitida)
     await uploadEncounterWithParents(uuid); sent++
 
-    // Tipos por paciente (IPS-friendly) se elimina procedure e inmunization porque lo resuelve sus respectivos mediadores
-    const types = ['Observation','Condition','MedicationRequest','Medication','AllergyIntolerance','DiagnosticReport']
+    // Tipos por paciente (IPS-friendly) se elimina procedure, medicationrequest e inmunization porque lo resuelve sus respectivos mediadores
+    const types = ['Observation','Condition','AllergyIntolerance','DiagnosticReport']
 
     for (const t of types) {
       let bundle;
