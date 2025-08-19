@@ -1,0 +1,48 @@
+{
+  "urn": "urn:mediator:fhir-medreq-forwarder",
+  "version": "1.0.0",
+  "name": "FHIR MedicationRequest Forwarder",
+  "description": "Reenvía solo MedicationRequest + referencias necesarias",
+  "defaultChannelConfig": [
+    {
+      "name": "MedReq Forwarder Event Channel",
+      "urlPattern": "^/medreq/_event$",
+      "routes": [
+        {
+          "name": "MedReq Forwarder Event Route",
+          "host": "10.68.174.209",
+          "path": "/medreq/_event",
+          "port": "8012",
+          "primary": true,
+          "type": "http"
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["POST"],
+      "type": "http"
+    },
+    {
+      "name": "MedReq Forwarder Health Channel",
+      "urlPattern": "^/medreq/_health$",
+      "routes": [
+        {
+          "name": "MedReq Forwarder Health Route",
+          "host": "10.68.174.209",
+          "path": "/medreq/_health",
+          "port": "8012",
+          "primary": true,
+          "type": "http"
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET"],
+      "type": "http"
+    }
+  ],
+  "endpoints": [
+    { "name": "event-endpoint",  "path": "/medreq/_event",  "method": "post" },
+    { "name": "health-endpoint", "path": "/medreq/_health", "method": "get" }
+  ],
+  "heartbeatPath": "/medreq/_health",
+  "heartbeatInterval": 30000
+}

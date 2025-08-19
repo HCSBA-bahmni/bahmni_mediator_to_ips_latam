@@ -10,6 +10,8 @@ load_dotenv()
 
 FEED_URL = os.getenv("ATOM_FEED_URL")
 OPENHIM_EVENT_ENDPOINT = os.getenv("OPENHIM_ITI_ENDPOINT")
+OPENHIM_IMMUNIZATION_ENDPOINT = os.getenv("OPENHIM_IMMUNIZATION_ENDPOINT")
+OPENHIM_MEDICATIONREQUEST_ENDPOINT = os.getenv("OPENHIM_MEDICATIONREQUEST_ENDPOINT")
 FEED_POLL_INTERVAL = int(os.getenv("FEED_POLL_INTERVAL", "15"))
 OPENMRS_USER = os.getenv("OPENMRS_USER")
 OPENMRS_PASS = os.getenv("OPENMRS_PASS")
@@ -51,6 +53,52 @@ def extract_encounter_uuid_from_content(entry):
     return None
 
 
+def post_uuid_to_endpoint(name, url, uuid):
+    """Envía el UUID a un endpoint si está definido."""
+    if not url:
+        print(f"[SKIP] {name}: no definido en variables de entorno.")
+        return False, None
+
+    print(f"[INFO] Enviando UUID {uuid} a {name}: {url}")
+    try:
+        resp = requests.post(
+            url,
+            json={"uuid": uuid},
+            auth=(OPENHIM_USER, OPENHIM_PASS) if OPENHIM_USER else None,
+            timeout=10,
+            verify=False
+        )
+        if resp.status_code in (200, 202):
+            print(f"✅ {name} OK: {uuid} | Status: {resp.status_code}")
+            return True, resp.status_code
+        else:
+            print(f"[ERROR] {name} devolvió status: {resp.status_code} | Body: {resp.text}")
+            return False, resp.status_code
+    except Exception as e:
+        print(f"[ERROR] Al notificar a {name}: {e}")
+        return False, None
+
+
+def notify_all_endpoints(uuid):
+    """
+    Notifica el mismo UUID a todos los endpoints declarados.
+    - ITI (OPENHIM_ITI_ENDPOINT)
+    - Immunization (OPENHIM_IMMUNIZATION_ENDPOINT)
+    - MedicationRequest (OPENHIM_MEDICATIONREQUEST_ENDPOINT)
+    """
+    endpoints = [
+        ("ITI", OPENHIM_EVENT_ENDPOINT),
+        ("IMMUNIZATION", OPENHIM_IMMUNIZATION_ENDPOINT),
+        ("MEDICATIONREQUEST", OPENHIM_MEDICATIONREQUEST_ENDPOINT),
+    ]
+
+    results = {}
+    for name, url in endpoints:
+        ok, status = post_uuid_to_endpoint(name, url, uuid)
+        results[name] = {"ok": ok, "status": status}
+    return results
+
+
 def process_feed(feed):
     print(f"[INFO] Procesando feed con {len(feed.entries)} entries...")
     for entry in feed.entries:
@@ -58,6 +106,8 @@ def process_feed(feed):
         if entry_id in seen_entries:
             print(f"[DEBUG] Entry ya procesado: {entry_id}")
             continue
+
+        # Marcamos como visto (mantiene comportamiento original)
         seen_entries.add(entry_id)
         save_seen_entries()
 
@@ -66,21 +116,10 @@ def process_feed(feed):
             print(f"[WARN] No se pudo extraer UUID de entry: {entry_id}")
             continue
 
-        print(f"[INFO] Enviando UUID {uuid} a {OPENHIM_EVENT_ENDPOINT}")
-        try:
-            resp = requests.post(
-                OPENHIM_EVENT_ENDPOINT,
-                json={"uuid": uuid},
-                auth=(OPENHIM_USER, OPENHIM_PASS),
-                timeout=10,
-                verify=False
-            )
-            if resp.status_code == 200 or resp.status_code == 202:
-                print(f"✅ Notificado a ITI: {uuid} | Status: {resp.status_code}")
-            else:
-                print(f"[ERROR] ITI devolvió status: {resp.status_code} | Body: {resp.text}")
-        except Exception as e:
-            print(f"[ERROR] Al notificar a ITI: {e}")
+        results = notify_all_endpoints(uuid)
+        # Log resumen
+        resumen = ", ".join([f"{k}:{'OK' if v['ok'] else 'ERR'}({v['status']})" for k, v in results.items()])
+        print(f"[INFO] Resultado notificaciones [{uuid}]: {resumen}")
 
 
 def get_feed():
