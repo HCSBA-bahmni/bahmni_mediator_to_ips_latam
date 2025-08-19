@@ -496,10 +496,10 @@ app.post('/forwarder/_event', async (req, res) => {
     }
 
     // --- Persist seen version AFTER successful processing
-    if (encVersion) {
-      seenVersions[uuid] = encVersion
-      saveSeen()
-    }
+    //if (encVersion) {
+    //  seenVersions[uuid] = encVersion
+    //  saveSeen()
+    //}
 
     logStep('🎉 Done', uuid)
     res.json({ status:'ok', uuid, version: encVersion || undefined, sent })
