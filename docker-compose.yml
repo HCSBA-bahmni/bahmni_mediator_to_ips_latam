@@ -27,10 +27,10 @@ services:
     # Ajusta el mapeo de puertos según el puerto que exponga tu mediador ITI‑65
     ports:
       - "8005:8005"
-    #volumes:
-    #  - ./tmp:/tmp
-    tmpfs:
-      - /tmp:size=64m,mode=1777
+    volumes:
+      - ./tmp:/tmp
+    #tmpfs:
+    #  - /tmp:size=64m,mode=1777
     restart: unless-stopped
 
   lacpass-iti67-68-mediator:
