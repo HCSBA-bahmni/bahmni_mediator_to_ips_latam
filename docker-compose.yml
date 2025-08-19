@@ -63,6 +63,13 @@ services:
     ports:
       - "8009:8009"
     restart: unless-stopped
+  
+  fhir-forwarder-medicationrequest-mediator:
+    build: ./fhir-forwarder-medicationrequest-mediator
+    env_file: ./.env
+    ports:
+      - "8010:8010"
+    restart: unless-stopped
 
 networks:
   default:
