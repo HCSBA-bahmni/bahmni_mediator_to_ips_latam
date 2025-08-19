@@ -17,10 +17,10 @@ COPY . .
 # Precrear seen.json y dar permisos
 RUN touch seen.json && chown appuser:appgroup seen.json
 
-EXPOSE 8009
+EXPOSE 8012
 
 HEALTHCHECK --interval=30s --timeout=5s \
-  CMD wget --quiet --tries=1 --spider http://localhost:8003/forwarder/_health || exit 1
+  CMD wget --quiet --tries=1 --spider http://localhost:8012/medreq/_health || exit 1
 
 USER appuser
 
