@@ -583,7 +583,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const urlMap = new Map();
       summaryBundle.entry.forEach(entry => {
       const { resource } = entry;
-      const urn = `${FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`;
+      const urn = `${FHIR_NODO_NACIONAL_SERVER}/fhir/${resource.resourceType}/${resource.id}`;
       urlMap.set(`${resource.resourceType}/${resource.id}`, urn);
       });
 
