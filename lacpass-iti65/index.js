@@ -581,11 +581,11 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
     // URN map para referencias internas
     const urlMap = new Map();
-    summaryBundle.entry.forEach(entry => {
+      summaryBundle.entry.forEach(entry => {
       const { resource } = entry;
-      const urn = `urn:uuid:${resource.id}`;
+      const urn = `${FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`;
       urlMap.set(`${resource.resourceType}/${resource.id}`, urn);
-    });
+      });
 
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
