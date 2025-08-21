@@ -424,7 +424,7 @@ app.post('/forwarderimmunization/_event', async (req, res) => {
     sent++
 
     // 7.7) Recursos generales (EXCEPTO obs de vacunación)
-    const types = ['Observation','Condition','Procedure','MedicationRequest','Medication','AllergyIntolerance','DiagnosticReport']
+    const types = ['Observation']
     for (const t of types) {
       let bundle
       try {
