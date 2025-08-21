@@ -1,7 +1,7 @@
 {
   "urn": "urn:mediator:fhir-forwarder-immunization",
   "version": "1.0.0",
-  "name": "FHIR Event Forwarder immunization Mediator",
+  "name": "FHIR Event Forwarder Immunization Mediator",
   "description": "Reenvía recursos FHIR desde OpenMRS proxy a un nodo nacional vía OpenHIM",
   "defaultChannelConfig": [
     {
@@ -11,10 +11,12 @@
         {
           "name": "FHIR Forwarder Event Route",
           "host": "10.68.174.209",
+          "port": 8009,
           "path": "/forwarderimmunization/_event",
-          "port": "8009",
           "primary": true,
-          "type": "http"
+          "type": "http",
+          "passThroughHeaders": [],
+          "matchContentTypes": ["application/fhir+json", "application/json"]
         }
       ],
       "allow": ["admin"],
@@ -28,10 +30,11 @@
         {
           "name": "FHIR Forwarder Health Route",
           "host": "10.68.174.209",
+          "port": 8009,
           "path": "/forwarderimmunization/_health",
-          "port": "8009",
           "primary": true,
-          "type": "http"
+          "type": "http",
+          "passThroughHeaders": []
         }
       ],
       "allow": ["admin"],
