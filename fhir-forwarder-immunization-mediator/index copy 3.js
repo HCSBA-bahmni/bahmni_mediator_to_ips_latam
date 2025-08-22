@@ -1,4 +1,4 @@
-// index.js (FHIR Event Forwarder Mediator) — Vacunación -> Immunization (LAC adapted)
+// index.js (FHIR Event Forwarder Mediator) — Vacunación -> Immunization
 import 'dotenv/config'
 import express from 'express'
 import axios from 'axios'
@@ -179,75 +179,8 @@ async function uploadPractitioner(pracRef) {
   return 1
 }
 
-// =============================
-// LAC PASS constants & helpers
-// =============================
-const LAC_IMM_PROFILE = 'http://lacpass.racsel.org/StructureDefinition/lac-immunization'
-const LAC_ORG_PROFILE = 'http://lacpass.racsel.org/StructureDefinition/lac-organization'
-
-const EXT_LAC_BRAND      = 'http://lacpass.racsel.org/StructureDefinition/DDCCEventBrand'
-const EXT_LAC_MA         = 'http://lacpass.racsel.org/StructureDefinition/DDCCVaccineMarketAuthorization'
-const EXT_LAC_COUNTRY    = 'http://lacpass.racsel.org/StructureDefinition/DDCCCountryOfEvent'
-const EXT_LAC_VALID_FROM = 'http://lacpass.racsel.org/StructureDefinition/DDCCVaccineValidFrom'
-
-const USE_TERMINOLOGY = /^true$/i.test(process.env.USE_TERMINOLOGY || 'false')
-const TERMINOLOGY_BASE = (process.env.TERMINOLOGY_BASE || '').replace(/\/$/, '')
-
-function isoCountry() { return (process.env.LAC_COUNTRY_CODE || 'CL').toUpperCase() }
-const slug = (s) => ('org-' + String(s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''))
-
-async function terminologyValidateOrFallback(coding) {
-  if (!USE_TERMINOLOGY || !TERMINOLOGY_BASE || !coding?.system || !coding?.code) return coding
-  try {
-    // $validate-code on CodeSystem
-    const url = `${TERMINOLOGY_BASE}/CodeSystem/$validate-code`
-    const { data } = await axios.get(url, { params: { system: coding.system, code: coding.code }, httpsAgent: axios.defaults.httpsAgent })
-    if (data?.result === true) return coding
-    // try $lookup for display
-    try {
-      const lu = `${TERMINOLOGY_BASE}/CodeSystem/$lookup`
-      const { data: d2 } = await axios.get(lu, { params: { system: coding.system, code: coding.code }, httpsAgent: axios.defaults.httpsAgent })
-      const disp = (d2?.parameter || []).find(p => p.name === 'display')?.valueString
-      return { ...coding, ...(disp ? { display: disp } : {}) }
-    } catch { return coding }
-  } catch { return coding }
-}
-
-async function ensureOrganizationByName(name) {
-  if (!name) return undefined
-  const id = slug(name)
-  if (uploadedOrganizations.has(id)) return { reference: `Organization/${id}`, display: name }
-  const org = {
-    resourceType: 'Organization',
-    id,
-    meta: { profile: [LAC_ORG_PROFILE] },
-    name: String(name),
-    address: [{ use: 'work', country: isoCountry() }]
-  }
-  await putToNode(org)
-  uploadedOrganizations.add(id)
-  return { reference: `Organization/${id}`, display: org.name }
-}
-
-function buildLacImmunizationExtensions() {
-  const ext = []
-  if (!process.env.LAC_BRAND_SYSTEM || !process.env.LAC_BRAND_CODE) {
-    throw new Error('Faltan LAC_BRAND_SYSTEM o LAC_BRAND_CODE para DDCCEventBrand')
-  }
-  ext.push({ url: EXT_LAC_BRAND, valueCoding: { system: process.env.LAC_BRAND_SYSTEM, code: process.env.LAC_BRAND_CODE } })
-
-  ext.push({ url: EXT_LAC_COUNTRY, valueCode: isoCountry() })
-
-  if (process.env.LAC_MA_SYSTEM && process.env.LAC_MA_CODE) {
-    ext.push({ url: EXT_LAC_MA, valueCoding: { system: process.env.LAC_MA_SYSTEM, code: process.env.LAC_MA_CODE } })
-  }
-  if (process.env.LAC_VALID_FROM) {
-    ext.push({ url: EXT_LAC_VALID_FROM, valueDate: process.env.LAC_VALID_FROM })
-  }
-  return ext
-}
-
-// --- helpers de vacunación (OpenMRS codes) ---
+// --- helpers de vacunación ---
+const OMRS_IMM_PROFILE = 'http://fhir.openmrs.org/core/StructureDefinition/omrs-immunization' // :contentReference[oaicite:2]{index=2}
 const IMM_SET_CODE = '1421AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' // Immunization history (grupo)
 const IMM_CODES = {
   VACCINE:       '984AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vacunación -> valueCodeableConcept
@@ -264,6 +197,8 @@ const IMM_CODES = {
 const IMM_ALL_CODES = new Set(Object.values(IMM_CODES).concat([IMM_SET_CODE]))
 
 const toDate = (dt) => (typeof dt === 'string' ? dt.substring(0,10) : undefined)
+const slug = (s) => ('org-' + String(s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''))
+
 function indexByIdFromBundle(bundle) {
   const map = {}
   for (const e of (bundle.entry || [])) {
@@ -272,7 +207,9 @@ function indexByIdFromBundle(bundle) {
   }
   return map
 }
-function codeList(r) { return (r?.code?.coding || []).map(c => c.code).filter(Boolean) }
+function codeList(r) {
+  return (r?.code?.coding || []).map(c => c.code).filter(Boolean)
+}
 function pickMemberByCode(ids, byId, code) {
   for (const id of ids) {
     const r = byId[id]
@@ -282,17 +219,26 @@ function pickMemberByCode(ids, byId, code) {
   return undefined
 }
 function getEncounterFirstPractitioner(enc) {
-  const x = (enc?.participant || []).find(p => p.individual?.reference?.startsWith('Practitioner/'))
+  const x = (enc.participant || []).find(p => p.individual?.reference?.startsWith('Practitioner/'))
   return x?.individual?.reference
 }
 function getEncounterFirstLocation(enc) {
-  const x = (enc?.location || []).find(l => l.location?.reference?.startsWith('Location/'))
+  const x = (enc.location || []).find(l => l.location?.reference?.startsWith('Location/'))
   return x?.location?.reference
+}
+async function ensureOrganizationByName(name) {
+  if (!name) return undefined
+  const id = slug(name)
+  if (uploadedOrganizations.has(id)) return { reference: `Organization/${id}` }
+  const org = { resourceType:'Organization', id, name:String(name) }
+  await putToNode(org)
+  uploadedOrganizations.add(id)
+  return { reference: `Organization/${id}` }
 }
 
 /**
- * Construye un Immunization conforme al perfil LAC Immunization
- * https://lacpass.racsel.org/StructureDefinition-lac-immunization.html
+ * Construye un Immunization (perfil OpenMRS) desde el grupo 1421 y sus hijas.
+ * https://fhir.openmrs.org/StructureDefinition-omrs-immunization.html  (status, vaccineCode, patient, occurrence[x] 1..1, etc.)
  */
 async function buildImmunizationFromGroup(groupObs, obsById, patientRef, enc, patientId) {
   const idList = (groupObs.hasMember || [])
@@ -309,85 +255,73 @@ async function buildImmunizationFromGroup(groupObs, obsById, patientRef, enc, pa
   const doseObs  = pickMemberByCode(idList, obsById, IMM_CODES.DOSE_NUM)
   const recvObs  = pickMemberByCode(idList, obsById, IMM_CODES.RECEIVED)
 
-  // status (perfil LAC: completed | entered-in-error | not-done)
+  // status (required)
   let status = 'completed'
   const recvCoding = recvObs?.valueCodeableConcept?.coding || []
   if (recvCoding.find(c => c.code === IMM_CODES.NO)) status = 'not-done'
   if (recvCoding.find(c => c.code === IMM_CODES.YES)) status = 'completed'
 
-  // vaccineCode (1..1) -> asegurar coding con system+code
-  let coding = vaxObs?.valueCodeableConcept?.coding?.find(c => c.system && c.code) || null
-  if (!coding && process.env.LAC_VACCINE_FALLBACK_SYSTEM && process.env.LAC_VACCINE_FALLBACK_CODE) {
-    coding = {
-      system: process.env.LAC_VACCINE_FALLBACK_SYSTEM,
-      code: process.env.LAC_VACCINE_FALLBACK_CODE,
-      ...(process.env.LAC_VACCINE_FALLBACK_DISPLAY ? { display: process.env.LAC_VACCINE_FALLBACK_DISPLAY } : {})
-    }
+  // vaccineCode (required)
+  let vaccineCode
+  if (vaxObs?.valueCodeableConcept) {
+    vaccineCode = vaxObs.valueCodeableConcept
+  } else if (freeObs?.valueString) {
+    vaccineCode = { text: freeObs.valueString }
+  } else {
+    // Fallback muy defensivo
+    vaccineCode = { text: groupObs?.valueString || 'Unknown vaccine' }
   }
-  if (!coding && freeObs?.valueString) {
-    coding = { system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', code: 'UNK', display: freeObs.valueString }
-  }
-  if (!coding) throw new Error('No se pudo determinar vaccineCode (system+code)')
-  const vaccineCodeCoding = await terminologyValidateOrFallback(coding)
 
-  // occurrenceDateTime (1..1 requerido)
+  // occurrenceDateTime (required en el perfil, slice occurrence[x])
   const occurrenceDateTime = dateObs?.valueDateTime || groupObs?.effectiveDateTime
-  if (!occurrenceDateTime) throw new Error('Falta occurrenceDateTime para Immunization (perfil LAC)')
 
-  // encounter + location (LAC exige location.display)
+  // encounter + location (opcionales)
   const encounterRef = groupObs?.encounter?.reference || (enc?.id ? `Encounter/${enc.id}` : undefined)
   const locationRef = getEncounterFirstLocation(enc)
-  const locDisplay = process.env.LAC_DEFAULT_LOCATION_DISPLAY || 'Administration center'
-  const location = locationRef ? { reference: locationRef, display: locDisplay } : { display: locDisplay }
 
-  // manufacturer -> Organization con perfil LAC
+  // manufacturer -> crear Organization mínima si viene
   const manufacturerRef = await ensureOrganizationByName(mfgObs?.valueString)
 
   // performer -> tomar 1er Practitioner del Encounter (si existe)
   const practitionerRef = getEncounterFirstPractitioner(enc)
   const performer = practitionerRef ? [{ actor: { reference: practitionerRef } }] : undefined
 
-  // protocolApplied (slice obligatorio con doseNumberPositiveInt)
-  let doseNumber
-  const dn = doseObs?.valueQuantity?.value
-  if (Number.isFinite(dn)) doseNumber = Math.trunc(dn)
-  else if (doseObs?.valueString && /^\d+$/.test(doseObs.valueString)) doseNumber = parseInt(doseObs.valueString, 10)
-  else if (process.env.LAC_DEFAULT_DOSE_NUMBER) doseNumber = parseInt(process.env.LAC_DEFAULT_DOSE_NUMBER, 10)
-  if (!doseNumber) throw new Error('Falta doseNumberPositiveInt en protocolApplied (perfil LAC)')
+  // protocolApplied (solo si hay dosis)
+  let protocolApplied
+  if (doseObs?.valueQuantity?.value != null || typeof doseObs?.valueString === 'string') {
+    const dn = doseObs?.valueQuantity?.value
+    protocolApplied = [{ doseNumberPositiveInt: Number.isFinite(dn) ? Math.trunc(dn) : undefined,
+                         doseNumberString: (Number.isFinite(dn) ? undefined : (doseObs?.valueString ?? String(dn))) }]
 
-  const protocolApplied = [{ doseNumberPositiveInt: doseNumber }]
-
-  // authority (opcional)
-  if (process.env.LAC_AUTHORITY_ORG_NAME) {
-    protocolApplied[0].authority = await ensureOrganizationByName(process.env.LAC_AUTHORITY_ORG_NAME)
-  }
-  // targetDisease (opcional)
-  if (process.env.LAC_TD_SYSTEM && process.env.LAC_TD_CODE) {
-    protocolApplied[0].targetDisease = [{ coding: [{ system: process.env.LAC_TD_SYSTEM, code: process.env.LAC_TD_CODE }] }]
+    // limpiar la variante no usada
+    if (protocolApplied[0].doseNumberPositiveInt == null) delete protocolApplied[0].doseNumberPositiveInt
+    if (!protocolApplied[0].doseNumberString) delete protocolApplied[0].doseNumberString
   }
 
   // lotNumber / expirationDate (opcionales)
   const lotNumber = lotObs?.valueString
   const expirationDate = toDate(expObs?.valueDateTime)
 
-  // Construir el Immunization conforme al perfil LAC
+  // Construir el Immunization conforme al perfil OMRS
   const imm = {
     resourceType: 'Immunization',
     id: groupObs.id, // usamos el id del grupo para trazabilidad
-    meta: { profile: [LAC_IMM_PROFILE] },
-    extension: buildLacImmunizationExtensions(),
+    meta: { profile: [OMRS_IMM_PROFILE] }, // perfila al omrs-immunization  :contentReference[oaicite:3]{index=3}
     status,
-    vaccineCode: { coding: [vaccineCodeCoding] },
+    vaccineCode,
     patient: { reference: patientRef }, // 1..1
     ...(encounterRef ? { encounter: { reference: encounterRef } } : {}),
     occurrenceDateTime,
-    location,
+    ...(locationRef ? { location: { reference: locationRef } } : {}),
     ...(manufacturerRef ? { manufacturer: manufacturerRef } : {}),
     ...(lotNumber ? { lotNumber } : {}),
     ...(expirationDate ? { expirationDate } : {}),
     ...(performer ? { performer } : {}),
-    protocolApplied
+    ...(protocolApplied ? { protocolApplied } : {})
   }
+
+  // Quitar explícitamente campos prohibidos por el perfil (cardinalidad 0..0)
+  // recorded, primarySource, statusReason, route, site, doseQuantity, etc. — no los agregamos.
 
   return imm
 }
@@ -395,7 +329,7 @@ async function buildImmunizationFromGroup(groupObs, obsById, patientRef, enc, pa
 /**
  * Pipeline de vacunación:
  * - Busca solo grupos 1421 por paciente (include has-member)
- * - Mapea a Immunization (perfil LAC)
+ * - Mapea a Immunization (perfil OMRS)
  * - Sube Organization (manufacturer) si aplica y luego el Immunization
  */
 async function processImmunizationsByPatient(patientId, enc) {
@@ -564,7 +498,7 @@ app.post('/forwarderimmunization/_event', async (req, res) => {
       }
     }
 
-    // 7.7-bis) *** Vacunación -> Immunization (LAC) ***
+    // 7.7-bis) *** Vacunación -> Immunization ***
     sent += await processImmunizationsByPatient(pid, enc)
 
     // 7.8) Done
