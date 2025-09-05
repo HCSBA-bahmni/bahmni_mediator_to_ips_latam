@@ -1,11 +1,11 @@
 {
   "urn": "urn:mediator:lacpass-iti65",
   "version": "1.0.0",
-  "name": "LAC‑PASS ITI‑65 ProvideBundle Mediator",
+  "name": "LAC‑PASS ITI‑65 icvp ProvideBundle Mediator",
   "description": "...",
   "defaultChannelConfig": [
     {
-      "name": "ITI‑65 Provide Event Channel",
+      "name": "ITI‑65 Provide icvp Event Channel",
       "urlPattern": "^/icvp/_iti65$",
       "routes": [
         {
@@ -23,7 +23,7 @@
       "type": "http"
     },
     {
-      "name": "ITI‑65 Health Channel",
+      "name": "ITI‑65 icvp Health Channel",
       "urlPattern": "^/icvp/_health$$",
       "routes": [
         {
