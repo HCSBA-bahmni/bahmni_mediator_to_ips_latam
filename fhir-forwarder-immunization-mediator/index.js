@@ -378,7 +378,7 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
 // =============================
 async function processImmunizationsByPatient (patientId, enc) {
   let sent = 0
-  const url = `/Observation?patient=${encodeURIComponent(patientId)}&category=procedure&code=${IMM_SET_CODE}&_include=Observation:has-member&_count=200&_format=application/fhir+json`
+  const url = `/Observation?patient=${encodeURIComponent(patientId)}&_include=Observation:has-member&_count=200&_format=application/fhir+json`
   const bundle = await getFromProxy(url)
 
   if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry) || !bundle.entry.length) {
