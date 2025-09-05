@@ -12,7 +12,7 @@
           "name": "ITI‑65 icvp Provide Route",
           "host": "10.68.174.209",
           "port": "8011",
-          "path": "/lacpass/_iti65",
+          "path": "/icvp/_iti65",
           "primary": true,
           "type": "http",
           "passThroughHeaders": []
@@ -30,7 +30,7 @@
           "name": "ITI‑65 icvp Health Route",
           "host": "10.68.174.209",
           "port": "8011",
-          "path": "/lacpass/_health",
+          "path": "/icvp/_health",
           "primary": true,
           "type": "http",
           "passThroughHeaders": []

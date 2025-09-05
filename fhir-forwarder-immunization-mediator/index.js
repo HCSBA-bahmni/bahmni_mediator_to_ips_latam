@@ -487,14 +487,45 @@ app.post('/forwarderimmunization/_event', async (req, res) => {
       }
     }
 
+    // Subir Patient (asegura $summary disponible en el nodo)
+    try {
+      logStep('📤 Subiendo Patient…', pid)
+      const patient = await getFromProxy(`/Patient/${pid}`)
+      await putToNode(patient)
+    } catch (e) {
+      logStep('⚠️ No se pudo subir Patient:', e.message)
+    }
+
     // Vaccination → Immunization (ICVP/LAC)
     const sent = await processImmunizationsByPatient(pid, enc)
 
+    // Notificar ITI‑65 ICVP (vía OpenHIM)
+    try {
+      const immMode = (process.env.IMM_MODE || 'ICVP').toUpperCase()
+      const endpoint = process.env.OPENHIM_ICVP_ENDPOINT || process.env.OPENHIM_SUMMARY_ENDPOINT
+      if (immMode === 'ICVP' && endpoint) {
+        logStep('🔔 Notificando ITI‑65 ICVP para', pid)
+        await axios.post(
+          endpoint,
+          { uuid: pid },
+          {
+            auth: { username: process.env.OPENHIM_USER, password: process.env.OPENHIM_PASS },
+            httpsAgent: axios.defaults.httpsAgent
+          }
+        )
+        logStep('✅ Mediator ITI‑65 ICVP notificado')
+      } else if (immMode === 'ICVP') {
+        logStep('ⓘ OPENHIM_ICVP_ENDPOINT/OPENHIM_SUMMARY_ENDPOINT no configurado; se omite notificación')
+      }
+    } catch (e) {
+      console.error('❌ Error notificando ITI‑65 ICVP:', e.response?.data || e.message)
+    }
+
     logStep('🎉 Done', uuid)
-    res.json({ status: 'ok', uuid, sent })
+    return res.json({ status: 'ok', uuid, sent })
   } catch (e) {
     logStep('❌ ERROR:', e.message)
-    res.status(500).json({ error: e.message })
+    return res.status(500).json({ error: e.message })
   }
 })
 
