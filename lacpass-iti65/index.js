@@ -24,7 +24,7 @@ const {
   FHIR_NODO_NACIONAL_SERVER,
 
   NODE_ENV,
-  DEBUG_DIR,
+  DEBUG_DIR_icvp,
 
   // CORS
   CORS_ORIGIN,
@@ -121,7 +121,7 @@ const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
 
 // ===================== Debug dir =====================
-const debugDir = DEBUG_DIR ? path.resolve(DEBUG_DIR) : '/tmp';
+const debugDir = DEBUG_DIR_icvp ? path.resolve(DEBUG_DIR_icvp) : '/tmp';
 try { fs.mkdirSync(debugDir, { recursive: true }); }
 catch (err) { console.error(`❌ Could not create debug directory at ${debugDir}:`, err.message); }
 

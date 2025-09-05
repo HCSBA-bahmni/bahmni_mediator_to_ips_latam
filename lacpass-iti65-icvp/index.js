@@ -702,5 +702,5 @@ app.post('/lacpass/_iti65', async (req, res) => {
   }
 });
 
-const PORT = process.env.LACPASS_ITI65_PORT || 8011;
+const PORT = process.env.LACPASS_ITI65_PORT_ICVP || 8011;
 app.listen(PORT, () => console.log(`LACPASS→ITI65 Mediator listening on port ${PORT}`));
