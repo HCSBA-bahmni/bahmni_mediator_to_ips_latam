@@ -26,10 +26,89 @@ axios.defaults.httpsAgent = new https.Agent({
 // Helpers: logging & utils
 // =============================
 function logStep (...args) { console.log(new Date().toISOString(), '-', ...args) }
-function codeList(obs) { return (obs?.code?.coding || []).map(c => c.code).filter(Boolean) }
-function indexByIdFromBundle(bundle) { const byId = new Map(); for (const e of (bundle.entry||[])) if (e.resource?.id) byId.set(e.resource.id, e.resource); return byId }
-function pickMemberByCode(idList, byId, code) { return idList.map(id => byId.get(id)).find(r => codeList(r).includes(code)) }
-function toDate(dt) { return (typeof dt === 'string' ? dt.substring(0,10) : undefined) }
+function codeList (obs) { return (obs?.code?.coding || []).map(c => c.code).filter(Boolean) }
+function indexByIdFromBundle (bundle) { const byId = new Map(); for (const e of (bundle.entry || [])) if (e.resource?.id) byId.set(e.resource.id, e.resource); return byId }
+function pickMemberByCode (idList, byId, code) { return idList.map(id => byId.get(id)).find(r => codeList(r).includes(code)) }
+function toDate (dt) { return (typeof dt === 'string' ? dt.substring(0, 10) : undefined) }
+
+// =============================
+// ICVP / LAC constants & flags
+// =============================
+const IMM_MODE = (process.env.IMM_MODE || 'ICVP').toUpperCase() // 'ICVP' | 'LAC'
+
+// ICVP
+const ICVP_IMM_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/DVC-ImmunizationUvIps'
+const ICVP_DVC_VACCINES_VS = 'http://smart.who.int/icvp/ValueSet/DVCVaccines'
+const ICVP_DOSE_NUM_CC_EXT = 'http://smart.who.int/icvp/StructureDefinition/doseNumberCodeableConcept'
+const IHE_MCSD_PRACTITIONER = 'https://profiles.ihe.net/ITI/mCSD/StructureDefinition/IHE.mCSD.Practitioner'
+const IHE_MCSD_JURISDICTION_ORG = 'https://profiles.ihe.net/ITI/mCSD/StructureDefinition/IHE.mCSD.JurisdictionOrganization'
+const ICVP_STRICT = /^true$/i.test(process.env.ICVP_STRICT || 'true')
+
+// LAC PASS
+const LAC_IMM_PROFILE = 'http://lacpass.racsel.org/StructureDefinition/lac-immunization'
+const LAC_ORG_PROFILE = 'http://lacpass.racsel.org/StructureDefinition/lac-organization'
+const EXT_LAC_BRAND      = 'http://lacpass.racsel.org/StructureDefinition/DDCCEventBrand'
+const EXT_LAC_MA         = 'http://lacpass.racsel.org/StructureDefinition/DDCCVaccineMarketAuthorization'
+const EXT_LAC_COUNTRY    = 'http://lacpass.racsel.org/StructureDefinition/DDCCCountryOfEvent'
+const EXT_LAC_VALID_FROM = 'http://lacpass.racsel.org/StructureDefinition/DDCCVaccineValidFrom'
+
+// Terminology flags
+const USE_TERMINOLOGY = /^true$/i.test(process.env.USE_TERMINOLOGY || 'false')
+const TERMINOLOGY_BASE = (process.env.TERMINOLOGY_BASE || '').replace(/\/$/, '')
+
+// Misc helpers
+function isoCountry () { return (process.env.LAC_COUNTRY_CODE || 'CL').toUpperCase() }
+const slug = (s) => ('org-' + String(s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''))
+
+// =============================
+// Terminology helpers
+// =============================
+async function terminologyValidateOrFallback (coding) {
+  if (!USE_TERMINOLOGY || !TERMINOLOGY_BASE || !coding?.system || !coding?.code) return coding
+  try {
+    // $validate-code on CodeSystem
+    const url = `${TERMINOLOGY_BASE}/CodeSystem/$validate-code`
+    const { data } = await axios.get(url, { params: { system: coding.system, code: coding.code }, httpsAgent: axios.defaults.httpsAgent })
+    if (data?.result === true) return coding
+    // try $lookup for display
+    try {
+      const lu = `${TERMINOLOGY_BASE}/CodeSystem/$lookup`
+      const { data: d2 } = await axios.get(lu, { params: { system: coding.system, code: coding.code }, httpsAgent: axios.defaults.httpsAgent })
+      const disp = (d2?.parameter || []).find(p => p.name === 'display')?.valueString
+      return { ...coding, ...(disp ? { display: disp } : {}) }
+    } catch { return coding }
+  } catch { return coding }
+}
+
+async function validateVaccineCodeICVP (coding) {
+  if (!coding?.system || !coding?.code) throw new Error('ICVP requires vaccineCode with system+code')
+  if (!USE_TERMINOLOGY || !TERMINOLOGY_BASE) {
+    if (ICVP_STRICT) throw new Error('ICVP_STRICT enabled but terminology server not configured (TERMINOLOGY_BASE)')
+    return coding
+  }
+  try {
+    const params = { url: ICVP_DVC_VACCINES_VS, system: coding.system, code: coding.code }
+    const vsUrl = `${TERMINOLOGY_BASE}/ValueSet/$validate-code`
+    const { data } = await axios.get(vsUrl, { params, httpsAgent: axios.defaults.httpsAgent })
+    if (data?.result === true) return coding
+  } catch {
+    try {
+      const vsUrl = `${TERMINOLOGY_BASE}/ValueSet/$validate-code`
+      const body = { resourceType: 'Parameters', parameter: [
+        { name: 'url', valueUri: ICVP_DVC_VACCINES_VS },
+        { name: 'system', valueUri: coding.system },
+        { name: 'code', valueCode: coding.code }
+      ] }
+      const { data } = await axios.post(vsUrl, body, { httpsAgent: axios.defaults.httpsAgent })
+      if (data?.result === true) return coding
+    } catch {}
+  }
+  if (process.env.ICVP_VACCINE_FALLBACK_SYSTEM && process.env.ICVP_VACCINE_FALLBACK_CODE) {
+    const fb = { system: process.env.ICVP_VACCINE_FALLBACK_SYSTEM, code: process.env.ICVP_VACCINE_FALLBACK_CODE }
+    return await validateVaccineCodeICVP(fb)
+  }
+  throw new Error('vaccineCode does not belong to DVCVaccines ValueSet and no valid fallback provided')
+}
 
 // =============================
 // FHIR Proxy / Node helpers
@@ -61,16 +140,33 @@ async function putToNode (resource) {
   }
 }
 
+// =============================
 // Cache for uploaded resources
+// =============================
 const uploadedPractitioners = new Set()
 const uploadedOrganizations = new Set()
 const uploadedLocations = new Set()
+
+async function ensureOrganizationByName (name) {
+  if (!name) return undefined
+  const id = slug(name)
+  if (uploadedOrganizations.has(id)) return { reference: `Organization/${id}`, display: name }
+  const org = {
+    resourceType: 'Organization',
+    id,
+    meta: { profile: [IMM_MODE === 'ICVP' ? IHE_MCSD_JURISDICTION_ORG : LAC_ORG_PROFILE] },
+    name: String(name),
+    address: [{ use: 'work', country: isoCountry() }]
+  }
+  await putToNode(org)
+  uploadedOrganizations.add(id)
+  return { reference: `Organization/${id}`, display: org.name }
+}
 
 async function uploadPractitioner (pracRef) {
   const pracId = pracRef.split('/')[1]
   if (uploadedPractitioners.has(pracId)) return 0
   const prac = await getFromProxy(`/Practitioner/${pracId}`)
-  // If ICVP mode, ensure mCSD Practitioner profile is present
   if (IMM_MODE === 'ICVP') {
     prac.meta = prac.meta || {}
     const profiles = new Set(prac.meta.profile || [])
@@ -87,13 +183,11 @@ async function uploadLocationWithParents (locId) {
   const loc = await getFromProxy(`/Location/${locId}`)
   await putToNode(loc)
   uploadedLocations.add(locId)
-  // Upload managing organization if present
   const orgRef = loc.managingOrganization?.reference
   if (orgRef?.startsWith('Organization/')) {
     const orgId = orgRef.split('/')[1]
     if (!uploadedOrganizations.has(orgId)) {
       const org = await getFromProxy(`/Organization/${orgId}`)
-      // In ICVP mode, normalize profile to mCSD Jurisdiction Organization
       if (IMM_MODE === 'ICVP') {
         org.meta = org.meta || {}
         org.meta.profile = [IHE_MCSD_JURISDICTION_ORG]
@@ -115,114 +209,15 @@ function getEncounterFirstLocation (enc) {
 }
 
 // =============================
-// ICVP constants & feature flags
+// LAC extras
 // =============================
-const IMM_MODE = (process.env.IMM_MODE || 'ICVP').toUpperCase() // 'ICVP' | 'LAC'
-
-const ICVP_IMM_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/DVC-ImmunizationUvIps'
-const ICVP_DVC_VACCINES_VS = 'http://smart.who.int/icvp/ValueSet/DVCVaccines'
-const ICVP_DOSE_NUM_CC_EXT = 'http://smart.who.int/icvp/StructureDefinition/doseNumberCodeableConcept'
-
-// IHE mCSD profiles required by ICVP for actor/authority references
-const IHE_MCSD_PRACTITIONER = 'https://profiles.ihe.net/ITI/mCSD/StructureDefinition/IHE.mCSD.Practitioner'
-const IHE_MCSD_JURISDICTION_ORG = 'https://profiles.ihe.net/ITI/mCSD/StructureDefinition/IHE.mCSD.JurisdictionOrganization'
-
-// Strictness for ICVP validation: require vaccineCode to be in DVCVaccines and authority present in protocolApplied
-const ICVP_STRICT = /^true$/i.test(process.env.ICVP_STRICT || 'true')
-
-// =============================
-// LAC PASS constants & helpers
-// =============================
-const LAC_IMM_PROFILE = 'http://lacpass.racsel.org/StructureDefinition/lac-immunization'
-const LAC_ORG_PROFILE = 'http://lacpass.racsel.org/StructureDefinition/lac-organization'
-
-const EXT_LAC_BRAND      = 'http://lacpass.racsel.org/StructureDefinition/DDCCEventBrand'
-const EXT_LAC_MA         = 'http://lacpass.racsel.org/StructureDefinition/DDCCVaccineMarketAuthorization'
-const EXT_LAC_COUNTRY    = 'http://lacpass.racsel.org/StructureDefinition/DDCCCountryOfEvent'
-const EXT_LAC_VALID_FROM = 'http://lacpass.racsel.org/StructureDefinition/DDCCVaccineValidFrom'
-
-const USE_TERMINOLOGY = /^true$/i.test(process.env.USE_TERMINOLOGY || 'false')
-const TERMINOLOGY_BASE = (process.env.TERMINOLOGY_BASE || '').replace(/\/$/, '')
-
-function isoCountry () { return (process.env.LAC_COUNTRY_CODE || 'CL').toUpperCase() }
-const slug = (s) => ('org-' + String(s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''))
-
-async function terminologyValidateOrFallback (coding) {
-  if (!USE_TERMINOLOGY || !TERMINOLOGY_BASE || !coding?.system || !coding?.code) return coding
-  try {
-    // $validate-code on CodeSystem
-    const url = `${TERMINOLOGY_BASE}/CodeSystem/$validate-code`
-    const { data } = await axios.get(url, { params: { system: coding.system, code: coding.code }, httpsAgent: axios.defaults.httpsAgent })
-    if (data?.result === true) return coding
-    // try $lookup for display
-    try {
-      const lu = `${TERMINOLOGY_BASE}/CodeSystem/$lookup`
-      const { data: d2 } = await axios.get(lu, { params: { system: coding.system, code: coding.code }, httpsAgent: axios.defaults.httpsAgent })
-      const disp = (d2?.parameter || []).find(p => p.name === 'display')?.valueString
-      return { ...coding, ...(disp ? { display: disp } : {}) }
-    } catch { return coding }
-  } catch { return coding }
-}
-
-// ICVP: Validate vaccineCode against DVCVaccines ValueSet
-async function validateVaccineCodeICVP (coding) {
-  // Validate that coding is a member of the DVCVaccines ValueSet
-  if (!coding?.system || !coding?.code) throw new Error('ICVP requires vaccineCode with system+code')
-  if (!USE_TERMINOLOGY || !TERMINOLOGY_BASE) {
-    if (ICVP_STRICT) throw new Error('ICVP_STRICT enabled but terminology server not configured (TERMINOLOGY_BASE)')
-    return coding // non-strict: assume ok
-  }
-  try {
-    const params = { url: ICVP_DVC_VACCINES_VS, system: coding.system, code: coding.code }
-    const vsUrl = `${TERMINOLOGY_BASE}/ValueSet/$validate-code`
-    const { data } = await axios.get(vsUrl, { params, httpsAgent: axios.defaults.httpsAgent })
-    if (data?.result === true) return coding
-  } catch (e) {
-    // try POST as some servers require POST
-    try {
-      const vsUrl = `${TERMINOLOGY_BASE}/ValueSet/$validate-code`
-      const body = { resourceType: 'Parameters', parameter: [
-        { name: 'url', valueUri: ICVP_DVC_VACCINES_VS },
-        { name: 'system', valueUri: coding.system },
-        { name: 'code', valueCode: coding.code }
-      ] }
-      const { data } = await axios.post(vsUrl, body, { httpsAgent: axios.defaults.httpsAgent })
-      if (data?.result === true) return coding
-    } catch {}
-  }
-  // Try fallback coding if provided (and validate it)
-  if (process.env.ICVP_VACCINE_FALLBACK_SYSTEM && process.env.ICVP_VACCINE_FALLBACK_CODE) {
-    const fb = { system: process.env.ICVP_VACCINE_FALLBACK_SYSTEM, code: process.env.ICVP_VACCINE_FALLBACK_CODE }
-    return await validateVaccineCodeICVP(fb)
-  }
-  throw new Error('vaccineCode does not belong to DVCVaccines ValueSet and no valid fallback provided')
-}
-
-async function ensureOrganizationByName (name) {
-  if (!name) return undefined
-  const id = slug(name)
-  if (uploadedOrganizations.has(id)) return { reference: `Organization/${id}`, display: name }
-  const org = {
-    resourceType: 'Organization',
-    id,
-    meta: { profile: [IMM_MODE === 'ICVP' ? IHE_MCSD_JURISDICTION_ORG : LAC_ORG_PROFILE] },
-    name: String(name),
-    address: [{ use: 'work', country: isoCountry() }]
-  }
-  await putToNode(org)
-  uploadedOrganizations.add(id)
-  return { reference: `Organization/${id}`, display: org.name }
-}
-
 function buildLacImmunizationExtensions () {
   const ext = []
   if (!process.env.LAC_BRAND_SYSTEM || !process.env.LAC_BRAND_CODE) {
     throw new Error('Faltan LAC_BRAND_SYSTEM o LAC_BRAND_CODE para DDCCEventBrand')
   }
   ext.push({ url: EXT_LAC_BRAND, valueCoding: { system: process.env.LAC_BRAND_SYSTEM, code: process.env.LAC_BRAND_CODE } })
-
   ext.push({ url: EXT_LAC_COUNTRY, valueCode: isoCountry() })
-
   if (process.env.LAC_MA_SYSTEM && process.env.LAC_MA_CODE) {
     ext.push({ url: EXT_LAC_MA, valueCoding: { system: process.env.LAC_MA_SYSTEM, code: process.env.LAC_MA_CODE } })
   }
@@ -250,22 +245,8 @@ const IMM_CODES = {
 }
 const IMM_ALL_CODES = new Set(Object.values(IMM_CODES).concat([IMM_SET_CODE]))
 
-// =============================
-// Bundle scanning helpers
-// =============================
 function isRelevantVaccinationObservation (r) {
   return r?.resourceType === 'Observation' && codeList(r).some(c => IMM_ALL_CODES.has(c))
-}
-function indexByIdAndFilter (bundle) {
-  const byId = new Map()
-  const out = []
-  for (const e of (bundle.entry || [])) {
-    const r = e.resource
-    if (!r?.id) continue
-    byId.set(r.id, r)
-    if (isRelevantVaccinationObservation(r)) out.push(r)
-  }
-  return { byId, out }
 }
 
 // =============================
@@ -276,7 +257,6 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
     .map(m => m.reference?.replace(/^Observation\//, ''))
     .filter(Boolean)
 
-  // Elementos mapeados
   const vaxObs   = pickMemberByCode(idList, obsById, IMM_CODES.VACCINE)
   const freeObs  = pickMemberByCode(idList, obsById, IMM_CODES.NON_CODED)
   const dateObs  = pickMemberByCode(idList, obsById, IMM_CODES.VAX_DATE)
@@ -286,16 +266,16 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   const doseObs  = pickMemberByCode(idList, obsById, IMM_CODES.DOSE_NUM)
   const recvObs  = pickMemberByCode(idList, obsById, IMM_CODES.RECEIVED)
 
-  // status (perfil LAC/ICVP: completed | entered-in-error | not-done)
+  // status (completed | entered-in-error | not-done)
   let status = 'completed'
   const recvCoding = recvObs?.valueCodeableConcept?.coding || []
   if (recvCoding.find(c => c.code === IMM_CODES.NO)) status = 'not-done'
   if (recvCoding.find(c => c.code === IMM_CODES.YES)) status = 'completed'
 
-  // vaccineCode (1..1) -> asegurar coding con system+code
+  // vaccineCode (system+code)
   let coding = vaxObs?.valueCodeableConcept?.coding?.find(c => c.system && c.code) || null
   if (!coding && process.env.LAC_VACCINE_FALLBACK_SYSTEM && process.env.LAC_VACCINE_FALLBACK_CODE) {
-    // Solo se usa en modo LAC; en ICVP se valida contra el ValueSet DVCVaccines
+    // LAC fallback; en ICVP se valida VS
     coding = {
       system: process.env.LAC_VACCINE_FALLBACK_SYSTEM,
       code: process.env.LAC_VACCINE_FALLBACK_CODE,
@@ -303,26 +283,26 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
     }
   }
   if (!coding && freeObs?.valueString) {
-    // ¡Ojo! Esto NO cumple ICVP (binding REQUIRED a DVCVaccines); en modo ICVP, terminará fallando más abajo.
+    // No cumple ICVP (binding REQUIRED); con ICVP_STRICT fallará abajo si no pasa VS
     coding = { system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', code: 'UNK', display: freeObs.valueString }
   }
   if (!coding) throw new Error('No se pudo determinar vaccineCode (system+code)')
   const vaccineCodeCoding = (IMM_MODE === 'ICVP') ? await validateVaccineCodeICVP(coding) : await terminologyValidateOrFallback(coding)
 
-  // occurrenceDateTime (1..1 requerido)
+  // occurrenceDateTime
   const occurrenceDateTime = dateObs?.valueDateTime || groupObs?.effectiveDateTime
   if (!occurrenceDateTime) throw new Error('Falta occurrenceDateTime para Immunization')
 
-  // encounter + location (location.display por compatibilidad LAC; permitido por ICVP)
+  // encounter + location
   const encounterRef = groupObs?.encounter?.reference || (enc?.id ? `Encounter/${enc.id}` : undefined)
   const locationRef = getEncounterFirstLocation(enc)
   const locDisplay = (process.env.LAC_DEFAULT_LOCATION_DISPLAY || process.env.ICVP_DEFAULT_LOCATION_DISPLAY || 'Administration center')
   const location = locationRef ? { reference: locationRef, display: locDisplay } : { display: locDisplay }
 
-  // manufacturer -> Organization con perfil LAC o mCSD (según modo)
+  // manufacturer
   const manufacturerRef = await ensureOrganizationByName(mfgObs?.valueString)
 
-  // performer -> 1er Practitioner del Encounter; si no hay y estamos en ICVP, usar Organization
+  // performer
   const practitionerRef = getEncounterFirstPractitioner(enc)
   let performer = practitionerRef ? [{ actor: { reference: practitionerRef } }] : []
   if (IMM_MODE === 'ICVP' && performer.length === 0) {
@@ -367,11 +347,10 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
     protocolApplied = [pae]
   }
 
-  // lotNumber / expirationDate (opcionales)
+  // lot / expiration
   const lotNumber = lotObs?.valueString
   const expirationDate = toDate(expObs?.valueDateTime)
 
-  // Construir Immunization conforme al modo
   const profile = (IMM_MODE === 'ICVP') ? ICVP_IMM_PROFILE : LAC_IMM_PROFILE
   const imm = {
     resourceType: 'Immunization',
@@ -395,7 +374,7 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
 }
 
 // =============================
-// Pipeline handler
+// Pipeline: build Immunizations for patient
 // =============================
 async function processImmunizationsByPatient (patientId, enc) {
   let sent = 0
@@ -422,12 +401,59 @@ async function processImmunizationsByPatient (patientId, enc) {
 }
 
 // =============================
+// NEW: Safe getters + encounter resolver for event uuid
+// =============================
+async function getIfExists (path) {
+  try {
+    return await getFromProxy(path)
+  } catch (e) {
+    if (String(e.message).endsWith(' returned 404')) return null
+    throw e
+  }
+}
+
+async function resolveEncounterAndPatient (uuid) {
+  // 1) Treat as Encounter ID
+  const enc1 = await getIfExists(`/Encounter/${encodeURIComponent(uuid)}`)
+  if (enc1?.resourceType === 'Encounter') {
+    const pid = enc1.subject?.reference?.split('/')[1]
+    return { enc: enc1, pid }
+  }
+
+  // 2) Treat as Composition ID → follow encounter
+  const comp = await getIfExists(`/Composition/${encodeURIComponent(uuid)}`)
+  if (comp?.resourceType === 'Composition') {
+    const encRef = comp.encounter?.reference
+    if (encRef?.startsWith('Encounter/')) {
+      const encId = encRef.split('/')[1]
+      const enc2 = await getIfExists(`/Encounter/${encodeURIComponent(encId)}`)
+      if (enc2?.resourceType === 'Encounter') {
+        const pid = enc2.subject?.reference?.split('/')[1]
+        return { enc: enc2, pid }
+      }
+    }
+  }
+
+  // 3) Legacy fallback: persisted Bundle containing an Encounter
+  const bun = await getIfExists(`/Bundle/${encodeURIComponent(uuid)}`)
+  if (bun?.resourceType === 'Bundle' && Array.isArray(bun.entry)) {
+    const enc3 = bun.entry.map(e => e.resource).find(r => r?.resourceType === 'Encounter')
+    if (enc3?.id) {
+      const pid = enc3.subject?.reference?.split('/')[1]
+      return { enc: enc3, pid }
+    }
+  }
+
+  return { enc: null, pid: null }
+}
+
+// =============================
 // Express app
 // =============================
 const app = express()
 app.use(express.json({ limit: '2mb' }))
 
-// Health path from mediatorConfig (fallback to previous path)
+// Health path from mediatorConfig (fallback retained)
 const HEALTH_PATH = mediatorConfig.heartbeatPath || '/forwarderimmunization/_health'
 app.get(HEALTH_PATH, (_req, res) => res.status(200).json({ status: 'ok', mediator: process.env.MEDIATOR_URN || mediatorConfig.urn }))
 
@@ -437,15 +463,12 @@ app.post('/forwarderimmunization/_event', async (req, res) => {
   if (!uuid) return res.status(400).json({ error: 'Missing uuid' })
 
   try {
-    // 1) Bundle principal (encounter)
-    const bun = await getFromProxy(`/Bundle/${uuid}`)
-    if (bun.resourceType !== 'Bundle') throw new Error('Bundle not found')
+    // Resolve Encounter + patient from event uuid
+    const { enc, pid } = await resolveEncounterAndPatient(uuid)
+    if (!enc) return res.status(404).json({ error: `No se encontró Encounter para uuid=${uuid}` })
+    if (!pid) return res.status(404).json({ error: `Encounter sin patient (uuid=${uuid})` })
 
-    // 2) Buscar Encounter
-    const enc = (bun.entry || []).map(e => e.resource).find(r => r?.resourceType === 'Encounter')
-    if (!enc?.id) throw new Error('Encounter not found in bundle')
-
-    // 3) Subir Practitioner(s) del Encounter (si hay)
+    // Upload Encounter-linked actors
     if (Array.isArray(enc.participant)) {
       for (const p of enc.participant) {
         const indyRef = p.individual?.reference
@@ -454,8 +477,6 @@ app.post('/forwarderimmunization/_event', async (req, res) => {
         }
       }
     }
-
-    // 4) Subir Location(es) del Encounter (y sus Organization)
     if (Array.isArray(enc.location)) {
       for (const locEntry of enc.location) {
         const locRef = locEntry.location?.reference
@@ -466,9 +487,7 @@ app.post('/forwarderimmunization/_event', async (req, res) => {
       }
     }
 
-    // 5) Vacunación -> Immunization (ICVP/LAC)
-    const pid = enc?.subject?.reference?.split('/')[1]
-    if (!pid) throw new Error('Encounter.subject missing patient reference')
+    // Vaccination → Immunization (ICVP/LAC)
     const sent = await processImmunizationsByPatient(pid, enc)
 
     logStep('🎉 Done', uuid)
@@ -485,7 +504,6 @@ const openhimOptions = {
   username: openhimConfig.username,
   password: openhimConfig.password,
   trustSelfSigned: openhimConfig.trustSelfSigned,
-  // clave: pasar la URN aquí (env override opcional)
   urn: process.env.MEDIATOR_URN || mediatorConfig.urn
 }
 const me = mediatorConfig
@@ -493,13 +511,12 @@ const me = mediatorConfig
 function onRegister (err) {
   if (err) return logStep('❌ Registration failed', err)
   logStep('✅ Registered mediator', openhimOptions.urn)
-  // clave: pasar intervalo, no el objeto completo
   activateHeartbeat(openhimOptions, me.heartbeatInterval || 30000)
 }
 
 registerMediator(openhimOptions, me, onRegister)
 
 const PORT = process.env.FORWARDER_IMMUNIZATION_PORT || 8009
-const appServer = app.listen(PORT, () => logStep(`FHIR Forwarder on port ${PORT}, health at ${HEALTH_PATH}`))
+const appServer = app.listen(PORT, () => logStep(`FHIR Forwarder on port ${PORT} (health at ${HEALTH_PATH})`))
 
 export default appServer
