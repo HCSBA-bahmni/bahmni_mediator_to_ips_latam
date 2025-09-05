@@ -5,9 +5,7 @@ import axios from 'axios'
 import https from 'https'
 import fs from 'fs'
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils'
-import { createRequire } from 'module'
-const require = createRequire(import.meta.url)
-const mediatorConfig = require('./mediatorConfig.json')
+import mediatorConfig from './mediatorConfig.json' assert { type: 'json' }
 
 // --- OpenHIM config ---
 const openhimConfig = {
@@ -50,7 +48,8 @@ async function getFromProxy (path) {
 }
 
 async function putToNode (resource) {
-  const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
+  const base = (process.env.FHIR_NODE_URL || '').replace(/\/$/, '')
+  const url = `${base}/fhir/${resource.resourceType}/${resource.id}`
   try {
     logStep('PUT (node)', url)
     const resp = await axios.put(url, resource, { validateStatus: false, httpsAgent: axios.defaults.httpsAgent })
@@ -414,7 +413,6 @@ async function processImmunizationsByPatient (patientId, enc) {
     .map(e => e.resource)
     .filter(r => r?.resourceType === 'Observation' && codeList(r).includes(IMM_SET_CODE))
 
-  // asegurar Practitioner/Location del Encounter ya fueron subidos (el handler general lo hace)
   for (const g of groups) {
     const imm = await buildImmunizationFromGroup(g, byId, patientRef, enc, patientId)
     await putToNode(imm)
@@ -429,7 +427,9 @@ async function processImmunizationsByPatient (patientId, enc) {
 const app = express()
 app.use(express.json({ limit: '2mb' }))
 
-app.get('/forwarderimmunization/_health', (_req, res) => res.send('OK'))
+// Health path from mediatorConfig (fallback to previous path)
+const HEALTH_PATH = mediatorConfig.heartbeatPath || '/forwarderimmunization/_health'
+app.get(HEALTH_PATH, (_req, res) => res.status(200).json({ status: 'ok', mediator: process.env.MEDIATOR_URN || mediatorConfig.urn }))
 
 app.post('/forwarderimmunization/_event', async (req, res) => {
   logStep('📩 POST /event', req.body)
@@ -466,10 +466,7 @@ app.post('/forwarderimmunization/_event', async (req, res) => {
       }
     }
 
-    // 5) Subir Organization manufacturer (si aparece durante mapping)
-    //    -> se maneja dentro de buildImmunizationFromGroup -> ensureOrganizationByName
-
-    // 6) Vacunación -> Immunization (ICVP/LAC)
+    // 5) Vacunación -> Immunization (ICVP/LAC)
     const pid = enc?.subject?.reference?.split('/')[1]
     if (!pid) throw new Error('Encounter.subject missing patient reference')
     const sent = await processImmunizationsByPatient(pid, enc)
@@ -482,19 +479,27 @@ app.post('/forwarderimmunization/_event', async (req, res) => {
   }
 })
 
-// --- Mediator registration
-const openhimOptions = { apiURL: openhimConfig.apiURL, username: openhimConfig.username, password: openhimConfig.password, trustSelfSigned: openhimConfig.trustSelfSigned }
+// --- Mediator registration (RESPECT mediatorConfig) ---
+const openhimOptions = {
+  apiURL: openhimConfig.apiURL,
+  username: openhimConfig.username,
+  password: openhimConfig.password,
+  trustSelfSigned: openhimConfig.trustSelfSigned,
+  // clave: pasar la URN aquí (env override opcional)
+  urn: process.env.MEDIATOR_URN || mediatorConfig.urn
+}
 const me = mediatorConfig
 
 function onRegister (err) {
   if (err) return logStep('❌ Registration failed', err)
-  logStep('✅ Registered mediator', me.urn)
-  activateHeartbeat(openhimOptions, me)
+  logStep('✅ Registered mediator', openhimOptions.urn)
+  // clave: pasar intervalo, no el objeto completo
+  activateHeartbeat(openhimOptions, me.heartbeatInterval || 30000)
 }
 
 registerMediator(openhimOptions, me, onRegister)
 
 const PORT = process.env.FORWARDER_IMMUNIZATION_PORT || 8009
-const appServer = app.listen(PORT, () => logStep(`FHIR Forwarder on port ${PORT}`))
+const appServer = app.listen(PORT, () => logStep(`FHIR Forwarder on port ${PORT}, health at ${HEALTH_PATH}`))
 
 export default appServer
