@@ -163,7 +163,7 @@ if (CORS_ORIGIN) {
   });
 }
 
-app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
+app.get('/icvp/_health', (_req, res) => res.status(200).send('OK'));
 
 // ===================== PDQm helpers =====================
 async function pdqmFetchPatientByIdentifier(identifierValue) {
@@ -491,7 +491,7 @@ async function normalizeTerminologyInBundle(bundle) {
 }
 
 // ===================== Route ITI-65 =====================
-app.post('/lacpass/_iti65', async (req, res) => {
+app.post('/icvp/_iti65', async (req, res) => {
   let summaryBundle;
 
   // 1) Obtener $summary si viene uuid; si no, usar el Bundle entregado
@@ -703,4 +703,4 @@ app.post('/lacpass/_iti65', async (req, res) => {
 });
 
 const PORT = process.env.LACPASS_ITI65_PORT_ICVP || 8011;
-app.listen(PORT, () => console.log(`LACPASS→ITI65 Mediator listening on port ${PORT}`));
+app.listen(PORT, () => console.log(`LACPASS→ITI65 icvp Mediator listening on port ${PORT}`));
