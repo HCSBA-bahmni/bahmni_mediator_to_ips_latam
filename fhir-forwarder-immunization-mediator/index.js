@@ -272,53 +272,67 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   if (recvCoding.find(c => c.code === IMM_CODES.NO)) status = 'not-done'
   if (recvCoding.find(c => c.code === IMM_CODES.YES)) status = 'completed'
 
-  // vaccineCode (código local)
-// vaccineCode (código local) — tolerar system faltante y valueString con CM_TRANSLATE_SOURCE_SYSTEM
-let localCoding = null
+  // vaccineCode (código local) — tolerar system faltante y varios orígenes del code
+  let localCoding = null
 
-// 1) Si viene valueCodeableConcept.coding con code pero sin system,
-//    y tenemos CM_TRANSLATE_SOURCE_SYSTEM, se usara comosystem.
-const anyCoding = vaxObs?.valueCodeableConcept?.coding?.find(c => c.code) || null
-if (anyCoding?.code) {
-  const sys = anyCoding.system || CM_TRANSLATE_SOURCE_SYSTEM || null
-  if (sys) {
-    localCoding = { system: sys, code: anyCoding.code, ...(anyCoding.display ? { display: anyCoding.display } : {}) }
+  // 1) coding.code (aunque sin system)
+  const anyCoding = vaxObs?.valueCodeableConcept?.coding?.find(c => c && c.code) || null
+  if (anyCoding?.code) {
+    const sys = anyCoding.system || CM_TRANSLATE_SOURCE_SYSTEM || null
+    if (sys) {
+      localCoding = { system: sys, code: String(anyCoding.code), ...(anyCoding.display ? { display: anyCoding.display } : {}) }
+    }
   }
-}
 
-// 2) Si no hay coding, pero hay valueString, se usara como code con el system de env.
-if (!localCoding && vaxObs?.valueString && CM_TRANSLATE_SOURCE_SYSTEM) {
-  localCoding = { system: CM_TRANSLATE_SOURCE_SYSTEM, code: String(vaxObs.valueString) }
-}
+  // 2) valueString
+  if (!localCoding && vaxObs?.valueString && CM_TRANSLATE_SOURCE_SYSTEM) {
+    const codeStr = String(vaxObs.valueString).trim()
+    if (codeStr) localCoding = { system: CM_TRANSLATE_SOURCE_SYSTEM, code: codeStr }
+  }
 
-// 3) Último recurso: si hay texto libre en el obs “no-codificado”, mantenlo como UNK para trazabilidad,
-//     no se podrá traducir; el translate fallará y lanzará error más abajo.
-if (!localCoding && freeObs?.valueString) {
-  localCoding = { system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', code: 'UNK', display: freeObs.valueString }
-}
+  // 3) valueCodeableConcept.text
+  if (!localCoding && vaxObs?.valueCodeableConcept?.text && CM_TRANSLATE_SOURCE_SYSTEM) {
+    const codeStr = String(vaxObs.valueCodeableConcept.text).trim()
+    if (codeStr) localCoding = { system: CM_TRANSLATE_SOURCE_SYSTEM, code: codeStr }
+  }
 
-// 4) Si sigue sin haber nada, error claro
-if (!localCoding) {
-  throw new Error('No se pudo determinar vaccineCode (código local system+code o valueString + CM_TRANSLATE_SOURCE_SYSTEM)')
-}
+  // 4) freeObs.valueString (si parece id)
+  if (!localCoding && freeObs?.valueString && CM_TRANSLATE_SOURCE_SYSTEM) {
+    const raw = String(freeObs.valueString).trim()
+    if (/^[a-z0-9-]{6,}$/i.test(raw)) {
+      localCoding = { system: CM_TRANSLATE_SOURCE_SYSTEM, code: raw }
+    }
+  }
 
-  // Forzar source system si viene por env (sino, usa system local)
+  if (!localCoding) {
+    throw new Error('No se pudo determinar vaccineCode (código local); revisa valueCodeableConcept.coding|text, valueString, o freeObs.valueString')
+  }
+
+  // Source system del translate (ENV o el del código local)
   const sourceSystem = CM_TRANSLATE_SOURCE_SYSTEM || localCoding.system
 
-  // $translate → ICD-11 y → PreQual (sin lookup/validate)
+  // $translate → ICD-11 (OBLIGATORIO)
   const icd11Coding = await conceptMapTranslate({
     system: sourceSystem,
     code: localCoding.code,
     targetSystem: ICD11_TARGET_SYSTEM
   })
+  if (!icd11Coding) {
+    throw new Error(`No se pudo traducir a ICD-11 (system=${sourceSystem}, code=${localCoding.code})`)
+  }
+
+  // $translate → PreQual (OBLIGATORIO para extensión ProductID)
   const prequalCoding = await conceptMapTranslate({
     system: sourceSystem,
     code: localCoding.code,
     targetSystem: PREQUAL_TARGET_SYSTEM
   })
+  if (!prequalCoding) {
+    throw new Error(`No se pudo traducir a PreQual ProductIDs (system=${sourceSystem}, code=${localCoding.code})`)
+  }
 
-  // vaccineCode.coding: priorizamos ICD-11 si existe; si no, el local
-  const vaccineCodeCoding = icd11Coding || localCoding
+  // vaccineCode.coding: SOLO ICD-11
+  const vaccineCodeCoding = icd11Coding
 
   // occurrenceDateTime
   const occurrenceDateTime = dateObs?.valueDateTime || groupObs?.effectiveDateTime
@@ -381,7 +395,7 @@ if (!localCoding) {
 
   const profile = (IMM_MODE === 'ICVP') ? ICVP_IMM_PROFILE : LAC_IMM_PROFILE
 
-  // Extensión ICVP ProductID con PreQual si lo tenemos
+  // Extensión ICVP ProductID con PreQual
   const icvpProductIdExt = prequalCoding ? [{
     url: EXT_ICVP_PRODUCT_ID,
     valueCoding: {
