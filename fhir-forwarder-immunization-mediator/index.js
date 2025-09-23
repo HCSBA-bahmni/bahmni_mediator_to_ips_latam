@@ -42,7 +42,7 @@ function toDate (dt) { return (typeof dt === 'string' ? dt.substring(0, 10) : un
 const IMM_MODE = (process.env.IMM_MODE || 'ICVP').toUpperCase() // 'ICVP' | 'LAC'
 
 // ICVP
-const ICVP_IMM_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/DVC-ImmunizationUvIps'
+const ICVP_IMM_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP'
 const ICVP_DOSE_NUM_CC_EXT = 'http://smart.who.int/icvp/StructureDefinition/doseNumberCodeableConcept'
 const IHE_MCSD_PRACTITIONER = 'https://profiles.ihe.net/ITI/mCSD/StructureDefinition/IHE.mCSD.Practitioner'
 const IHE_MCSD_JURISDICTION_ORG = 'https://profiles.ihe.net/ITI/mCSD/StructureDefinition/IHE.mCSD.JurisdictionOrganization'
