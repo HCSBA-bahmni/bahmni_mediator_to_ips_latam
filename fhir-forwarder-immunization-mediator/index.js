@@ -232,7 +232,8 @@ function buildLacImmunizationExtensions () {
 // =============================
 const IMM_SET_CODE = '1421AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' // Set: Vaccination Event
 const IMM_CODES = {
-  VACCINE:       '984AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccination -> valueCodeableConcept
+  //VACCINE:       '984AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccination -> valueCodeableConcept
+  VACCINE:       '598b3224-25e4-40ad-92d6-974683bb82af', // Vaccine (código local) -> valueCodeableConcept | valueString
   VAX_DATE:      '1410AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccination date -> valueDateTime
   LOT:           '1420AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccine lot number -> valueString
   LOT_EXP:       '165907AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccine lot expiration date -> valueDateTime
