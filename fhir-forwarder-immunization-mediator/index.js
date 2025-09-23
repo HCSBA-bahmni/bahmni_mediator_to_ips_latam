@@ -273,18 +273,34 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   if (recvCoding.find(c => c.code === IMM_CODES.YES)) status = 'completed'
 
   // vaccineCode (código local)
-  let localCoding = vaxObs?.valueCodeableConcept?.coding?.find(c => c.system && c.code) || null
-  if (!localCoding && process.env.LAC_VACCINE_FALLBACK_SYSTEM && process.env.LAC_VACCINE_FALLBACK_CODE) {
-    localCoding = {
-      system: process.env.LAC_VACCINE_FALLBACK_SYSTEM,
-      code: process.env.LAC_VACCINE_FALLBACK_CODE,
-      ...(process.env.LAC_VACCINE_FALLBACK_DISPLAY ? { display: process.env.LAC_VACCINE_FALLBACK_DISPLAY } : {})
-    }
+// vaccineCode (código local) — tolerar system faltante y valueString con CM_TRANSLATE_SOURCE_SYSTEM
+let localCoding = null
+
+// 1) Si viene valueCodeableConcept.coding con code pero sin system,
+//    y tenemos CM_TRANSLATE_SOURCE_SYSTEM, se usara comosystem.
+const anyCoding = vaxObs?.valueCodeableConcept?.coding?.find(c => c.code) || null
+if (anyCoding?.code) {
+  const sys = anyCoding.system || CM_TRANSLATE_SOURCE_SYSTEM || null
+  if (sys) {
+    localCoding = { system: sys, code: anyCoding.code, ...(anyCoding.display ? { display: anyCoding.display } : {}) }
   }
-  if (!localCoding && freeObs?.valueString) {
-    localCoding = { system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', code: 'UNK', display: freeObs.valueString }
-  }
-  if (!localCoding) throw new Error('No se pudo determinar vaccineCode (código local system+code)')
+}
+
+// 2) Si no hay coding, pero hay valueString, se usara como code con el system de env.
+if (!localCoding && vaxObs?.valueString && CM_TRANSLATE_SOURCE_SYSTEM) {
+  localCoding = { system: CM_TRANSLATE_SOURCE_SYSTEM, code: String(vaxObs.valueString) }
+}
+
+// 3) Último recurso: si hay texto libre en el obs “no-codificado”, mantenlo como UNK para trazabilidad,
+//     no se podrá traducir; el translate fallará y lanzará error más abajo.
+if (!localCoding && freeObs?.valueString) {
+  localCoding = { system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', code: 'UNK', display: freeObs.valueString }
+}
+
+// 4) Si sigue sin haber nada, error claro
+if (!localCoding) {
+  throw new Error('No se pudo determinar vaccineCode (código local system+code o valueString + CM_TRANSLATE_SOURCE_SYSTEM)')
+}
 
   // Forzar source system si viene por env (sino, usa system local)
   const sourceSystem = CM_TRANSLATE_SOURCE_SYSTEM || localCoding.system
