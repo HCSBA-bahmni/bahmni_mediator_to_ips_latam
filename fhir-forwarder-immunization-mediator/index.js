@@ -5,7 +5,7 @@ import axios from 'axios'
 import https from 'https'
 import fs from 'fs'
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils'
-import mediatorConfig from './mediatorConfig.json' assert { type: 'json' }
+import mediatorConfig from './mediatorConfig.json' with { type: 'json' }
 
 // --- OpenHIM config ---
 const openhimConfig = {
@@ -26,6 +26,11 @@ axios.defaults.httpsAgent = new https.Agent({
 // Helpers: logging & utils
 // =============================
 function logStep (...args) { console.log(new Date().toISOString(), '-', ...args) }
+const DEBUG_VAX = /^true$/i.test(process.env.DEBUG_VAX || 'false')
+const DEBUG_TRANSLATE = /^true$/i.test(process.env.DEBUG_TRANSLATE || 'false')
+function dbgV (...a) { if (DEBUG_VAX) logStep('[DEBUG_VAX]', ...a) }
+function dbgT (...a) { if (DEBUG_TRANSLATE) logStep('[DEBUG_XLATE]', ...a) }
+
 function codeList (obs) { return (obs?.code?.coding || []).map(c => c.code).filter(Boolean) }
 function indexByIdFromBundle (bundle) { const byId = new Map(); for (const e of (bundle.entry || [])) if (e.resource?.id) byId.set(e.resource.id, e.resource); return byId }
 function pickMemberByCode (idList, byId, code) { return idList.map(id => byId.get(id)).find(r => codeList(r).includes(code)) }
@@ -73,30 +78,39 @@ function parseTranslate(parameters) {
   const matches = params.filter(p => p.name === 'match')
   for (const m of matches) {
     const parts = m.part || []
+    const eq = parts.find(p => p.name === 'equivalence')?.valueCode
     const concept = parts.find(p => p.name === 'concept')?.valueCoding
     const code = concept?.code || parts.find(p => p.name === 'code')?.valueCode
     const system = concept?.system || parts.find(p => p.name === 'system')?.valueUri
     const display = concept?.display || parts.find(p => p.name === 'display')?.valueString
-    if (code && system) return { system, code, ...(display ? { display } : {}) }
+    if (code && system && (!eq || eq === 'equivalent' || eq === 'wider' || eq === 'narrower')) {
+      return { system, code, ...(display ? { display } : {}) }
+    }
   }
   return null
 }
 
-// --- Call $translate (GET then POST fallback). No lookup/validate here.
+// --- Call $translate (GET then POST fallback). No lookup/validate aquí.
 async function conceptMapTranslate({ system, code, targetSystem }) {
   if (!USE_CONCEPTMAP_TRANSLATE || !TERMINOLOGY_BASE || !system || !code || !targetSystem) return null
   const base = TERMINOLOGY_BASE.replace(/\/$/, '')
   // GET
   try {
-    const { data } = await axios.get(`${base}/ConceptMap/$translate`, {
+    const url = `${base}/ConceptMap/$translate`
+    dbgT('GET', url, 'params:', { system, code, targetsystem: targetSystem })
+    const { data } = await axios.get(url, {
       params: { code, system, targetsystem: targetSystem },
       httpsAgent: axios.defaults.httpsAgent
     })
+    dbgT('GET translate resp:', JSON.stringify(data))
     const out = parseTranslate(data)
     if (out) return out
-  } catch {}
+  } catch (e) {
+    dbgT('GET translate error:', e.message)
+  }
   // POST
   try {
+    const url = `${base}/ConceptMap/$translate`
     const body = {
       resourceType: 'Parameters',
       parameter: [
@@ -105,9 +119,14 @@ async function conceptMapTranslate({ system, code, targetSystem }) {
         { name: 'targetsystem', valueUri: targetSystem }
       ]
     }
-    const { data } = await axios.post(`${base}/ConceptMap/$translate`, body, { httpsAgent: axios.defaults.httpsAgent })
+    dbgT('POST', url, 'body:', JSON.stringify(body))
+    const { data } = await axios.post(url, body, { httpsAgent: axios.defaults.httpsAgent })
+    dbgT('POST translate resp:', JSON.stringify(data))
     return parseTranslate(data)
-  } catch { return null }
+  } catch (e) {
+    dbgT('POST translate error:', e.message)
+    return null
+  }
 }
 
 // =============================
@@ -233,16 +252,16 @@ function buildLacImmunizationExtensions () {
 const IMM_SET_CODE = '1421AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' // Set: Vaccination Event
 const IMM_CODES = {
   //VACCINE:       '984AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccination -> valueCodeableConcept
-  VACCINE:       '598b3224-25e4-40ad-92d6-974683bb82af', // Vaccine (código local) -> valueCodeableConcept | valueString
-  VAX_DATE:      '1410AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccination date -> valueDateTime
-  LOT:           '1420AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccine lot number -> valueString
-  LOT_EXP:       '165907AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccine lot expiration date -> valueDateTime
-  MANUFACTURER:  '1419AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccine manufacturer -> valueString
-  DOSE_NUM:      '1418AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Immunization sequence number -> valueQuantity.value | string
-  NON_CODED:     '166011AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Immunization, non-coded -> valueString
-  RECEIVED:      '163100AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Procedure received by patient -> valueCodeableConcept (Sí/No)
-  YES:           '1065AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Sí
-  NO:            '1066AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'  // No
+  VACCINE:       '598b3224-25e4-40ad-92d6-974683bb82af',   // tu code local del miembro vacuna
+  VAX_DATE:      '1410AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  LOT:           '1420AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  LOT_EXP:       '165907AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  MANUFACTURER:  '1419AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  DOSE_NUM:      '1418AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  NON_CODED:     '166011AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  RECEIVED:      '163100AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  YES:           '1065AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  NO:            '1066AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 }
 const IMM_ALL_CODES = new Set(Object.values(IMM_CODES).concat([IMM_SET_CODE]))
 
@@ -306,6 +325,11 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   }
 
   if (!localCoding) {
+    dbgV('vaxObs payload:', JSON.stringify({
+      codeCoding: vaxObs?.code?.coding,
+      valueCC: vaxObs?.valueCodeableConcept,
+      valueString: vaxObs?.valueString
+    }))
     throw new Error('No se pudo determinar vaccineCode (código local); revisa valueCodeableConcept.coding|text, valueString, o freeObs.valueString')
   }
 
@@ -331,6 +355,8 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   if (!prequalCoding) {
     throw new Error(`No se pudo traducir a PreQual ProductIDs (system=${sourceSystem}, code=${localCoding.code})`)
   }
+
+  dbgT('ICD11 result:', icd11Coding, 'PreQual result:', prequalCoding)
 
   // vaccineCode.coding: SOLO ICD-11
   const vaccineCodeCoding = icd11Coding
