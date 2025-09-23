@@ -38,7 +38,6 @@ const IMM_MODE = (process.env.IMM_MODE || 'ICVP').toUpperCase() // 'ICVP' | 'LAC
 
 // ICVP
 const ICVP_IMM_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/DVC-ImmunizationUvIps'
-const ICVP_DVC_VACCINES_VS = 'http://smart.who.int/icvp/ValueSet/DVCVaccines'
 const ICVP_DOSE_NUM_CC_EXT = 'http://smart.who.int/icvp/StructureDefinition/doseNumberCodeableConcept'
 const IHE_MCSD_PRACTITIONER = 'https://profiles.ihe.net/ITI/mCSD/StructureDefinition/IHE.mCSD.Practitioner'
 const IHE_MCSD_JURISDICTION_ORG = 'https://profiles.ihe.net/ITI/mCSD/StructureDefinition/IHE.mCSD.JurisdictionOrganization'
@@ -52,62 +51,63 @@ const EXT_LAC_MA         = 'http://lacpass.racsel.org/StructureDefinition/DDCCVa
 const EXT_LAC_COUNTRY    = 'http://lacpass.racsel.org/StructureDefinition/DDCCCountryOfEvent'
 const EXT_LAC_VALID_FROM = 'http://lacpass.racsel.org/StructureDefinition/DDCCVaccineValidFrom'
 
-// Terminology flags
-const USE_TERMINOLOGY = /^true$/i.test(process.env.USE_TERMINOLOGY || 'false')
+// =============================
+// Translate-only flags & constants (NO lookup / NO validate)
+// =============================
 const TERMINOLOGY_BASE = (process.env.TERMINOLOGY_BASE || '').replace(/\/$/, '')
+const USE_CONCEPTMAP_TRANSLATE = /^true$/i.test(process.env.USE_CONCEPTMAP_TRANSLATE || process.env.TRANSLATE_VACCINE || 'true')
 
-// Misc helpers
-function isoCountry () { return (process.env.LAC_COUNTRY_CODE || 'CL').toUpperCase() }
-const slug = (s) => ('org-' + String(s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''))
+// Targets
+const ICD11_TARGET_SYSTEM = process.env.ICD11_TARGET_SYSTEM || 'http://id.who.int/icd/release/11/mms'
+const PREQUAL_TARGET_SYSTEM = process.env.PREQUAL_TARGET_SYSTEM || 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs'
 
-// =============================
-// Terminology helpers
-// =============================
-async function terminologyValidateOrFallback (coding) {
-  if (!USE_TERMINOLOGY || !TERMINOLOGY_BASE || !coding?.system || !coding?.code) return coding
-  try {
-    // $validate-code on CodeSystem
-    const url = `${TERMINOLOGY_BASE}/CodeSystem/$validate-code`
-    const { data } = await axios.get(url, { params: { system: coding.system, code: coding.code }, httpsAgent: axios.defaults.httpsAgent })
-    if (data?.result === true) return coding
-    // try $lookup for display
-    try {
-      const lu = `${TERMINOLOGY_BASE}/CodeSystem/$lookup`
-      const { data: d2 } = await axios.get(lu, { params: { system: coding.system, code: coding.code }, httpsAgent: axios.defaults.httpsAgent })
-      const disp = (d2?.parameter || []).find(p => p.name === 'display')?.valueString
-      return { ...coding, ...(disp ? { display: disp } : {}) }
-    } catch { return coding }
-  } catch { return coding }
+// Optional: force source system for ConceptMap $translate
+const CM_TRANSLATE_SOURCE_SYSTEM = process.env.CM_TRANSLATE_SOURCE_SYSTEM || ''
+
+// Extensión ICVP ProductID
+const EXT_ICVP_PRODUCT_ID = 'http://smart.who.int/pcmt/StructureDefinition/ProductID'
+
+// --- Parse $translate Parameters
+function parseTranslate(parameters) {
+  const params = parameters?.parameter || []
+  const matches = params.filter(p => p.name === 'match')
+  for (const m of matches) {
+    const parts = m.part || []
+    const concept = parts.find(p => p.name === 'concept')?.valueCoding
+    const code = concept?.code || parts.find(p => p.name === 'code')?.valueCode
+    const system = concept?.system || parts.find(p => p.name === 'system')?.valueUri
+    const display = concept?.display || parts.find(p => p.name === 'display')?.valueString
+    if (code && system) return { system, code, ...(display ? { display } : {}) }
+  }
+  return null
 }
 
-async function validateVaccineCodeICVP (coding) {
-  if (!coding?.system || !coding?.code) throw new Error('ICVP requires vaccineCode with system+code')
-  if (!USE_TERMINOLOGY || !TERMINOLOGY_BASE) {
-    if (ICVP_STRICT) throw new Error('ICVP_STRICT enabled but terminology server not configured (TERMINOLOGY_BASE)')
-    return coding
-  }
+// --- Call $translate (GET then POST fallback). No lookup/validate here.
+async function conceptMapTranslate({ system, code, targetSystem }) {
+  if (!USE_CONCEPTMAP_TRANSLATE || !TERMINOLOGY_BASE || !system || !code || !targetSystem) return null
+  const base = TERMINOLOGY_BASE.replace(/\/$/, '')
+  // GET
   try {
-    const params = { url: ICVP_DVC_VACCINES_VS, system: coding.system, code: coding.code }
-    const vsUrl = `${TERMINOLOGY_BASE}/ValueSet/$validate-code`
-    const { data } = await axios.get(vsUrl, { params, httpsAgent: axios.defaults.httpsAgent })
-    if (data?.result === true) return coding
-  } catch {
-    try {
-      const vsUrl = `${TERMINOLOGY_BASE}/ValueSet/$validate-code`
-      const body = { resourceType: 'Parameters', parameter: [
-        { name: 'url', valueUri: ICVP_DVC_VACCINES_VS },
-        { name: 'system', valueUri: coding.system },
-        { name: 'code', valueCode: coding.code }
-      ] }
-      const { data } = await axios.post(vsUrl, body, { httpsAgent: axios.defaults.httpsAgent })
-      if (data?.result === true) return coding
-    } catch {}
-  }
-  if (process.env.ICVP_VACCINE_FALLBACK_SYSTEM && process.env.ICVP_VACCINE_FALLBACK_CODE) {
-    const fb = { system: process.env.ICVP_VACCINE_FALLBACK_SYSTEM, code: process.env.ICVP_VACCINE_FALLBACK_CODE }
-    return await validateVaccineCodeICVP(fb)
-  }
-  throw new Error('vaccineCode does not belong to DVCVaccines ValueSet and no valid fallback provided')
+    const { data } = await axios.get(`${base}/ConceptMap/$translate`, {
+      params: { code, system, targetsystem: targetSystem },
+      httpsAgent: axios.defaults.httpsAgent
+    })
+    const out = parseTranslate(data)
+    if (out) return out
+  } catch {}
+  // POST
+  try {
+    const body = {
+      resourceType: 'Parameters',
+      parameter: [
+        { name: 'code', valueCode: code },
+        { name: 'system', valueUri: system },
+        { name: 'targetsystem', valueUri: targetSystem }
+      ]
+    }
+    const { data } = await axios.post(`${base}/ConceptMap/$translate`, body, { httpsAgent: axios.defaults.httpsAgent })
+    return parseTranslate(data)
+  } catch { return null }
 }
 
 // =============================
@@ -149,14 +149,14 @@ const uploadedLocations = new Set()
 
 async function ensureOrganizationByName (name) {
   if (!name) return undefined
-  const id = slug(name)
+  const id = ('org-' + String(name || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''))
   if (uploadedOrganizations.has(id)) return { reference: `Organization/${id}`, display: name }
   const org = {
     resourceType: 'Organization',
     id,
     meta: { profile: [IMM_MODE === 'ICVP' ? IHE_MCSD_JURISDICTION_ORG : LAC_ORG_PROFILE] },
     name: String(name),
-    address: [{ use: 'work', country: isoCountry() }]
+    address: [{ use: 'work', country: (process.env.LAC_COUNTRY_CODE || 'CL').toUpperCase() }]
   }
   await putToNode(org)
   uploadedOrganizations.add(id)
@@ -217,7 +217,7 @@ function buildLacImmunizationExtensions () {
     throw new Error('Faltan LAC_BRAND_SYSTEM o LAC_BRAND_CODE para DDCCEventBrand')
   }
   ext.push({ url: EXT_LAC_BRAND, valueCoding: { system: process.env.LAC_BRAND_SYSTEM, code: process.env.LAC_BRAND_CODE } })
-  ext.push({ url: EXT_LAC_COUNTRY, valueCode: isoCountry() })
+  ext.push({ url: EXT_LAC_COUNTRY, valueCode: (process.env.LAC_COUNTRY_CODE || 'CL').toUpperCase() })
   if (process.env.LAC_MA_SYSTEM && process.env.LAC_MA_CODE) {
     ext.push({ url: EXT_LAC_MA, valueCoding: { system: process.env.LAC_MA_SYSTEM, code: process.env.LAC_MA_CODE } })
   }
@@ -272,22 +272,37 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   if (recvCoding.find(c => c.code === IMM_CODES.NO)) status = 'not-done'
   if (recvCoding.find(c => c.code === IMM_CODES.YES)) status = 'completed'
 
-  // vaccineCode (system+code)
-  let coding = vaxObs?.valueCodeableConcept?.coding?.find(c => c.system && c.code) || null
-  if (!coding && process.env.LAC_VACCINE_FALLBACK_SYSTEM && process.env.LAC_VACCINE_FALLBACK_CODE) {
-    // LAC fallback; en ICVP se valida VS
-    coding = {
+  // vaccineCode (código local)
+  let localCoding = vaxObs?.valueCodeableConcept?.coding?.find(c => c.system && c.code) || null
+  if (!localCoding && process.env.LAC_VACCINE_FALLBACK_SYSTEM && process.env.LAC_VACCINE_FALLBACK_CODE) {
+    localCoding = {
       system: process.env.LAC_VACCINE_FALLBACK_SYSTEM,
       code: process.env.LAC_VACCINE_FALLBACK_CODE,
       ...(process.env.LAC_VACCINE_FALLBACK_DISPLAY ? { display: process.env.LAC_VACCINE_FALLBACK_DISPLAY } : {})
     }
   }
-  if (!coding && freeObs?.valueString) {
-    // No cumple ICVP (binding REQUIRED); con ICVP_STRICT fallará abajo si no pasa VS
-    coding = { system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', code: 'UNK', display: freeObs.valueString }
+  if (!localCoding && freeObs?.valueString) {
+    localCoding = { system: 'http://terminology.hl7.org/CodeSystem/v3-NullFlavor', code: 'UNK', display: freeObs.valueString }
   }
-  if (!coding) throw new Error('No se pudo determinar vaccineCode (system+code)')
-  const vaccineCodeCoding = (IMM_MODE === 'ICVP') ? await validateVaccineCodeICVP(coding) : await terminologyValidateOrFallback(coding)
+  if (!localCoding) throw new Error('No se pudo determinar vaccineCode (código local system+code)')
+
+  // Forzar source system si viene por env (sino, usa system local)
+  const sourceSystem = CM_TRANSLATE_SOURCE_SYSTEM || localCoding.system
+
+  // $translate → ICD-11 y → PreQual (sin lookup/validate)
+  const icd11Coding = await conceptMapTranslate({
+    system: sourceSystem,
+    code: localCoding.code,
+    targetSystem: ICD11_TARGET_SYSTEM
+  })
+  const prequalCoding = await conceptMapTranslate({
+    system: sourceSystem,
+    code: localCoding.code,
+    targetSystem: PREQUAL_TARGET_SYSTEM
+  })
+
+  // vaccineCode.coding: priorizamos ICD-11 si existe; si no, el local
+  const vaccineCodeCoding = icd11Coding || localCoding
 
   // occurrenceDateTime
   const occurrenceDateTime = dateObs?.valueDateTime || groupObs?.effectiveDateTime
@@ -311,7 +326,7 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   }
   if (performer.length === 0) performer = undefined
 
-  // protocolApplied
+  // protocolApplied (dose)
   let doseNumber
   const dn = doseObs?.valueQuantity?.value
   if (Number.isFinite(dn)) doseNumber = Math.trunc(dn)
@@ -323,10 +338,7 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   if (IMM_MODE === 'ICVP') {
     const pae = {
       doseNumberPositiveInt: doseNumber,
-      extension: [{
-        url: ICVP_DOSE_NUM_CC_EXT,
-        valueCodeableConcept: { text: `Dose ${doseNumber}` }
-      }]
+      extension: [{ url: ICVP_DOSE_NUM_CC_EXT, valueCodeableConcept: { text: `Dose ${doseNumber}` } }]
     }
     const authRef = await ensureOrganizationByName(process.env.ICVP_AUTHORITY_ORG_NAME || process.env.LAC_AUTHORITY_ORG_NAME)
     if (!authRef) {
@@ -352,11 +364,25 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   const expirationDate = toDate(expObs?.valueDateTime)
 
   const profile = (IMM_MODE === 'ICVP') ? ICVP_IMM_PROFILE : LAC_IMM_PROFILE
+
+  // Extensión ICVP ProductID con PreQual si lo tenemos
+  const icvpProductIdExt = prequalCoding ? [{
+    url: EXT_ICVP_PRODUCT_ID,
+    valueCoding: {
+      system: PREQUAL_TARGET_SYSTEM,
+      code: prequalCoding.code,
+      ...(prequalCoding.display ? { display: prequalCoding.display } : {})
+    }
+  }] : []
+
+  const baseExt = (IMM_MODE === 'LAC') ? buildLacImmunizationExtensions() : []
+  const allExtensions = (IMM_MODE === 'ICVP') ? icvpProductIdExt : baseExt
+
   const imm = {
     resourceType: 'Immunization',
     id: groupObs.id, // trazabilidad
     meta: { profile: [profile] },
-    ...(IMM_MODE === 'LAC' ? { extension: buildLacImmunizationExtensions() } : {}),
+    ...(allExtensions.length ? { extension: allExtensions } : {}),
     status,
     vaccineCode: { coding: [vaccineCodeCoding] },
     patient: { reference: patientRef },
@@ -499,12 +525,12 @@ app.post('/forwarderimmunization/_event', async (req, res) => {
     // Vaccination → Immunization (ICVP/LAC)
     const sent = await processImmunizationsByPatient(pid, enc)
 
-    // Notificar ITI‑65 ICVP (vía OpenHIM)
+    // Notificar ITI-65 ICVP (vía OpenHIM)
     try {
       const immMode = (process.env.IMM_MODE || 'ICVP').toUpperCase()
       const endpoint = process.env.OPENHIM_ICVP_ENDPOINT || process.env.OPENHIM_SUMMARY_ENDPOINT
       if (immMode === 'ICVP' && endpoint) {
-        logStep('🔔 Notificando ITI‑65 ICVP para', pid)
+        logStep('🔔 Notificando ITI-65 ICVP para', pid)
         await axios.post(
           endpoint,
           { uuid: pid },
@@ -513,12 +539,12 @@ app.post('/forwarderimmunization/_event', async (req, res) => {
             httpsAgent: axios.defaults.httpsAgent
           }
         )
-        logStep('✅ Mediator ITI‑65 ICVP notificado')
+        logStep('✅ Mediator ITI-65 ICVP notificado')
       } else if (immMode === 'ICVP') {
         logStep('ⓘ OPENHIM_ICVP_ENDPOINT/OPENHIM_SUMMARY_ENDPOINT no configurado; se omite notificación')
       }
     } catch (e) {
-      console.error('❌ Error notificando ITI‑65 ICVP:', e.response?.data || e.message)
+      console.error('❌ Error notificando ITI-65 ICVP:', e.response?.data || e.message)
     }
 
     logStep('🎉 Done', uuid)
