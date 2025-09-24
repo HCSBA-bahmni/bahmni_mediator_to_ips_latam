@@ -556,8 +556,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const bundleHash = crypto.createHash('sha256').update(bundleString).digest('base64');
 
     // FIX #1 — Bundle profile genérico
-    summaryBundle.meta = summaryBundle.meta || {};
-    summaryBundle.meta.profile = ['http://hl7.org/fhir/StructureDefinition/Bundle'];
+    // summaryBundle.meta = summaryBundle.meta || {};
+    // summaryBundle.meta.profile = ['http://hl7.org/fhir/StructureDefinition/Bundle'];
 
     // FIX #2 — Remover profiles en entries vacíos
     summaryBundle.entry.forEach(entry => {
