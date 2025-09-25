@@ -20,7 +20,7 @@ const {
   OPENHIM_PASS,
   OPENHIM_API,
   FHIR_NODE_URL,
-  SUMMARY_PROFILE,
+  SUMMARY_ICVP_PROFILE,
   FHIR_NODO_NACIONAL_SERVER,
 
   NODE_ENV,
@@ -499,7 +499,7 @@ app.post('/icvp/_iti65', async (req, res) => {
     try {
       const resp = await axios.get(
         `${FHIR_NODE_URL}/fhir/Patient/${req.body.uuid}/$summary`,
-        { params: { profile: SUMMARY_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
+        { params: { profile: SUMMARY_ICVP_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
       );
       summaryBundle = resp.data;
     } catch (e) {

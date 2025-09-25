@@ -1,5 +1,5 @@
 {
-  "name": "lacpass-iti65-icvp-mediator",
+  "name": "lacpass-iti65-mediator",
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
