@@ -87,6 +87,13 @@ services:
       - ./tmp:/tmp
     restart: unless-stopped
 
+  DCV-ICVP-Mediator:
+    build: ./DCV-ICVP-Mediator
+    env_file: ./.env
+    ports:
+      - "8012:8012"
+    restart: unless-stopped
+    
 networks:
   default:
     name: lacpass-himnet
