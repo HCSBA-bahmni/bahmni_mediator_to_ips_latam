@@ -1,132 +1,63 @@
 {
-  "urn": "urn:mediator:ICVP-generator",
+  "urn": "urn:mediator:ICVP-from-bundle",
   "version": "1.0.0",
-  "name": "ICVP Generator Mediator",
-  "description": "Emite ICVP (HC1) desde un Bundle FHIR (IPS) usando el servicio v2/vshcIssuance",
+  "name": "ICVP-from-Bundle Mediator",
+  "description": "Ejecuta $icvp por cada Immunization de un Bundle dado (Bundle/{id}/$icvp?immunizationId=...). Incluye endpoint de salud.",
   "defaultChannelConfig": [
     {
-      "name": "ICVP Generate Channel",
-      "urlPattern": "^/icvp/_generate$",
+      "name": "ICVP From Bundle Channel",
+      "urlPattern": "^/icvp/_from-bundle$",
       "routes": [
         {
-          "name": "VHL Generate Route",
+          "name": "ICVP From Bundle Route",
           "host": "10.68.174.209",
           "port": "8012",
-          "path": "/icvp/_generate",
+          "path": "/icvp/_from-bundle",
           "primary": true,
           "type": "http",
           "passThroughHeaders": [
             "Accept",
             "Content-Type",
-            "Authorization"
+            "Authorization",
+            "Origin"
           ]
         }
       ],
-      "allow": [
-        "admin"
-      ],
-      "methods": [
-        "POST"
-      ],
+      "allow": ["admin"],
+      "methods": ["POST"],
       "type": "http"
     },
     {
-      "name": "ICVP Validate Channel",
-      "urlPattern": "^/icvp/_validate$",
+      "name": "Mediator Health Channel",
+      "urlPattern": "^/health$",
       "routes": [
         {
-          "name": "VHL Validate Route",
+          "name": "Mediator Health Route",
           "host": "10.68.174.209",
           "port": "8012",
-          "path": "/icvp/_validate",
-          "primary": true,
-          "type": "http",
-          "passThroughHeaders": [
-            "Accept",
-            "Content-Type",
-            "Authorization"
-          ]
-        }
-      ],
-      "allow": [
-        "admin"
-      ],
-      "methods": [
-        "POST"
-      ],
-      "type": "http"
-    },
-    {
-      "name": "VHL Resolve Channel",
-      "urlPattern": "^/icvp/_resolve$",
-      "routes": [
-        {
-          "name": "VHL Resolve Route",
-          "host": "10.68.174.209",
-          "port": "8012",
-          "path": "/icvp/_resolve",
-          "primary": true,
-          "type": "http",
-          "passThroughHeaders": [
-            "Accept",
-            "Content-Type",
-            "Authorization"
-          ]
-        }
-      ],
-      "allow": [
-        "admin"
-      ],
-      "methods": [
-        "POST"
-      ],
-      "type": "http"
-    },
-    {
-      "name": "VHL Health Channel",
-      "urlPattern": "^/icvp/_health$",
-      "routes": [
-        {
-          "name": "VHL Health Route",
-          "host": "10.68.174.209",
-          "port": "8012",
-          "path": "/icvp/_health",
+          "path": "/health",
           "primary": true,
           "type": "http",
           "passThroughHeaders": []
         }
       ],
-      "allow": [
-        "admin"
-      ],
-      "methods": [
-        "GET"
-      ],
+      "allow": ["admin"],
+      "methods": ["GET"],
       "type": "http"
     }
   ],
   "endpoints": [
     {
-      "name": "vhl-issue-endpoint",
-      "path": "/icvp/_generate",
+      "name": "icvp-from-bundle-endpoint",
+      "path": "/icvp/_from-bundle",
       "method": "post"
     },
     {
-      "name": "vhl-validate-endpoint",
-      "path": "/icvp/_validate",
-      "method": "post"
-    },
-    {
-      "name": "vhl-resolve-endpoint",
-      "path": "/icvp/_resolve",
-      "method": "post"
-    },
-    {
-      "name": "vhl-health-endpoint",
-      "path": "/icvp/_health",
+      "name": "mediator-health-endpoint",
+      "path": "/health",
       "method": "get"
     }
   ],
-  "heartbeatPath": "/icvp/_health",
+  "heartbeatPath": "/health",
   "heartbeatInterval": 30000
 }
