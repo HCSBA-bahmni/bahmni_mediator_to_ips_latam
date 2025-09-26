@@ -6,13 +6,13 @@
   "defaultChannelConfig": [
     {
       "name": "ICVP From Bundle Channel",
-      "urlPattern": "^/icvp/_from-bundle$",
+      "urlPattern": "^/icvpcert/_from-bundle$",
       "routes": [
         {
           "name": "ICVP From Bundle Route",
           "host": "10.68.174.209",
           "port": "8012",
-          "path": "/icvp/_from-bundle",
+          "path": "/icvpcert/_from-bundle",
           "primary": true,
           "type": "http",
           "passThroughHeaders": [
@@ -35,7 +35,7 @@
           "name": "Mediator Health Route",
           "host": "10.68.174.209",
           "port": "8012",
-          "path": "/health",
+          "path": "/icvpcert/health",
           "primary": true,
           "type": "http",
           "passThroughHeaders": []
@@ -49,15 +49,15 @@
   "endpoints": [
     {
       "name": "icvp-from-bundle-endpoint",
-      "path": "/icvp/_from-bundle",
+      "path": "/icvpcert/_from-bundle",
       "method": "post"
     },
     {
       "name": "mediator-health-endpoint",
-      "path": "/health",
+      "path": "/icvpcert/health",
       "method": "get"
     }
   ],
-  "heartbeatPath": "/health",
+  "heartbeatPath": "/icvpcert/health",
   "heartbeatInterval": 30000
 }

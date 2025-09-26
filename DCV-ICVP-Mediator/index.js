@@ -88,7 +88,7 @@ app.use((req, res, next) => {
 });
 
 // Salud
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/icvpcert/health', (req, res) => res.json({ status: 'ok' }));
 
 // Helper: fecha de expiración ISO (ahora + días)
 const isoPlusDays = (days = 30) =>
@@ -120,12 +120,12 @@ function buildUpstreamJsonHeadersICVP() {
 }
 /* =========================================================
  * 4) ICVP — generar respuestas $icvp por cada Immunization del Bundle
- *    POST /icvp/_from-bundle
+ *    POST /icvpcert/_from-bundle
  *    Body: Bundle FHIR (objeto o string)
  *    Env: ICVP_BASE_URL (default http://10.68.174.221:3000/fhir)
  *         ICVP_BASIC_USER / ICVP_BASIC_PASS (opcional)
  * =======================================================*/
-app.post('/icvp/_from-bundle', async (req, res) => {
+app.post('/icvpcert/_from-bundle', async (req, res) => {
   try {
     // 4.1) Parseo y validación
     let bundle = req.body;
@@ -197,7 +197,7 @@ app.post('/icvp/_from-bundle', async (req, res) => {
       results
     });
   } catch (e) {
-    console.error('❌ ERROR /icvp/_from-bundle:', e?.message || e);
+    console.error('❌ ERROR /icvpcert/_from-bundle:', e?.message || e);
     const status = e?.response?.status || 502;
     const detail = e?.response?.data || e?.message || 'Bad Gateway';
     return res.status(status).json({ error: 'ICVP batch failed', detail });
