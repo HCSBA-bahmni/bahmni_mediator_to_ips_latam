@@ -560,13 +560,13 @@ app.post('/icvp/_iti65', async (req, res) => {
     // summaryBundle.meta.profile = ['http://hl7.org/fhir/StructureDefinition/Bundle'];
 
     // FIX #2 — Remover profiles en entries vacíos
-    summaryBundle.entry.forEach(entry => {
-      const res = entry.resource;
-      if (res?.meta) {
-        if (res.meta.profile) delete res.meta.profile;
-        if (Object.keys(res.meta).length === 0) delete res.meta;
-      }
-    });
+    // summaryBundle.entry.forEach(entry => {
+    //   const res = entry.resource;
+    //   if (res?.meta) {
+    //     if (res.meta.profile) delete res.meta.profile;
+    //     if (Object.keys(res.meta).length === 0) delete res.meta;
+    //   }
+    // });
 
     // FIX #3 — Sanitize UV/IPS en meds/vacunas
     summaryBundle.entry.forEach(entry => {
