@@ -35,7 +35,7 @@
           "name": "Mediator Health Route",
           "host": "10.68.174.209",
           "port": "8013",
-          "path": "/icvpcert/health",
+          "path": "/icvpcert/_health",
           "primary": true,
           "type": "http",
           "passThroughHeaders": []
