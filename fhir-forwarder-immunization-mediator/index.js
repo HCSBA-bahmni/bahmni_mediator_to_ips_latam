@@ -5,7 +5,9 @@ import axios from 'axios'
 import https from 'https'
 import fs from 'fs'
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils'
-import mediatorConfig from './mediatorConfig.json' with { type: 'json' }
+//import mediatorConfig from './mediatorConfig.json' with { type: 'json' }
+import mediatorConfig from './mediatorConfig.json' assert { type: 'json' }
+
 
 // --- OpenHIM config ---
 const openhimConfig = {
@@ -67,7 +69,9 @@ const ICD11_TARGET_SYSTEM = process.env.ICD11_TARGET_SYSTEM || 'http://id.who.in
 const PREQUAL_TARGET_SYSTEM = process.env.PREQUAL_TARGET_SYSTEM || 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs'
 
 // Optional: force source system for ConceptMap $translate
-const CM_TRANSLATE_SOURCE_SYSTEM = process.env.CM_TRANSLATE_SOURCE_SYSTEM || ''
+//const CM_TRANSLATE_SOURCE_SYSTEM = process.env.CM_TRANSLATE_SOURCE_SYSTEM || ''
+// FORCE: use this source system for all $translate calls, always
+const CM_TRANSLATE_SOURCE_SYSTEM = 'http://node-acme.org/terminology'
 
 // Extensión ICVP ProductID
 const EXT_ICVP_PRODUCT_ID = 'http://smart.who.int/pcmt/StructureDefinition/ProductID'
@@ -298,7 +302,10 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
     .map(m => m.reference?.replace(/^Observation\//, ''))
     .filter(Boolean)
 
-  const vaxObs   = pickMemberByCode(idList, obsById, IMM_CODES.VACCINE)
+  //const vaxObs   = pickMemberByCode(idList, obsById, IMM_CODES.VACCINE)
+  const vaxObs   = idList
+    .map(id => obsById.get(id))
+    .find(r => r && codeList(r).some(c => VACCINE_MEMBER_CODES.has(c)))
   const freeObs  = pickMemberByCode(idList, obsById, IMM_CODES.NON_CODED)
   const dateObs  = pickMemberByCode(idList, obsById, IMM_CODES.VAX_DATE)
   const lotObs   = pickMemberByCode(idList, obsById, IMM_CODES.LOT)
@@ -306,6 +313,19 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   const mfgObs   = pickMemberByCode(idList, obsById, IMM_CODES.MANUFACTURER)
   const doseObs  = pickMemberByCode(idList, obsById, IMM_CODES.DOSE_NUM)
   const recvObs  = pickMemberByCode(idList, obsById, IMM_CODES.RECEIVED)
+
+  if (DEBUG_VAX) {
+  const membersDbg = idList.map(id => {
+    const r = obsById.get(id)
+    return {
+      id,
+      codes: codeList(r),
+      valueString: r?.valueString,
+      valueCC: r?.valueCodeableConcept?.coding
+    }
+  })
+  dbgV('members in group', JSON.stringify(membersDbg))
+}
 
   // status (completed | entered-in-error | not-done)
   let status = 'completed'
@@ -317,13 +337,24 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   let localCoding = null
 
   // 1) coding.code (aunque sin system)
+  //const anyCoding = vaxObs?.valueCodeableConcept?.coding?.find(c => c && c.code) || null
+  //if (anyCoding?.code) {
+  //  const sys = anyCoding.system || CM_TRANSLATE_SOURCE_SYSTEM || null
+  //  if (sys) {
+  //    localCoding = { system: sys, code: String(anyCoding.code), ...(anyCoding.display ? { display: anyCoding.display } : {}) }
+  //  }
+  //}
+
   const anyCoding = vaxObs?.valueCodeableConcept?.coding?.find(c => c && c.code) || null
   if (anyCoding?.code) {
-    const sys = anyCoding.system || CM_TRANSLATE_SOURCE_SYSTEM || null
-    if (sys) {
-      localCoding = { system: sys, code: String(anyCoding.code), ...(anyCoding.display ? { display: anyCoding.display } : {}) }
+    // FORCE system: ignore incoming system
+    localCoding = {
+      system: CM_TRANSLATE_SOURCE_SYSTEM,
+      code: String(anyCoding.code),
+      ...(anyCoding.display ? { display: anyCoding.display } : {})
     }
   }
+
 
   // 2) valueString
   if (!localCoding && vaxObs?.valueString && CM_TRANSLATE_SOURCE_SYSTEM) {
@@ -355,7 +386,10 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
   }
 
   // Source system del translate (ENV o el del código local)
-  const sourceSystem = CM_TRANSLATE_SOURCE_SYSTEM || localCoding.system
+  //const sourceSystem = CM_TRANSLATE_SOURCE_SYSTEM || localCoding.system
+
+  // FORCE: always use the forced source system
+  const sourceSystem = CM_TRANSLATE_SOURCE_SYSTEM
 
   // $translate → ICD-11 (OBLIGATORIO)
   const icd11Coding = await conceptMapTranslate({
