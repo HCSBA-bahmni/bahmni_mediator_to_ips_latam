@@ -91,7 +91,7 @@ services:
     build: ./DCV-ICVP-Mediator
     env_file: ./.env
     ports:
-      - "8012:8012"
+      - "8013:8013"
     restart: unless-stopped
 
 networks:

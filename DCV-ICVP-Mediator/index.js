@@ -205,7 +205,7 @@ app.post('/icvpcert/_from-bundle', async (req, res) => {
 });
 
 // Arrancar server
-const PORT = ICVP_PORT || 8012;
+const PORT = ICVP_PORT || 8013;
 app.listen(PORT, () => {
   console.log(`Mediator listening on http://localhost:${PORT}`);
 });

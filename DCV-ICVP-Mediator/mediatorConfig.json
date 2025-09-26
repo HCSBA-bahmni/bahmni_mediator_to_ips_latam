@@ -11,7 +11,7 @@
         {
           "name": "ICVP From Bundle Route",
           "host": "10.68.174.209",
-          "port": "8012",
+          "port": "8013",
           "path": "/icvpcert/_from-bundle",
           "primary": true,
           "type": "http",
@@ -34,7 +34,7 @@
         {
           "name": "Mediator Health Route",
           "host": "10.68.174.209",
-          "port": "8012",
+          "port": "8013",
           "path": "/icvpcert/health",
           "primary": true,
           "type": "http",

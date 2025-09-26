@@ -20,7 +20,7 @@ EXPOSE 7000
 
 # 5) Define un healthcheck para orquestadores
 HEALTHCHECK --interval=30s --timeout=5s \
-  CMD wget --quiet --tries=1 --spider http://localhost:7000/_health || exit 1
+  CMD wget --quiet --tries=1 --spider http://localhost:7000/proxy/_health || exit 1
 
 # 6) Cambia a usuario no-root
 USER appuser

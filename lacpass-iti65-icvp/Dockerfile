@@ -21,7 +21,7 @@ EXPOSE 8011
 
 # 8) Define un healthcheck para orquestadores (ajusta la ruta si tu mediador tiene otro endpoint)
 HEALTHCHECK --interval=30s --timeout=5s \
-  CMD wget --quiet --tries=1 --spider http://localhost:8006/_health || exit 1
+  CMD wget --quiet --tries=1 --spider http://localhost:8011/icvp/_health || exit 1
 
 # 9) Cambia a usuario no-root para mayor seguridad
 USER appuser
