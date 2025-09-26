@@ -42,13 +42,13 @@
     },
     {
       "name": "PDQm Patient Search Channel",
-      "urlPattern": "^/Patient$",
+      "urlPattern": "^/pdqm/Patient$",
       "routes": [
         {
           "name": "PDQm Patient Search Route",
           "host": "10.68.174.209",
           "port": "8007",
-          "path": "/Patient",
+          "path": "/pdqm/Patient",
           "primary": true,
           "type": "http",
           "passThroughHeaders": ["Authorization", "Content-Type", "Accept"]
@@ -72,7 +72,7 @@
     },
     {
       "name": "pdqm-patient-search-endpoint",
-      "path": "/Patient",
+      "path": "/pdqm/Patient",
       "method": "get"
     }
   ],

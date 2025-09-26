@@ -79,7 +79,7 @@ app.use((req, res, next) => {
 });
 
 // Salud
-app.get('/vhl/health', (req, res) => res.json({status: 'ok'}));
+app.get('/vhl/_health', (req, res) => res.json({status: 'ok'}));
 
 // Helper: fecha de expiración ISO (ahora + días)
 const isoPlusDays = (days = 30) =>
