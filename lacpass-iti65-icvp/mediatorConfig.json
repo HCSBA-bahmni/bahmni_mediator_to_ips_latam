@@ -45,6 +45,6 @@
     { "name": "icvp-iti65-endpoint",  "path": "/icvp/_iti65",  "method": "post" },
     { "name": "icvp-health-endpoint", "path": "/icvp/_health", "method": "get" }
   ],
-  "heartbeatPath": "/lacpass/_health",
+  "heartbeatPath": "/icvp/_health",
   "heartbeatInterval": 30000
 }

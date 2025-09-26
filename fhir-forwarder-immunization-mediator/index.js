@@ -249,10 +249,13 @@ function buildLacImmunizationExtensions () {
 // =============================
 // Source codes (OpenMRS concept UUIDs)
 // =============================
-const IMM_SET_CODE = '1421AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' // Set: Vaccination Event
+// Set: Vaccination Event (grupo de Observations)
+const IMM_SET_CODE = '1421AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+
+// Códigos base (deja un default para VACCINE; otros entran por ENV)
 const IMM_CODES = {
-  //VACCINE:       '984AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccination -> valueCodeableConcept
-  VACCINE:       '598b3224-25e4-40ad-92d6-974683bb82af',   // tu code local del miembro vacuna
+  // Vaccination -> valueCodeableConcept
+  VACCINE:       '598b3224-25e4-40ad-92d6-974683bb82af', // tu UUID local por defecto
   VAX_DATE:      '1410AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
   LOT:           '1420AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
   LOT_EXP:       '165907AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
@@ -263,7 +266,25 @@ const IMM_CODES = {
   YES:           '1065AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
   NO:            '1066AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 }
-const IMM_ALL_CODES = new Set(Object.values(IMM_CODES).concat([IMM_SET_CODE]))
+
+// Posibles códigos del miembro "vacuna" (ENV + fallbacks conocidos)
+const VACCINE_MEMBER_CODES = new Set(
+  (process.env.VACCINE_MEMBER_CODES || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    // Fallbacks: estándar OpenMRS + tu local por defecto
+    .concat(['984AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', IMM_CODES.VACCINE])
+)
+
+// Set maestro con TODOS los códigos relevantes
+const IMM_ALL_CODES = new Set([
+  ...Object.values(IMM_CODES),
+  IMM_SET_CODE,
+  ...VACCINE_MEMBER_CODES
+])
+
+
 
 function isRelevantVaccinationObservation (r) {
   return r?.resourceType === 'Observation' && codeList(r).some(c => IMM_ALL_CODES.has(c))
