@@ -81,12 +81,10 @@ services:
   lacpass-iti65-icvp-mediator:
     build: ./lacpass-iti65-icvp
     env_file: ./.env
-    environment:
-      - DEBUG_DIR=/opt/icvp/debug
     ports:
       - "8011:8011"
     volumes:
-      - ./icvp-debug:/opt/icvp/debug
+      - ./tmp:/tmp
     restart: unless-stopped
 
 networks:
