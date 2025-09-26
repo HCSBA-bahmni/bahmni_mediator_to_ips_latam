@@ -560,13 +560,13 @@ app.post('/icvp/_iti65', async (req, res) => {
     // summaryBundle.meta.profile = ['http://hl7.org/fhir/StructureDefinition/Bundle'];
 
     // FIX #2 — Remover profiles en entries vacíos
-    summaryBundle.entry.forEach(entry => {
-      const res = entry.resource;
-      if (res?.meta) {
-        if (res.meta.profile) delete res.meta.profile;
-        if (Object.keys(res.meta).length === 0) delete res.meta;
-      }
-    });
+    // summaryBundle.entry.forEach(entry => {
+    //   const res = entry.resource;
+    //   if (res?.meta) {
+    //     if (res.meta.profile) delete res.meta.profile;
+    //     if (Object.keys(res.meta).length === 0) delete res.meta;
+    //   }
+    // });
 
     // FIX #3 — Sanitize UV/IPS en meds/vacunas
     summaryBundle.entry.forEach(entry => {
@@ -581,12 +581,12 @@ app.post('/icvp/_iti65', async (req, res) => {
 
     // URN map para referencias internas
     const urlMap = new Map();
-    const fhirBase = String(FHIR_NODO_NACIONAL_SERVER || '').replace(/\/+$/, '');
-    summaryBundle.entry.forEach(entry => {
+      summaryBundle.entry.forEach(entry => {
       const { resource } = entry;
-      const urn = `${fhirBase}/${resource.resourceType}/${resource.id}`;
+      const urn = `${FHIR_NODO_NACIONAL_SERVER}/fhir/${resource.resourceType}/${resource.id}`;
       urlMap.set(`${resource.resourceType}/${resource.id}`, urn);
-    });
+      });
+
 
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
