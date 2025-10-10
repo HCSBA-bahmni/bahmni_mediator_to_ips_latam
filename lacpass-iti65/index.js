@@ -165,6 +165,14 @@ if (CORS_ORIGIN) {
 
 app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
 
+
+// Middleware simple de correlación
+app.use((req, _res, next) => {
+  req.correlationId = req.headers['x-correlation-id'] || uuidv4();
+  console.log(`[${req.correlationId}] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 // ===================== PDQm helpers =====================
 async function pdqmFetchPatientByIdentifier(identifierValue) {
   if (!identifierValue || !PDQM_FHIR_URL) return null;
@@ -200,6 +208,45 @@ function mergePatientDemographics(localPt, pdqmPt) {
     localPt.identifier = pdqmPt.identifier;
   }
 }
+
+// ITI-65: nueva función que trae el BUNDLE PDQm completo
+async function pdqmFetchBundleByIdentifier(identifierValue) {
+  if (!identifierValue || !PDQM_FHIR_URL) return null;
+  //if (PDQM_DEFAULT_IDENTIFIER_SYSTEM && !String(identifierValue).includes('|')) {
+  //  identifierValue = `${PDQM_DEFAULT_IDENTIFIER_SYSTEM}|${identifierValue}`;
+  //}
+  if (PDQM_DEFAULT_IDENTIFIER_SYSTEM) {
+   const s = String(identifierValue);
+   const normalized = s.includes('|') ? s : `${PDQM_DEFAULT_IDENTIFIER_SYSTEM}|${s}`;
+   identifierValue = normalized;
+ }
+  try {
+    const url = `${PDQM_FHIR_URL.replace(/\/+$/, '')}/Patient`;
+    const headers = { Accept: 'application/fhir+json' };
+    if (PDQM_FHIR_TOKEN) headers.Authorization = `Bearer ${PDQM_FHIR_TOKEN}`;
+    const resp = await axios.get(url, {
+      params: { identifier: identifierValue, _count: 1 },
+      headers,
+      timeout: parseInt(PDQM_TIMEOUT_MS, 10) || 10000,
+      httpsAgent: axios.defaults.httpsAgent
+    });
+    return resp.data || null; // Bundle
+  } catch {
+    return null;
+  }
+}
+
+// Helper: reemplaza el Patient del summaryBundle por el del Bundle PDQm
+function replacePatientFromPdqmBundle(summaryBundle, pdqmBundle) {
+  if (!summaryBundle?.entry || !pdqmBundle?.entry) return false;
+  const pdqmPatient = pdqmBundle.entry.find(e => e.resource?.resourceType === 'Patient')?.resource;
+  if (!pdqmPatient) return false;
+  const idx = summaryBundle.entry.findIndex(e => e.resource?.resourceType === 'Patient');
+  if (idx < 0) return false;
+  summaryBundle.entry[idx].resource = pdqmPatient; // ← reemplazo 1:1
+  return true;
+}
+
 
 // ===================== Terminology client =====================
 const TS_BASE_URL = (TERMINOLOGY_BASE_URL || TERMINO_SERVER_URL || '').replace(/\/+$/, '');
@@ -412,6 +459,14 @@ function resourceToDomain(resource) {
   }
 }
 
+// Helper util
+function isPdqmFallbackBundle(bundle) {
+  const tags = bundle?.meta?.tag || [];
+  return Array.isArray(tags) && tags.some(t =>
+    t.system === 'urn:pdqm:fallback' && t.code === 'synthetic'
+  );
+}
+
 // ===================== Iterador de CodeableConcepts =====================
 function* iterateCodeableConcepts(resource) {
   switch (resource.resourceType) {
@@ -529,8 +584,26 @@ app.post('/lacpass/_iti65', async (req, res) => {
         }
         if (!idValue && ids.length > 0) idValue = ids[0].value;
 
-        const pdqmPatient = await pdqmFetchPatientByIdentifier(idValue);
-        if (pdqmPatient) mergePatientDemographics(localPatient, pdqmPatient);
+        //const pdqmPatient = await pdqmFetchPatientByIdentifier(idValue);
+        //if (pdqmPatient) mergePatientDemographics(localPatient, pdqmPatient);
+        const pdqmBundle = await pdqmFetchBundleByIdentifier(idValue);
+        if (pdqmBundle?.resourceType === 'Bundle' && Array.isArray(pdqmBundle.entry) && pdqmBundle.entry.length > 0) {
+         // (Opcional) guarda el Bundle PDQm crudo para trazabilidad
+          try {
+            const pdqmFile = path.join(debugDir, `pdqmBundle_${Date.now()}.json`);
+            fs.writeFileSync(pdqmFile, JSON.stringify(pdqmBundle, null, 2));
+            console.log('DEBUG: saved PDQm bundle →', pdqmFile);
+          } catch {}
+          // Reemplaza el Patient del summaryBundle por el EXACTO de Gazelle
+          //const ok = replacePatientFromPdqmBundle(summaryBundle, pdqmBundle);
+          //if (!ok) console.warn('⚠️ No se pudo reemplazar Patient desde PDQm bundle');
+          if (!isPdqmFallbackBundle(pdqmBundle)) {
+            const ok = replacePatientFromPdqmBundle(summaryBundle, pdqmBundle);
+            if (!ok) console.warn('⚠️ No se pudo reemplazar Patient desde PDQm bundle');
+          } else {
+            console.warn('⚠️ PDQm bundle es fallback sintético, se ignora');
+          }
+        }
       }
     }
 
@@ -689,10 +762,17 @@ app.post('/lacpass/_iti65', async (req, res) => {
     console.log('DEBUG: saved →', debugFile);
 
     const resp = await axios.post(FHIR_NODO_NACIONAL_SERVER, provideBundle, {
-      headers: { 'Content-Type': 'application/fhir+json' },
+      //headers: { 'Content-Type': 'application/fhir+json' },
+      headers: {
+        'Content-Type': 'application/fhir+json',
+        'X-Correlation-ID': req.correlationId
+      },
+
       validateStatus: false
     });
-    console.log(`⇒ ITI-65 sent, status ${resp.status}`);
+    //console.log(`⇒ ITI-65 sent, status ${resp.status}`);
+    console.log(`[${req.correlationId}] ⇒ ITI-65 sent, status ${resp.status}`);
+
     return res.json({ status: 'sent', code: resp.status });
 
   } catch (e) {
