@@ -642,7 +642,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
     if (req.body.uuid) {
         try {
             const resp = await axios.get(
-                `${FHIR_NODE_URL}/Patient/${req.body.uuid}/$summary`,
+                `${FHIR_NODE_URL}/fhir/Patient/${req.body.uuid}/$summary`,
                 { params: { profile: SUMMARY_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
             );
             summaryBundle = resp.data;
@@ -750,7 +750,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
         const urlMap = new Map();
         summaryBundle.entry.forEach(entry => {
             const { resource } = entry;
-            //const urn = `urn:uuid:${resource.id}`;
             const urn = `${FHIR_NODO_NACIONAL_SERVER}/${resource.resourceType}/${resource.id}`;
             urlMap.set(`${resource.resourceType}/${resource.id}`, urn);
         });
