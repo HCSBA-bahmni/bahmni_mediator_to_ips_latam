@@ -599,6 +599,64 @@ async function normalizeTerminologyInBundle(bundle) {
 
 // ===================== Función para corregir Bundle - INTEGRADA =====================
 function fixBundleValidationIssues(summaryBundle) {
+  // === NUEVO: Canonicalizar fullUrl y referencias internas a urn:uuid:<id> ===
+  // (Esto soluciona BUNDLE_BUNDLE_ENTRY_NOTFOUND_APPARENT y BUNDLE_BUNDLE_POSSIBLE_MATCH_WRONG_FU)
+
+  function makeUrn(id) { return `urn:uuid:${id}`; }
+
+  function extractIdFromFullUrl(entry) {
+    if (!entry) return null;
+    if ((entry.fullUrl || '').startsWith('urn:uuid:')) {
+      return entry.fullUrl.split(':').pop();
+    }
+    // Preferir resource.id si existe
+    if (entry.resource?.id) return entry.resource.id;
+    // Fallback: último segmento del fullUrl
+    if (entry.fullUrl) {
+      const parts = entry.fullUrl.split('/').filter(Boolean);
+      return parts[parts.length - 1] || null;
+    }
+    return null;
+  }
+
+  function canonicalizeBundleToUrn(bundle) {
+    if (!bundle?.entry) return;
+    const urlMap = new Map(); // referencia original -> URN
+
+    for (const e of bundle.entry) {
+      if (!e.resource) continue;
+      let id = extractIdFromFullUrl(e);
+      if (!id) {
+        // Generar uno si falta
+        id = uuidv4();
+        e.resource.id = id;
+      }
+      const urn = makeUrn(id);
+
+      // Mapear variantes conocidas a URN
+      if (e.fullUrl && e.fullUrl !== urn) urlMap.set(e.fullUrl, urn);
+      if (e.resource.resourceType) {
+        urlMap.set(`${e.resource.resourceType}/${id}`, urn);
+        // También mapear posibles relative with leading './'
+        urlMap.set(`./${e.resource.resourceType}/${id}`, urn);
+      }
+
+      // Reescribir fullUrl a URN
+      e.fullUrl = urn;
+
+      // Limpiar meta.source interno (#...)
+      if (e.resource.meta?.source && String(e.resource.meta.source).startsWith('#')) {
+        delete e.resource.meta.source;
+      }
+    }
+
+    // Reescribir todas las referencias usando el urlMap
+    updateReferencesInObject(bundle, urlMap);
+  }
+
+  // Ejecutar canonicalización al inicio
+  canonicalizeBundleToUrn(summaryBundle);
+
   // 1. Asegurar que el Composition tenga custodian (requerido por el perfil lac-composition)
   const compositionEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
   if (compositionEntry?.resource && !compositionEntry.resource.custodian) {
@@ -688,6 +746,12 @@ function fixBundleValidationIssues(summaryBundle) {
           if (!coding.system) {
             coding.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
           }
+          // Refuerzo específico para no-medication-info
+          if ((coding.code === 'no-medication-info') || (coding.display === 'No information about medications')) {
+            coding.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+            coding.code = 'no-medication-info';
+            if (!coding.display) coding.display = 'No information about medications';
+          }
         });
       }
       
@@ -695,6 +759,12 @@ function fixBundleValidationIssues(summaryBundle) {
       if (!entry.resource.effectiveDateTime && !entry.resource.effectivePeriod) {
         entry.resource.effectiveDateTime = new Date().toISOString();
       }
+    }
+
+    // Ordenar/filtrar codings de Condition (SNOMED primero, sin codings sin system) — refuerzo
+    if (entry.resource?.resourceType === 'Condition' && Array.isArray(entry.resource.code?.coding)) {
+      entry.resource.code.coding = entry.resource.code.coding.filter(c => !!c.system);
+      entry.resource.code.coding = sortCodingsPreferred(entry.resource.code.coding);
     }
   });
 
