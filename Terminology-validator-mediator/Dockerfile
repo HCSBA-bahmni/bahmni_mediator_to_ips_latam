@@ -21,7 +21,7 @@ EXPOSE 8010
 
 # 8) Define un healthcheck para orquestadores
 HEALTHCHECK --interval=30s --timeout=5s \
-  CMD wget --quiet --tries=1 --spider http://localhost:8002/termino/_health || exit 1
+  CMD wget --quiet --tries=1 --spider http://localhost:8010/termino/_health || exit 1
 
 # 9) Cambia a usuario no-root para mayor seguridad
 USER appuser
