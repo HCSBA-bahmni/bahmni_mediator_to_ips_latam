@@ -395,19 +395,28 @@ async function opValidateVS(ts, { code, system, display }, domainCfg) {
 }
 async function opValidateCS(ts, { code, system, display }, domainCfg) {
   if (!isTrue(FEATURE_TS_VALIDATE_CS_ENABLED)) return null;
-  if (!domainCfg?.codeSystem || !system) return null;
+  const url = domainCfg?.codeSystem || system;        // p.ej. http://snomed.info/sct
+  if (!url || !code) return null;
+
   try {
-    const params = { system, code };
+    const params = { url, code };
+    const version =
+      domainCfg?.codeSystemVersion ||
+      process.env.TS_SNOMED_VERSION;
+
+    if (version) params.version = version;
     if (display) params.display = display;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
+
     const { data } = await ts.get('/CodeSystem/$validate-code', { params });
     const ok = extractResultFromParameters(data);
     if (ok.result) {
-      return { system, code, display: ok.display || display, source: 'validate-cs' };
+      return { system: url, code, display: ok.display || display, source: 'validate-cs' };
     }
   } catch { /* noop */ }
   return null;
 }
+
 async function opExpand(ts, { code, system, display }, domainCfg) {
   if (!isTrue(FEATURE_TS_EXPAND_ENABLED)) return null;
   if (!domainCfg?.vsExpand) return null;
@@ -427,17 +436,26 @@ async function opExpand(ts, { code, system, display }, domainCfg) {
   } catch { /* noop */ }
   return null;
 }
-async function opLookup(ts, { code, system, display }) {
-  if (!system || !code) return null; // lookup requiere ambos
+async function opLookup(ts, { code, system, display }, domainCfg) {
+  if (!system || !code) return null;
+
   try {
     const params = { system, code };
+    // prioridad: version del dominio → env global → coding.version (si decides pasarla)
+    const version =
+      domainCfg?.codeSystemVersion ||
+      process.env.TS_SNOMED_VERSION;
+
+    if (version) params.version = version;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
+
     const { data } = await ts.get('/CodeSystem/$lookup', { params });
     const disp = extractDisplayFromLookup(data);
     if (disp) return { system, code, display: disp, source: 'lookup' };
   } catch { /* noop */ }
   return null;
 }
+
 async function opTranslate(ts, { code, system, display }, domainCfg) {
   if (!isTrue(FEATURE_TS_TRANSLATE_ENABLED)) return null;
 
@@ -607,7 +625,7 @@ async function normalizeTerminologyInBundle(bundle) {
 
     // Normalizar todas las CC relevantes del recurso
     for (const { cc } of iterateCodeableConcepts(res)) {
-      try { await normalizeCC(ts, cc, domainCfg); }
+      try { await normalizeCC(ts, cc, domainCfg, domain);
       catch (e) { console.warn(`⚠️ TS normalize error (${domain}):`, e.message); }
     }
   }
