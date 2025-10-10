@@ -625,8 +625,11 @@ async function normalizeTerminologyInBundle(bundle) {
 
     // Normalizar todas las CC relevantes del recurso
     for (const { cc } of iterateCodeableConcepts(res)) {
-      try { await normalizeCC(ts, cc, domainCfg, domain);
-      catch (e) { console.warn(`⚠️ TS normalize error (${domain}):`, e.message); }
+      try {
+        await normalizeCC(ts, cc, domainCfg, domain);
+      } catch (e) {
+        console.warn(`⚠️ TS normalize error (${domain}):`, e.message);
+      }
     }
   }
 }
