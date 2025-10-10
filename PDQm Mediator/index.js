@@ -102,7 +102,9 @@ const buildFallbackBundle = (req, originalIdentifier) => {
   return {
     resourceType: 'Bundle',
     id: randomUUID(),
-    meta: { lastUpdated: now },
+    //meta: { lastUpdated: now },
+    meta: { lastUpdated: now, tag: [{ system: 'urn:pdqm:fallback', code: 'synthetic' }] },
+
     type: 'searchset',
     total: 1,
     link: [{ relation: 'self', url: buildSelfLinkFromReq(req) }],
