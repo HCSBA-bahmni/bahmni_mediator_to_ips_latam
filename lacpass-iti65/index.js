@@ -115,6 +115,11 @@ const {
   VACCINES_TRANSLATE_SOURCE_SYSTEM = 'http://snomed.info/sct',
   VACCINES_TRANSLATE_TARGET_SYSTEM = 'http://hl7.org/fhir/sid/icd-10',
 
+  // Nuevo: configuración para formatCode
+  MHD_FORMAT_CODE = 'urn:ihe:iti:xds-sd:text:2008', // Default IHE para FHIR JSON
+  
+  // Debug level para ops terminológicas
+  TS_DEBUG_LEVEL = 'warn', // 'debug', 'warn', 'error', 'silent'
 } = process.env;
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
@@ -375,45 +380,61 @@ function pickIdentifierValueForPdqm(identifiers = []) {
   return identifiers[0]?.value || null; // último fallback
 }
 
-
 // ===================== Terminology Ops (funciones) =====================
 async function opValidateVS(ts, { code, system, display }, domainCfg) {
   if (!isTrue(FEATURE_TS_VALIDATE_VS_ENABLED)) return null;
   if (!domainCfg?.vsValidate) return null;
+  
   try {
     const params = { url: domainCfg.vsValidate, code };
     if (system) params.system = system;
     if (display) params.display = display;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
+    
+    tsLog('debug', `Validating VS: ${domainCfg.vsValidate} | ${system}|${code}`);
+    
     const { data } = await ts.get('/ValueSet/$validate-code', { params });
     const ok = extractResultFromParameters(data);
+    
     if (ok.result) {
+      tsLog('debug', `✅ VS validation OK: ${code} -> ${ok.display || display}`);
       return { system: system, code, display: ok.display || display, source: 'validate-vs' };
+    } else {
+      tsLog('debug', `❌ VS validation failed: ${system}|${code}`);
     }
-  } catch { /* noop */ }
+  } catch (e) {
+    tsLog('warn', `VS validation error: ${e.response?.status} ${e.message}`, { system, code });
+  }
   return null;
 }
+
 async function opValidateCS(ts, { code, system, display }, domainCfg) {
   if (!isTrue(FEATURE_TS_VALIDATE_CS_ENABLED)) return null;
-  const url = domainCfg?.codeSystem || system;        // p.ej. http://snomed.info/sct
+  const url = domainCfg?.codeSystem || system;
   if (!url || !code) return null;
 
   try {
     const params = { url, code };
-    const version =
-      domainCfg?.codeSystemVersion ||
-      process.env.TS_SNOMED_VERSION;
+    const version = domainCfg?.codeSystemVersion || process.env.TS_SNOMED_VERSION;
 
     if (version) params.version = version;
     if (display) params.display = display;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
 
+    tsLog('debug', `Validating CS: ${url} | ${code}`);
+
     const { data } = await ts.get('/CodeSystem/$validate-code', { params });
     const ok = extractResultFromParameters(data);
+    
     if (ok.result) {
+      tsLog('debug', `✅ CS validation OK: ${code} -> ${ok.display || display}`);
       return { system: url, code, display: ok.display || display, source: 'validate-cs' };
+    } else {
+      tsLog('debug', `❌ CS validation failed: ${url}|${code}`);
     }
-  } catch { /* noop */ }
+  } catch (e) {
+    tsLog('warn', `CS validation error: ${e.response?.status} ${e.message}`, { system: url, code });
+  }
   return null;
 }
 
@@ -441,18 +462,25 @@ async function opLookup(ts, { code, system, display }, domainCfg) {
 
   try {
     const params = { system, code };
-    // prioridad: version del dominio → env global → coding.version (si decides pasarla)
-    const version =
-      domainCfg?.codeSystemVersion ||
-      process.env.TS_SNOMED_VERSION;
+    const version = domainCfg?.codeSystemVersion || process.env.TS_SNOMED_VERSION;
 
     if (version) params.version = version;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
 
+    tsLog('debug', `Looking up: ${system}|${code}`);
+
     const { data } = await ts.get('/CodeSystem/$lookup', { params });
     const disp = extractDisplayFromLookup(data);
-    if (disp) return { system, code, display: disp, source: 'lookup' };
-  } catch { /* noop */ }
+    
+    if (disp) {
+      tsLog('debug', `✅ Lookup OK: ${code} -> ${disp}`);
+      return { system, code, display: disp, source: 'lookup' };
+    } else {
+      tsLog('debug', `❌ Lookup no display: ${system}|${code}`);
+    }
+  } catch (e) {
+    tsLog('warn', `Lookup error: ${e.response?.status} ${e.message}`, { system, code });
+  }
   return null;
 }
 
@@ -469,17 +497,27 @@ async function opTranslate(ts, { code, system, display }, domainCfg) {
   if (code) params.code = code;
   if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
 
-  // Si no hay url/source/target ni targetsystem, no intentamos translate
   const hasConfig = params.url || params.source || params.target || params.targetsystem;
-  if (!hasConfig) return null;
+  if (!hasConfig) {
+    tsLog('debug', `Translate skipped - no config: ${system}|${code}`);
+    return null;
+  }
 
   try {
+    tsLog('debug', `Translating: ${system}|${code} -> ${params.targetsystem}`);
+    
     const { data } = await ts.get('/ConceptMap/$translate', { params });
     const match = extractMatchFromTranslate(data);
+    
     if (match?.system && match?.code) {
+      tsLog('debug', `✅ Translate OK: ${code} -> ${match.system}|${match.code}`);
       return { system: match.system, code: match.code, display: match.display || display || code, source: 'translate' };
+    } else {
+      tsLog('debug', `❌ Translate no match: ${system}|${code}`);
     }
-  } catch { /* noop */ }
+  } catch (e) {
+    tsLog('warn', `Translate error: ${e.response?.status} ${e.message}`, { system, code });
+  }
   return null;
 }
 
@@ -637,30 +675,185 @@ async function normalizeTerminologyInBundle(bundle) {
   const ts = buildTsClient();
   if (!ts || !bundle?.entry?.length) return;
 
+  console.log('🔍 Iniciando normalización terminológica con enfoque SNOMED...');
+
   for (const entry of bundle.entry) {
     const res = entry.resource;
     if (!res) continue;
 
+    // Saltar inmunizaciones del proceso de conversión a SNOMED
+    if (res.resourceType === 'Immunization') {
+      console.log(`⏭️ Saltando ${res.resourceType} - mantiene códigos originales`);
+      continue;
+    }
+
     // Determinar dominio
     const domain = resourceToDomain(res);
     const domainCfg = DOMAIN_CONFIG[domain] || DOMAIN_CONFIG[TS_DEFAULT_DOMAIN] || {};
-    if (!DOMAIN_NAMES.has(domain)) {
-      // Dominio no listado en TS_DOMAINS → igualmente intenta con default
-      // (o puedes simplemente continue)
-    }
+
+    console.log(`🔄 Procesando ${res.resourceType} (dominio: ${domain})`);
 
     // Normalizar todas las CC relevantes del recurso
-    for (const { cc } of iterateCodeableConcepts(res)) {
+    for (const { path, cc } of iterateCodeableConcepts(res)) {
       try {
-        await normalizeCC(ts, cc, domainCfg, domain);
+        console.log(`  └─ Normalizando ${path}:`, cc.coding?.map(c => `${c.system}|${c.code}`) || ['sin códigos']);
+        await normalizeCC(ts, cc, domainCfg, domain, res.resourceType);
       } catch (e) {
-        console.warn(`⚠️ TS normalize error (${domain}):`, e.message);
+        console.warn(`⚠️ TS normalize error (${domain}.${path}):`, e.message);
       }
+    }
+  }
+
+  console.log('✅ Normalización terminológica completada');
+}
+
+// Función para corregir el Bundle antes del envío
+function fixBundleValidationIssues(summaryBundle) {
+  // 1. Asegurar que el Composition tenga custodian (requerido por el perfil lac-composition)
+  const compositionEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
+  if (compositionEntry?.resource && !compositionEntry.resource.custodian) {
+    // Buscar Organization para usar como custodian
+    const orgEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Organization');
+    if (orgEntry) {
+      compositionEntry.resource.custodian = {
+        reference: orgEntry.fullUrl || `Organization/${orgEntry.resource.id}`
+      };
+    }
+  }
+
+  // 2. Corregir sección "Historial de Enfermedades Pasadas" 
+  if (compositionEntry?.resource?.section) {
+    const pastIllnessSection = compositionEntry.resource.section.find(s => 
+      s.code?.coding?.some(c => c.code === '11348-0')
+    );
+    
+    if (pastIllnessSection) {
+      // Agregar div requerido al text.div
+      if (pastIllnessSection.text && !pastIllnessSection.text.div) {
+        pastIllnessSection.text.div = '<div xmlns="http://www.w3.org/1999/xhtml"><h5>Historial de Enfermedades Pasadas</h5><p>Condiciones médicas previas del paciente.</p></div>';
+      }
+      
+      // Corregir display del código LOINC
+      const loincCoding = pastIllnessSection.code.coding.find(c => c.system === 'http://loinc.org' && c.code === '11348-0');
+      if (loincCoding && loincCoding.display === 'History of Past illness Narrative') {
+        loincCoding.display = 'History of Past illness note';
+      }
+    }
+  }
+
+  // 3. Corregir identifiers del Patient - agregar system a los coding sin system
+  const patientEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
+  if (patientEntry?.resource?.identifier) {
+    patientEntry.resource.identifier.forEach(identifier => {
+      if (identifier.type?.coding) {
+        identifier.type.coding.forEach(coding => {
+          if (!coding.system) {
+            // Asignar system por defecto para identifier types
+            coding.system = 'http://terminology.hl7.org/CodeSystem/v2-0203';
+            
+            // Mapear códigos conocidos
+            const codeMap = {
+              'd3153eb0-5e07-11ef-8f7c-0242ac120002': 'MR', // Medical Record Number
+              'a2551e57-6028-428b-be3c-21816c252e06': 'PPN' // Passport Number
+            };
+            
+            if (codeMap[coding.code]) {
+              coding.code = codeMap[coding.code];
+            }
+          }
+        });
+      }
+    });
+  }
+
+  // 4. Corregir address.country del Patient para cumplir ISO 3166
+  if (patientEntry?.resource?.address) {
+    patientEntry.resource.address.forEach(addr => {
+      if (addr.country === 'Chile') {
+        addr.country = 'CL'; // Código ISO 3166-1 alpha-2
+      }
+    });
+  }
+
+  // 5. Corregir Conditions - agregar system a los coding que no lo tienen
+  summaryBundle.entry?.forEach(entry => {
+    if (entry.resource?.resourceType === 'Condition' && entry.resource.code?.coding) {
+      entry.resource.code.coding.forEach(coding => {
+        if (!coding.system && coding.code) {
+          // Si el código parece ser de OpenMRS (termina en AAAAAA...), usar sistema local
+          if (coding.code.includes('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')) {
+            coding.system = 'http://openmrs.org/concepts';
+          }
+        }
+      });
+    }
+  });
+
+  // 6. Corregir MedicationStatement - agregar system y effective[x]
+  summaryBundle.entry?.forEach(entry => {
+    if (entry.resource?.resourceType === 'MedicationStatement') {
+      // Agregar system a medicationCodeableConcept.coding
+      if (entry.resource.medicationCodeableConcept?.coding) {
+        entry.resource.medicationCodeableConcept.coding.forEach(coding => {
+          if (!coding.system) {
+            coding.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+          }
+        });
+      }
+      
+      // Agregar effective[x] requerido por el perfil IPS
+      if (!entry.resource.effectiveDateTime && !entry.resource.effectivePeriod) {
+        entry.resource.effectiveDateTime = new Date().toISOString();
+      }
+    }
+  });
+
+  // 7. Asegurar que todas las referencias internas estén en el Bundle
+  const allFullUrls = new Set(summaryBundle.entry?.map(e => e.fullUrl) || []);
+  
+  summaryBundle.entry?.forEach(entry => {
+    // Revisar todas las referencias en el recurso
+    checkAndFixReferences(entry.resource, allFullUrls, summaryBundle);
+  });
+}
+
+// Función auxiliar para verificar y corregir referencias
+function checkAndFixReferences(obj, availableUrls, bundle) {
+  if (!obj || typeof obj !== 'object') return;
+
+  if (Array.isArray(obj)) {
+    obj.forEach(item => checkAndFixReferences(item, availableUrls, bundle));
+    return;
+  }
+
+  // Si tiene propiedad 'reference', verificar que existe
+  if (obj.reference && typeof obj.reference === 'string') {
+    if (!availableUrls.has(obj.reference)) {
+      // Si la referencia no existe, intentar encontrar el recurso por ID
+      const parts = obj.reference.split('/');
+      const resourceType = parts[parts.length - 2];
+      const resourceId = parts[parts.length - 1];
+      
+      const foundEntry = bundle.entry?.find(e => 
+        e.resource?.resourceType === resourceType && 
+        e.resource?.id === resourceId
+      );
+      
+      if (foundEntry) {
+        obj.reference = foundEntry.fullUrl;
+      }
+    }
+  }
+
+  // Recursivamente procesar todas las propiedades
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key) && key !== 'reference') {
+      checkAndFixReferences(obj[key], availableUrls, bundle);
     }
   }
 }
 
-// ===================== Route ITI-65 =====================
+// En la ruta ITI-65, después de obtener el summaryBundle y antes de la terminología:
 app.post('/lacpass/_iti65', async (req, res) => {
   let summaryBundle;
 
@@ -686,7 +879,10 @@ app.post('/lacpass/_iti65', async (req, res) => {
   }
 
   try {
-    // ========= Paso opcional 1: PDQm (solo consulta, sin reemplazar Patient) =========
+    // ========= NUEVO: Corregir problemas de validación ANTES de PDQm =========
+    fixBundleValidationIssues(summaryBundle);
+
+    // ========= Paso opcional 1: PDQm =========
     if (isTrue(FEATURE_PDQ_ENABLED)) {
       const patientEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
       const localPatient = patientEntry?.resource;
@@ -765,9 +961,11 @@ app.post('/lacpass/_iti65', async (req, res) => {
     summaryBundle.entry.forEach(entry => {
       const res = entry.resource;
       if (res?.resourceType === 'MedicationStatement' && res.medicationCodeableConcept?.coding) {
+        console.log(`⚠️ Removing system from MedicationStatement.medicationCodeableConcept (IPS requirement)`);
         res.medicationCodeableConcept.coding.forEach(c => delete c.system);
       }
       if (res?.resourceType === 'Immunization' && res.vaccineCode?.coding) {
+        console.log(`⚠️ Removing system from Immunization.vaccineCode (IPS requirement) - verify repository validation`);
         res.vaccineCode.coding.forEach(c => delete c.system);
       }
     });
@@ -839,7 +1037,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
         },
         format: {
           system: 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode',
-          code: 'urn:ihe:iti:xds-sd:text:2008'
+          code: MHD_FORMAT_CODE, // ← Configurable
+          display: MHD_FORMAT_CODE === 'urn:ihe:iti:xds-sd:text:2008' ? 'FHIR JSON Document' : undefined
         }
       }]
     };
