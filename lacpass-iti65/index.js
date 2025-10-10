@@ -700,7 +700,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
     console.warn('⚠️ Error no crítico en paso PDQm (se continúa sin bloquear ITI-65):', e.message);
   }
 
-
+  try {
     // ========= Paso opcional 2: Terminología por dominio =========
     await normalizeTerminologyInBundle(summaryBundle);
 
