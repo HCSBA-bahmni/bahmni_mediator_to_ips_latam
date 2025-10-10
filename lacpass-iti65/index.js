@@ -226,6 +226,7 @@ function buildTsClient() {
         baseURL: TERMINO_BASE,
         timeout: parseInt(TS_TIMEOUT_MS, 10),
         httpsAgent: axios.defaults.httpsAgent,
+        headers: { Accept: 'application/fhir+json' }
     });
 
     if (TERMINO_BEARER_TOKEN) {
@@ -418,13 +419,16 @@ async function opTranslate(ts, { code, system, display }, domainCfg) {
 
 // ===================== TerminologyOp Response Parsers =====================
 function extractResultFromParameters(data) {
-    if (data?.resourceType !== 'Parameters') return { result: false };
-    const resultParam = data.parameter?.find(p => p.name === 'result');
-    const displayParam = data.parameter?.find(p => p.name === 'display');
-    return {
-        result: resultParam?.valueBoolean === true,
-        display: displayParam?.valueString || null
-    };
+    const out = { result: false, display: null };
+    if (data?.resourceType === 'Parameters' && Array.isArray(data.parameter)) {
+        for (const p of data.parameter) {
+            if (p.name === 'result') {
+                out.result = (p.valueBoolean === true) || (p.valueString === 'true');
+            }
+            if (p.name === 'display' && p.valueString) out.display = p.valueString;
+        }
+    }
+    return out;
 }
 
 function extractDisplayFromLookup(data) {
@@ -456,6 +460,12 @@ function extractMatchFromTranslate(data) {
 }
 
 // ===================== Terminology Pipeline =====================
+function pickDomainCoding(cc, domainCfg) {
+  if (!cc?.coding) return null;
+  const targetSys = domainCfg?.codeSystem || 'http://snomed.info/sct';
+  return cc.coding.find(c => c.system === targetSys && c.code) || cc.coding[0] || null;
+}
+
 function buildPipeline(domain, ts, base, domainCfg) {
     // Secuencia: validateVS → validateCS → lookup → translate
     return [
@@ -469,11 +479,13 @@ function buildPipeline(domain, ts, base, domainCfg) {
 async function normalizeCC(ts, cc, domainCfg, domain) {
     if (!cc?.coding || !Array.isArray(cc.coding) || cc.coding.length === 0) return;
 
-    const originalCoding = cc.coding[0];
+    const target = pickDomainCoding(cc, domainCfg);
+    if (!target) return;
+
     const base = {
-        system: originalCoding.system,
-        code: originalCoding.code,
-        display: originalCoding.display || cc.text
+        system: target.system,
+        code: target.code,
+        display: target.display || cc.text
     };
 
     const steps = buildPipeline(domain, ts, base, domainCfg);
@@ -482,11 +494,9 @@ async function normalizeCC(ts, cc, domainCfg, domain) {
         try {
             const result = await step();
             if (result?.system && result?.code) {
-                cc.coding[0] = {
-                    system: result.system,
-                    code: result.code,
-                    display: result.display || cc.text
-                };
+                target.system = result.system;
+                target.code = result.code;
+                target.display = result.display || target.display || cc.text;
                 return; // Usa el primer resultado exitoso
             }
         } catch (error) {
@@ -1001,7 +1011,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
         url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId',
         valueIdentifier: { value: bundleUrn }
       }],
-      identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: `urn:oid:${ssId}` }],
+      identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: `urn:uuid:${ssId}` }],
       status: 'current',
       mode: 'working',
       code: { coding: [{ system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes', code: 'submissionset' }] },
