@@ -320,6 +320,29 @@ const DOMAIN_CONFIG = {
 };
 const DOMAIN_NAMES = new Set(arr(TS_DOMAINS));
 
+function pickIdentifierValueForPdqm(identifiers = []) {
+  const wantText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_PASSPORT || 'Pasaporte').toLowerCase();
+  const wantCode = process.env.PDQM_IDENTIFIER_TYPE_CODE_PASSPORT;
+
+  const byText = identifiers.find(i => (i.type?.text || '').toLowerCase() === wantText);
+  if (byText?.value) return byText.value;
+
+  if (wantCode) {
+    const byCode = identifiers.find(i =>
+      Array.isArray(i.type?.coding) && i.type.coding.some(c => c.code === wantCode)
+    );
+    if (byCode?.value) return byCode.value;
+  }
+
+  if (PDQM_DEFAULT_IDENTIFIER_SYSTEM) {
+    const bySystem = identifiers.find(i => i.system === PDQM_DEFAULT_IDENTIFIER_SYSTEM);
+    if (bySystem?.value) return bySystem.value;
+  }
+
+  return identifiers[0]?.value || null; // último fallback
+}
+
+
 // ===================== Terminology Ops (funciones) =====================
 async function opValidateVS(ts, { code, system, display }, domainCfg) {
   if (!isTrue(FEATURE_TS_VALIDATE_VS_ENABLED)) return null;
@@ -577,12 +600,15 @@ app.post('/lacpass/_iti65', async (req, res) => {
       const localPatient = patientEntry?.resource;
       if (localPatient) {
         // elegir identifier (si tienes un system preferido, úsalo; si no, el primero)
-        let idValue = null;
+        //let idValue = null;
+        //const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
+        //if (PDQM_DEFAULT_IDENTIFIER_SYSTEM) {
+        //  idValue = ids.find(i => i.system === PDQM_DEFAULT_IDENTIFIER_SYSTEM)?.value || null;
+        //}
+        //if (!idValue && ids.length > 0) idValue = ids[0].value;
         const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
-        if (PDQM_DEFAULT_IDENTIFIER_SYSTEM) {
-          idValue = ids.find(i => i.system === PDQM_DEFAULT_IDENTIFIER_SYSTEM)?.value || null;
-        }
-        if (!idValue && ids.length > 0) idValue = ids[0].value;
+        const idValue = pickIdentifierValueForPdqm(ids);
+
 
         //const pdqmPatient = await pdqmFetchPatientByIdentifier(idValue);
         //if (pdqmPatient) mergePatientDemographics(localPatient, pdqmPatient);
