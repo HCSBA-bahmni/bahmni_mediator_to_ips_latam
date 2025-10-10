@@ -541,6 +541,32 @@ function isPdqmFallbackBundle(bundle) {
   );
 }
 
+// Helper: actualiza todas las referencias en un objeto recursivamente
+function updateReferencesInObject(obj, urlMap) {
+  if (!obj || typeof obj !== 'object') return;
+
+  // Si es un array, procesar cada elemento
+  if (Array.isArray(obj)) {
+    obj.forEach(item => updateReferencesInObject(item, urlMap));
+    return;
+  }
+
+  // Si tiene propiedad 'reference', actualizarla
+  if (obj.reference && typeof obj.reference === 'string') {
+    const mapped = urlMap.get(obj.reference);
+    if (mapped) {
+      obj.reference = mapped;
+    }
+  }
+
+  // Recursivamente procesar todas las propiedades
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key) && key !== 'reference') {
+      updateReferencesInObject(obj[key], urlMap);
+    }
+  }
+}
+
 // ===================== Iterador de CodeableConcepts =====================
 function* iterateCodeableConcepts(resource) {
   switch (resource.resourceType) {
@@ -642,7 +668,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
   if (req.body.uuid) {
     try {
       const resp = await axios.get(
-        `${FHIR_NODE_URL}/fhir/Patient/${req.body.uuid}/$summary`,
+        `${FHIR_NODE_URL}/Patient/${req.body.uuid}/$summary`,
         { params: { profile: SUMMARY_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
       );
       summaryBundle = resp.data;
@@ -748,31 +774,18 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
     // URN map para referencias internas
     const urlMap = new Map();
-      summaryBundle.entry.forEach(entry => {
+    summaryBundle.entry.forEach(entry => {
       const { resource } = entry;
-      const urn = `${FHIR_NODO_NACIONAL_SERVER}/${resource.resourceType}/${resource.id}`;
-      urlMap.set(`${resource.resourceType}/${resource.id}`, urn);
-      });
+      const fullUrl = `${FHIR_NODO_NACIONAL_SERVER}/${resource.resourceType}/${resource.id}`;
+      urlMap.set(`${resource.resourceType}/${resource.id}`, fullUrl);
+    });
 
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
 
-    if (compositionEntry) {
-      compositionEntry.resource.subject.reference = urlMap.get(`Patient/${patientEntry.resource.id}`);
-      compositionEntry.resource.section?.forEach(section => {
-        section.entry?.forEach(item => {
-          if (urlMap.has(item.reference)) item.reference = urlMap.get(item.reference);
-        });
-      });
-    }
+    // Actualizar TODAS las referencias en el summaryBundle recursivamente
     summaryBundle.entry.forEach(entry => {
-      const res = entry.resource;
-      if (res.subject?.reference && urlMap.has(res.subject.reference)) {
-        res.subject.reference = urlMap.get(res.subject.reference);
-      }
-      if (res.patient?.reference && urlMap.has(res.patient.reference)) {
-        res.patient.reference = urlMap.get(res.patient.reference);
-      }
+      updateReferencesInObject(entry.resource, urlMap);
     });
 
     // SubmissionSet
