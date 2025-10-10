@@ -660,44 +660,46 @@ app.post('/lacpass/_iti65', async (req, res) => {
   }
 
   try {
-    // ========= Paso opcional 1: PDQm =========
+    // ========= Paso opcional 1: PDQm (solo consulta, sin reemplazar Patient) =========
     if (isTrue(FEATURE_PDQ_ENABLED)) {
       const patientEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
       const localPatient = patientEntry?.resource;
+
       if (localPatient) {
-        // elegir identifier (si tienes un system preferido, úsalo; si no, el primero)
-        //let idValue = null;
-        //const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
-        //if (PDQM_DEFAULT_IDENTIFIER_SYSTEM) {
-        //  idValue = ids.find(i => i.system === PDQM_DEFAULT_IDENTIFIER_SYSTEM)?.value || null;
-        //}
-        //if (!idValue && ids.length > 0) idValue = ids[0].value;
         const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
         const idValue = pickIdentifierValueForPdqm(ids);
 
-
-        //const pdqmPatient = await pdqmFetchPatientByIdentifier(idValue);
-        //if (pdqmPatient) mergePatientDemographics(localPatient, pdqmPatient);
+        // Trae el BUNDLE PDQm completo (no reemplaza Patient local)
         const pdqmBundle = await pdqmFetchBundleByIdentifier(idValue);
+
         if (pdqmBundle?.resourceType === 'Bundle' && Array.isArray(pdqmBundle.entry) && pdqmBundle.entry.length > 0) {
-         // (Opcional) guarda el Bundle PDQm crudo para trazabilidad
+          // Guardar para trazabilidad/debug
           try {
             const pdqmFile = path.join(debugDir, `pdqmBundle_${Date.now()}.json`);
             fs.writeFileSync(pdqmFile, JSON.stringify(pdqmBundle, null, 2));
-            console.log('DEBUG: saved PDQm bundle →', pdqmFile);
-          } catch {}
-          // Reemplaza el Patient del summaryBundle por el EXACTO de Gazelle
-          //const ok = replacePatientFromPdqmBundle(summaryBundle, pdqmBundle);
-          //if (!ok) console.warn('⚠️ No se pudo reemplazar Patient desde PDQm bundle');
-          if (!isPdqmFallbackBundle(pdqmBundle)) {
-            const ok = replacePatientFromPdqmBundle(summaryBundle, pdqmBundle);
-            if (!ok) console.warn('⚠️ No se pudo reemplazar Patient desde PDQm bundle');
-          } else {
-            console.warn('⚠️ PDQm bundle es fallback sintético, se ignora');
+            console.log('DEBUG: saved PDQm bundle (no replace) →', pdqmFile);
+          } catch (err) {
+            console.warn('⚠️ No se pudo guardar PDQm bundle en disco:', err.message);
           }
+
+          // Marcar si es un bundle sintético de fallback
+          if (isPdqmFallbackBundle(pdqmBundle)) {
+            console.warn('⚠️ PDQm bundle es fallback sintético; se ignora (sin reemplazo)');
+          }
+
+          // Dejar disponible para uso posterior (p. ej. adjuntar como Binary/DocumentReference)
+          req._pdqmBundle = pdqmBundle;
+        } else {
+          console.warn('ℹ️ PDQm: sin resultados para el identificador:', idValue);
         }
+      } else {
+        console.warn('ℹ️ PDQm: no se encontró recurso Patient en el summaryBundle');
       }
     }
+  } catch (e) {
+    console.warn('⚠️ Error no crítico en paso PDQm (se continúa sin bloquear ITI-65):', e.message);
+  }
+
 
     // ========= Paso opcional 2: Terminología por dominio =========
     await normalizeTerminologyInBundle(summaryBundle);
