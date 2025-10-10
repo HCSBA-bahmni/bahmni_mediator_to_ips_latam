@@ -740,6 +740,8 @@ function fixBundleValidationIssues(summaryBundle) {
           }
         }
         identifier.use = 'official';
+        // Quitar text - no permitido en slice LAC nacional
+        if (identifier.type?.text) delete identifier.type.text;
       }
       if (codes.includes('PPN')) {
         // Slice internacional: system debe ser URN OID, use = official, sin type.text
@@ -762,6 +764,12 @@ function fixBundleValidationIssues(summaryBundle) {
       const rb = (b.type?.coding || []).some(c => c.code === 'MR') ? 0 : 1;
       return ra - rb;
     });
+    
+    // Agregar perfil IPS al Patient para ayudar con el slice del Bundle
+    if (!patientEntry.resource.meta) patientEntry.resource.meta = {};
+    if (!patientEntry.resource.meta.profile) {
+      patientEntry.resource.meta.profile = ["http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips"];
+    }
   }
 
   // 4. Corregir address.country del Patient para cumplir ISO 3166
@@ -827,6 +835,68 @@ function fixBundleValidationIssues(summaryBundle) {
   summaryBundle.entry?.forEach(entry => {
     // Revisar todas las referencias en el recurso
     checkAndFixReferences(entry.resource, allFullUrls, summaryBundle);
+  });
+
+  // 8. Corregir narrativeLink para que apunten correctamente a fragmentos URN
+  fixNarrativeLinks(summaryBundle, compositionEntry);
+}
+
+// Función auxiliar para corregir narrativeLink
+function fixNarrativeLinks(bundle, compositionEntry) {
+  if (!bundle?.entry || !compositionEntry?.resource) return;
+
+  const compositionFullUrl = compositionEntry.fullUrl;
+  if (!compositionFullUrl) return;
+
+  // Mapear cada entry por su fullUrl para hacer rewrite de narrativeLink
+  const entryMap = new Map();
+  bundle.entry.forEach(entry => {
+    if (entry.fullUrl && entry.resource?.id) {
+      entryMap.set(entry.resource.id, entry.fullUrl);
+    }
+  });
+
+  // Corregir narrativeLink en todos los recursos
+  bundle.entry.forEach(entry => {
+    const resource = entry.resource;
+    if (!resource?.extension) return;
+
+    resource.extension.forEach(ext => {
+      if (ext.url === 'http://hl7.org/fhir/StructureDefinition/narrativeLink' && ext.valueUrl) {
+        // Si el valueUrl contiene URL absoluta del servidor, convertir a URN
+        if (ext.valueUrl.includes('http://') && ext.valueUrl.includes('#')) {
+          const [baseUrl, fragment] = ext.valueUrl.split('#');
+          
+          // Extraer tipo de recurso y ID del fragment
+          const fragmentMatch = fragment.match(/^(\w+)-(.+)$/);
+          if (fragmentMatch) {
+            const [, resourceType, resourceRef] = fragmentMatch;
+            
+            // Si el resourceRef contiene URL, extraer el ID
+            let resourceId = resourceRef;
+            if (resourceRef.includes('/')) {
+              const urlParts = resourceRef.split('/');
+              resourceId = urlParts[urlParts.length - 1];
+              // Remover _history/X si existe
+              if (resourceId.includes('_history')) {
+                resourceId = urlParts[urlParts.length - 3];
+              }
+            }
+            
+            // Buscar el entry correspondiente
+            const targetEntry = bundle.entry.find(e => 
+              e.resource?.resourceType === resourceType && 
+              (e.resource?.id === resourceId || e.fullUrl?.includes(resourceId))
+            );
+            
+            if (targetEntry?.fullUrl) {
+              const targetId = targetEntry.fullUrl.replace('urn:uuid:', '');
+              ext.valueUrl = `${compositionFullUrl}#${resourceType}-urn:uuid:${targetId}`;
+            }
+          }
+        }
+      }
+    });
   });
 }
 
