@@ -460,6 +460,36 @@ function extractMatchFromTranslate(data) {
 }
 
 // ===================== Terminology Pipeline =====================
+const CS_ABSENT = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+const CS_SCT = 'http://snomed.info/sct';
+
+function asFhirBase(url) {
+  const u = (url || '').replace(/\/+$/, '');
+  return /\/fhir$/i.test(u) ? u : `${u}/fhir`;
+}
+
+function joinUrl(base, path) {
+  const b = (base || '').replace(/\/+$/, '');
+  const p = (path || '').replace(/^\/+/, '');
+  return `${b}/${p}`;
+}
+
+function shouldLookupTS(system) {
+  if (!isTrue(FEATURE_TS_ENABLED)) return false;
+  if (system === CS_ABSENT) return false;
+  if (system === CS_SCT && process.env.TS_HAS_SNOMED !== 'true') return false;
+  return true;
+}
+
+function sortCodingsPreferred(codings) {
+  const pref = [CS_SCT]; // primero SNOMED
+  return [...codings].sort((a, b) => {
+    const ia = pref.indexOf(a.system);
+    const ib = pref.indexOf(b.system);
+    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+  });
+}
+
 function pickDomainCoding(cc, domainCfg) {
   if (!cc?.coding) return null;
   const targetSys = domainCfg?.codeSystem || 'http://snomed.info/sct';
@@ -487,6 +517,9 @@ async function normalizeCC(ts, cc, domainCfg, domain) {
         code: target.code,
         display: target.display || cc.text
     };
+
+    // Skip TS lookup for absent/unknown codes and SNOMED when not available
+    if (!shouldLookupTS(base.system)) return;
 
     const steps = buildPipeline(domain, ts, base, domainCfg);
 
@@ -760,7 +793,8 @@ async function pdqmFetchBundleByIdentifier(identifierValue) {
             }
 
             // Intentar con el parámetro identifier por defecto
-            let url = `${PDQM_FHIR_URL}/Patient?identifier=${encodeURIComponent(identifierValue)}`;
+            const base = asFhirBase(PDQM_FHIR_URL);
+            let url = joinUrl(base, '/Patient') + `?identifier=${encodeURIComponent(identifierValue)}`;
             console.log(`PDQm GET: ${url}`);
 
             let response = await axios.get(url, config);
@@ -776,7 +810,7 @@ async function pdqmFetchBundleByIdentifier(identifierValue) {
                 const fallbackParams = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES);
                 
                 for (const param of fallbackParams) {
-                    url = `${PDQM_FHIR_URL}/Patient?${param}=${encodeURIComponent(identifierValue)}`;
+                    url = joinUrl(base, '/Patient') + `?${param}=${encodeURIComponent(identifierValue)}`;
                     console.log(`PDQm fallback GET: ${url}`);
                     
                     response = await axios.get(url, config);
@@ -883,7 +917,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
   if (req.body.uuid) {
     try {
       const resp = await axios.get(
-        `${FHIR_NODE_URL}/fhir/Patient/${req.body.uuid}/$summary`,
+        joinUrl(asFhirBase(FHIR_NODE_URL), `/Patient/${req.body.uuid}/$summary`),
         { params: { profile: SUMMARY_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
       );
       summaryBundle = resp.data;
@@ -966,34 +1000,34 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const bundleSize = Buffer.byteLength(bundleString, 'utf8');
     const bundleHash = crypto.createHash('sha256').update(bundleString).digest('base64');
 
-    // FIX #3 — Sanitize UV/IPS en meds/vacunas con logging mejorado
+    // FIX #3 — Corregir y ordenar codings para validación IPS
     summaryBundle.entry.forEach(entry => {
       const res = entry.resource;
-      if (res?.resourceType === 'MedicationStatement' && res.medicationCodeableConcept?.coding) {
-        console.log(`⚠️ Removing system from MedicationStatement.medicationCodeableConcept (IPS requirement)`);
-        res.medicationCodeableConcept.coding.forEach(c => delete c.system);
+      
+      // Corregir MedicationStatement - asegurar system correcto para "no-medication-info"
+      if (res?.resourceType === 'MedicationStatement') {
+        if (Array.isArray(res.medicationCodeableConcept?.coding)) {
+          for (const c of res.medicationCodeableConcept.coding) {
+            if (c.display === 'No information about medications') {
+              if (!c.system) c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+              if (!c.code) c.code = 'no-medication-info';
+            }
+          }
+        }
       }
-      if (res?.resourceType === 'Immunization' && res.vaccineCode?.coding) {
-        console.log(`⚠️ Removing system from Immunization.vaccineCode (IPS requirement) - verify repository validation`);
-        res.vaccineCode.coding.forEach(c => delete c.system);
+      
+      // Corregir Condition - ordenar codings con SNOMED primero
+      if (res?.resourceType === 'Condition' && Array.isArray(res.code?.coding)) {
+        res.code.coding = res.code.coding.filter(c => c.system); // quita los sin system
+        res.code.coding = sortCodingsPreferred(res.code.coding);
       }
+      
+      // Mantener system en Immunization - IPS no requiere eliminarlo
     });
 
-    // URN map para referencias internas
-    const urlMap = new Map();
-    summaryBundle.entry.forEach(entry => {
-      const { resource } = entry;
-      const fullUrl = `${FHIR_NODO_NACIONAL_SERVER}/${resource.resourceType}/${resource.id}`;
-      urlMap.set(`${resource.resourceType}/${resource.id}`, fullUrl);
-    });
-
+    // Mantener el summaryBundle con sus referencias internas (URN/relativas)
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
-
-    // Actualizar TODAS las referencias en el summaryBundle recursivamente
-    summaryBundle.entry.forEach(entry => {
-      updateReferencesInObject(entry.resource, urlMap);
-    });
 
     // SubmissionSet
     const submissionSet = {
@@ -1015,7 +1049,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       status: 'current',
       mode: 'working',
       code: { coding: [{ system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes', code: 'submissionset' }] },
-      subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
+      subject: { display: patientEntry.resource.name?.[0]?.text || `Patient ${patientEntry.resource.id}` },
       date: summaryBundle.timestamp,
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
     };
@@ -1035,7 +1069,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       masterIdentifier: { system: 'urn:ietf:rfc:3986', value: bundleUrn },
       status: 'current',
       type: compositionEntry.resource.type,
-      subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
+      subject: { display: patientEntry.resource.name?.[0]?.text || `Patient ${patientEntry.resource.id}` },
       date: summaryBundle.timestamp,
       content: [{
         attachment: {
@@ -1065,8 +1099,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       entry: [
         { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
         { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
-        { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } },
-        { fullUrl: urlMap.get(`Patient/${patientEntry.resource.id}`), resource: patientEntry.resource, request: { method: 'PUT', url: `Patient/${patientEntry.resource.id}` } }
+        { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } }
       ]
     };
 
