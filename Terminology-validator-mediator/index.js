@@ -141,6 +141,103 @@ app.use('/termino/fhir', async (req, res) => {
       headers
     });
 
+    // ===== Helpers GET→POST $operation =====
+function paramsFromQuery(query, spec) {
+  // spec = [{ q: 'system', type:'uri', name:'system' }, ...]
+  const p = [];
+  for (const { q, type, name } of spec) {
+    const v = query[q];
+    if (v == null) continue;
+    const fhirName = name || q;
+    const key = type === 'uri' ? 'valueUri'
+             : type === 'code' ? 'valueCode'
+             : /*string*/       'valueString';
+    p.push({ name: fhirName, [key]: String(v) });
+  }
+  return { resourceType: 'Parameters', parameter: p };
+}
+
+async function forwardTsOperation(ts, path, parameters, res) {
+  try {
+    const { data, status } = await ts.post(path, parameters, {
+      headers: { 'Content-Type': 'application/fhir+json' }
+    });
+    res.status(status || 200).json(data);
+  } catch (e) {
+    const status = e?.response?.status || 502;
+    const diag = e?.response?.data || e?.message || 'TS upstream error';
+    res.status(status).json({
+      resourceType: 'OperationOutcome',
+      issue: [{ severity: 'error', code: 'processing', diagnostics: JSON.stringify(diag) }]
+    });
+  }
+}
+
+// ===== Rutas GET “compatibles” =====
+// 1) CodeSystem $lookup
+app.get('/termino/fhir/CodeSystem/$lookup', async (req, res) => {
+  const ts = buildTsClient();
+  if (!ts) return res.status(500).json({ error: 'TS_BASE_URL not configured' });
+  const spec = [
+    { q: 'system', type: 'uri' },
+    { q: 'code', type: 'code' },
+    { q: 'version', type: 'uri' },
+    { q: 'displayLanguage', type: 'code' } // opcional; algunos TS lo ignoran
+  ];
+  const params = paramsFromQuery(req.query, spec);
+  return forwardTsOperation(ts, '/CodeSystem/$lookup', params, res);
+});
+
+// 2) CodeSystem $validate-code
+app.get('/termino/fhir/CodeSystem/$validate-code', async (req, res) => {
+  const ts = buildTsClient();
+  if (!ts) return res.status(500).json({ error: 'TS_BASE_URL not configured' });
+  const spec = [
+    // HAPI/Snowstorm aceptan "url" (el CodeSystem) + opcional "version"
+    { q: 'url', type: 'uri' },      // ej: http://snomed.info/sct
+    { q: 'version', type: 'uri' },  // ej: http://snomed.info/sct/900.../version/20250501
+    { q: 'code', type: 'code' },
+    { q: 'display', type: 'string' },
+    { q: 'displayLanguage', type: 'code' }
+  ];
+  // Si el cliente pasó ?system=..., lo mapeamos a url (azúcar sintáctico)
+  if (req.query.system && !req.query.url) req.query.url = req.query.system;
+  const params = paramsFromQuery(req.query, spec);
+  return forwardTsOperation(ts, '/CodeSystem/$validate-code', params, res);
+});
+
+// 3) ValueSet $validate-code (por si validas contra VS)
+app.get('/termino/fhir/ValueSet/$validate-code', async (req, res) => {
+  const ts = buildTsClient();
+  if (!ts) return res.status(500).json({ error: 'TS_BASE_URL not configured' });
+  const spec = [
+    { q: 'url', type: 'uri' },      // VS expand/validate URL (p.ej. ECL VS)
+    { q: 'system', type: 'uri' },
+    { q: 'code', type: 'code' },
+    { q: 'display', type: 'string' },
+    { q: 'displayLanguage', type: 'code' }
+  ];
+  const params = paramsFromQuery(req.query, spec);
+  return forwardTsOperation(ts, '/ValueSet/$validate-code', params, res);
+});
+
+// 4) ConceptMap $translate (vacunas)
+app.get('/termino/fhir/ConceptMap/$translate', async (req, res) => {
+  const ts = buildTsClient();
+  if (!ts) return res.status(500).json({ error: 'TS_BASE_URL not configured' });
+  const spec = [
+    { q: 'url', type: 'uri' },        // ConceptMap directo (opcional)
+    { q: 'system', type: 'uri' },     // source system
+    { q: 'code', type: 'code' },
+    { q: 'source', type: 'uri' },     // source VS (opcional)
+    { q: 'target', type: 'uri' },     // target VS (opcional)
+    { q: 'targetsystem', type: 'uri' },
+    { q: 'displayLanguage', type: 'code' }
+  ];
+  const params = paramsFromQuery(req.query, spec);
+  return forwardTsOperation(ts, '/ConceptMap/$translate', params, res);
+});
+
     // Propaga content-type si viene del TS
     if (r.headers?.['content-type']) {
       res.setHeader('content-type', r.headers['content-type']);
