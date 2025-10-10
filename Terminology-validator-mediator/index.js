@@ -5,7 +5,8 @@ import express from 'express';
 import axios from 'axios';
 import https from 'https';
 import { createRequire } from 'module';
-import { v4 as uuidv4 } from 'uuid';
+//import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils';
 
 const require = createRequire(import.meta.url);
@@ -60,7 +61,8 @@ if (CORS_ORIGIN) {
 
 // Correlation-id simple
 app.use((req, _res, next) => {
-  req.correlationId = req.headers['x-correlation-id'] || uuidv4();
+  //req.correlationId = req.headers['x-correlation-id'] || uuidv4();
+  req.correlationId = req.headers['x-correlation-id'] || randomUUID();
   next();
 });
 
