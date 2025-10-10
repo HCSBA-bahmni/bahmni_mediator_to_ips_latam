@@ -91,7 +91,7 @@ if (OPENHIM_API && OPENHIM_USER && OPENHIM_PASS) {
 }
 
 // ===================== TS axios client =====================
-const TS_BASE_URL = (TERMINOLOGY_BASE_URL || TERMINO_SERVER_URL || '').replace(/\/+$/, '');
+const TS_BASE_URL = (TERMINO_SERVER_URL || TERMINO_SERVER_URL || '').replace(/\/+$/, '');
 if (!TS_BASE_URL) {
   console.warn('⚠ TERMINOLOGY_BASE_URL/TERMINO_SERVER_URL no está configurado. Solo /_health responderá OK.');
 }
