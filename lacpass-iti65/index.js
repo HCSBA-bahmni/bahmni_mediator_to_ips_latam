@@ -248,6 +248,39 @@ function replacePatientFromPdqmBundle(summaryBundle, pdqmBundle) {
 }
 
 
+function pickSnomedCoding(cc, domainCfg) {
+  if (!cc?.coding || !Array.isArray(cc.coding)) return null;
+  // 1) Prioriza exactamente SNOMED
+  const snomed = cc.coding.find(c => c.system === 'http://snomed.info/sct' && c.code);
+  if (snomed) return snomed;
+  // 2) (opcional) si definiste otro codeSystem por dominio, úsalo
+  const alt = domainCfg?.codeSystem
+    ? cc.coding.find(c => c.system === domainCfg.codeSystem && c.code)
+    : null;
+  if (alt) return alt;
+  // 3) No hay system → no haces validate/lookup
+  return null;
+}
+
+
+
+
+function buildPipeline(domain, ts, base, domainCfg) {
+  if (domain === 'vaccines') {
+    // Solo translate para vacunas
+    return [ () => opTranslate(ts, base, domainCfg) ];
+  }
+  // Para conditions/procedures/allergies/medications → validate VS, validate CS, lookup
+  return [
+    () => opValidateVS(ts, base, domainCfg),
+    () => opValidateCS(ts, base, domainCfg),
+    () => opLookup(ts, base),
+    // opcional: () => opExpand(ts, base, domainCfg),
+  ];
+}
+
+
+
 // ===================== Terminology client =====================
 const TS_BASE_URL = (TERMINOLOGY_BASE_URL || TERMINO_SERVER_URL || '').replace(/\/+$/, '');
 function buildTsClient() {
@@ -517,30 +550,42 @@ function* iterateCodeableConcepts(resource) {
 }
 
 // ===================== Pipeline por dominio =====================
-async function normalizeCC(ts, cc, domainCfg) {
+async function normalizeCC(ts, cc, domainCfg, domain) {
   if (!cc?.coding || !Array.isArray(cc.coding) || cc.coding.length === 0) return;
-  // trabajamos sobre el PRIMER coding (puedes extender a todos si lo prefieres)
-  const coding = cc.coding[0];
-  const base = { system: coding.system, code: coding.code, display: coding.display || cc.text };
 
-  // Orden sugerido: Validate VS → Validate CS → Expand → Lookup → Translate
-  const steps = [
-    () => opValidateVS(ts, base, domainCfg),
-    () => opValidateCS(ts, base, domainCfg),
-    () => opExpand(ts, base, domainCfg),
-    () => opLookup(ts, base),
-    () => opTranslate(ts, base, domainCfg),
-  ];
+  const target = pickSnomedCoding(cc, domainCfg);
+  if (!target) {
+    // No hay coding con system SNOMED (u otro codeSystem del dominio) → no validar/lookup
+    // Para vaccines igual haremos translate (si procede) usando el texto/código que haya.
+  }
+
+  // Base para las operaciones
+  const base = target
+    ? { system: target.system, code: target.code, display: target.display || cc.text }
+    : { system: undefined, code: undefined, display: cc.text };
+
+  const steps = buildPipeline(domain, ts, base, domainCfg);
 
   for (const step of steps) {
-    // si la sub-función está deshabilitada o no aplica, retornará null
     const out = await step();
     if (out && out.code) {
-      cc.coding[0] = { system: out.system || base.system, code: out.code, display: out.display || base.display };
+      // Solo actualiza el coding que seleccionaste (SNOMED), no “el primero”
+      if (target) {
+        target.system = out.system || target.system;
+        target.code = out.code;
+        target.display = out.display || target.display || cc.text;
+      } else {
+        // Si no había coding seleccionado (p. ej. vaccines con solo texto) y el paso devuelve algo
+        // agrega un nuevo coding con lo resuelto (útil para $translate en vaccines)
+        cc.coding.unshift({
+          system: out.system,
+          code: out.code,
+          display: out.display || cc.text
+        });
+      }
       return;
     }
   }
-  // Si nada aplicó, dejamos el coding original
 }
 
 async function normalizeTerminologyInBundle(bundle) {
