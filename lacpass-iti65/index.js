@@ -15,105 +15,105 @@ const mediatorConfig = require('./mediatorConfig.json');
 
 // ===================== ENV =====================
 const {
-  // OpenHIM / FHIR Destino
-  OPENHIM_USER,
-  OPENHIM_PASS,
-  OPENHIM_API,
-  FHIR_NODE_URL,
-  SUMMARY_PROFILE,
-  FHIR_NODO_NACIONAL_SERVER,
+    // OpenHIM / FHIR Destino
+    OPENHIM_USER,
+    OPENHIM_PASS,
+    OPENHIM_API,
+    FHIR_NODE_URL,
+    SUMMARY_PROFILE,
+    FHIR_NODO_NACIONAL_SERVER,
 
-  NODE_ENV,
-  DEBUG_DIR_icvp,
+    NODE_ENV,
+    DEBUG_DIR_icvp,
 
-  // CORS
-  CORS_ORIGIN,
+    // CORS
+    CORS_ORIGIN,
 
-  // ===== Features =====
-  FEATURE_PDQ_ENABLED = 'false',
-  FEATURE_TS_ENABLED = 'false',
+    // ===== Features =====
+    FEATURE_PDQ_ENABLED = 'false',
+    FEATURE_TS_ENABLED = 'false',
 
-  // Subfeatures terminológicas
-  FEATURE_TS_EXPAND_ENABLED = 'true',
-  FEATURE_TS_VALIDATE_VS_ENABLED = 'true',
-  FEATURE_TS_VALIDATE_CS_ENABLED = 'true',
-  FEATURE_TS_TRANSLATE_ENABLED = 'true',
+    // Subfeatures terminológicas
+    FEATURE_TS_EXPAND_ENABLED = 'true',
+    FEATURE_TS_VALIDATE_VS_ENABLED = 'true',
+    FEATURE_TS_VALIDATE_CS_ENABLED = 'true',
+    FEATURE_TS_TRANSLATE_ENABLED = 'true',
 
-  // ===== PDQm =====
-  PDQM_PORT,
-  PDQM_FHIR_URL,
-  PDQM_FHIR_TOKEN,
-  PDQM_TIMEOUT_MS = '10000',
-  PDQM_ALLOWED_SEARCH_PARAMS,
-  PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES,
-  PDQM_DEFAULT_IDENTIFIER_SYSTEM,
-  PDQM_FALLBACK_HTTP_STATUSES,
-  PDQM_ENABLE_FALLBACK_FOR_401_403 = 'false',
-  PDQM_ENABLE_ALIASES = 'true',
+    // ===== PDQm =====
+    PDQM_PORT,
+    PDQM_FHIR_URL,
+    PDQM_FHIR_TOKEN,
+    PDQM_TIMEOUT_MS = '10000',
+    PDQM_ALLOWED_SEARCH_PARAMS,
+    PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES,
+    PDQM_DEFAULT_IDENTIFIER_SYSTEM,
+    PDQM_FALLBACK_HTTP_STATUSES,
+    PDQM_ENABLE_FALLBACK_FOR_401_403 = 'false',
+    PDQM_ENABLE_ALIASES = 'true',
 
-  // ===== Terminology =====
-  // Acepta alias TERMINOLOGY_BASE_URL o TERMINO_SERVER_URL
-  TERMINOLOGY_BASE_URL,
-  TERMINO_SERVER_URL,
-  TS_TIMEOUT_MS = '15000',
-  TS_DISPLAY_LANGUAGE,
-  TS_ACTIVE_ONLY = 'true',
+    // ===== Terminology =====
+    // Acepta alias TERMINOLOGY_BASE_URL o TERMINO_SERVER_URL
+    TERMINOLOGY_BASE_URL,
+    TERMINO_SERVER_URL,
+    TS_TIMEOUT_MS = '15000',
+    TS_DISPLAY_LANGUAGE,
+    TS_ACTIVE_ONLY = 'true',
 
-  // Dominios
-  TS_DOMAINS = 'conditions,procedures,medications,vaccines',
-  TS_DEFAULT_DOMAIN = 'conditions',
+    // Dominios
+    TS_DOMAINS = 'conditions,procedures,medications,vaccines',
+    TS_DEFAULT_DOMAIN = 'conditions',
 
-  // Defaults para $translate (si el dominio no define)
-  TS_TRANSLATE_DEFAULT_CONCEPTMAP_URL = '',
-  TS_TRANSLATE_DEFAULT_SOURCE_VS = '',
-  TS_TRANSLATE_DEFAULT_TARGET_VS = '',
-  TS_TRANSLATE_DEFAULT_SOURCE_SYSTEM = 'http://snomed.info/sct',
-  TS_TRANSLATE_DEFAULT_TARGET_SYSTEM = 'http://hl7.org/fhir/sid/icd-10',
+    // Defaults para $translate (si el dominio no define)
+    TS_TRANSLATE_DEFAULT_CONCEPTMAP_URL = '',
+    TS_TRANSLATE_DEFAULT_SOURCE_VS = '',
+    TS_TRANSLATE_DEFAULT_TARGET_VS = '',
+    TS_TRANSLATE_DEFAULT_SOURCE_SYSTEM = 'http://snomed.info/sct',
+    TS_TRANSLATE_DEFAULT_TARGET_SYSTEM = 'http://hl7.org/fhir/sid/icd-10',
 
-  // Auth Terminology
-  TERMINO_BEARER_TOKEN,
-  TERMINO_BASIC_USER,
-  TERMINO_BASIC_PASS,
+    // Auth Terminology
+    TERMINO_BEARER_TOKEN,
+    TERMINO_BASIC_USER,
+    TERMINO_BASIC_PASS,
 
-  // ============ CONDITIONS ============
-  CONDITIONS_VS_EXPAND_URI = '',
-  CONDITIONS_VS_VALIDATE_URI = '',
-  CONDITIONS_CS_URI = 'http://snomed.info/sct',
-  CONDITIONS_TRANSLATE_CONCEPTMAP_URL = '',
-  CONDITIONS_TRANSLATE_SOURCE_VS = '',
-  CONDITIONS_TRANSLATE_TARGET_VS = '',
-  CONDITIONS_TRANSLATE_SOURCE_SYSTEM = 'http://snomed.info/sct',
-  CONDITIONS_TRANSLATE_TARGET_SYSTEM = 'http://hl7.org/fhir/sid/icd-10',
+    // ============ CONDITIONS ============
+    CONDITIONS_VS_EXPAND_URI = '',
+    CONDITIONS_VS_VALIDATE_URI = '',
+    CONDITIONS_CS_URI = 'http://snomed.info/sct',
+    CONDITIONS_TRANSLATE_CONCEPTMAP_URL = '',
+    CONDITIONS_TRANSLATE_SOURCE_VS = '',
+    CONDITIONS_TRANSLATE_TARGET_VS = '',
+    CONDITIONS_TRANSLATE_SOURCE_SYSTEM = 'http://snomed.info/sct',
+    CONDITIONS_TRANSLATE_TARGET_SYSTEM = 'http://hl7.org/fhir/sid/icd-10',
 
-  // ============ PROCEDURES ============
-  PROCEDURES_VS_EXPAND_URI = '',
-  PROCEDURES_VS_VALIDATE_URI = '',
-  PROCEDURES_CS_URI = 'http://snomed.info/sct',
-  PROCEDURES_TRANSLATE_CONCEPTMAP_URL = '',
-  PROCEDURES_TRANSLATE_SOURCE_VS = '',
-  PROCEDURES_TRANSLATE_TARGET_VS = '',
-  PROCEDURES_TRANSLATE_SOURCE_SYSTEM = 'http://snomed.info/sct',
-  PROCEDURES_TRANSLATE_TARGET_SYSTEM = 'http://hl7.org/fhir/sid/icd-10-pcs',
+    // ============ PROCEDURES ============
+    PROCEDURES_VS_EXPAND_URI = '',
+    PROCEDURES_VS_VALIDATE_URI = '',
+    PROCEDURES_CS_URI = 'http://snomed.info/sct',
+    PROCEDURES_TRANSLATE_CONCEPTMAP_URL = '',
+    PROCEDURES_TRANSLATE_SOURCE_VS = '',
+    PROCEDURES_TRANSLATE_TARGET_VS = '',
+    PROCEDURES_TRANSLATE_SOURCE_SYSTEM = 'http://snomed.info/sct',
+    PROCEDURES_TRANSLATE_TARGET_SYSTEM = 'http://hl7.org/fhir/sid/icd-10-pcs',
 
-  // ============ MEDICATIONS ============
-  MEDICATIONS_VS_EXPAND_URI = '',
-  MEDICATIONS_VS_VALIDATE_URI = '',
-  MEDICATIONS_CS_URI = 'http://snomed.info/sct',
-  MEDICATIONS_TRANSLATE_CONCEPTMAP_URL = '',
-  MEDICATIONS_TRANSLATE_SOURCE_VS = '',
-  MEDICATIONS_TRANSLATE_TARGET_VS = '',
-  MEDICATIONS_TRANSLATE_SOURCE_SYSTEM = 'http://snomed.info/sct',
-  MEDICATIONS_TRANSLATE_TARGET_SYSTEM = 'http://www.whocc.no/atc',
+    // ============ MEDICATIONS ============
+    MEDICATIONS_VS_EXPAND_URI = '',
+    MEDICATIONS_VS_VALIDATE_URI = '',
+    MEDICATIONS_CS_URI = 'http://snomed.info/sct',
+    MEDICATIONS_TRANSLATE_CONCEPTMAP_URL = '',
+    MEDICATIONS_TRANSLATE_SOURCE_VS = '',
+    MEDICATIONS_TRANSLATE_TARGET_VS = '',
+    MEDICATIONS_TRANSLATE_SOURCE_SYSTEM = 'http://snomed.info/sct',
+    MEDICATIONS_TRANSLATE_TARGET_SYSTEM = 'http://www.whocc.no/atc',
 
-  // ============ VACCINES ============
-  VACCINES_VS_EXPAND_URI = '',
-  VACCINES_VS_VALIDATE_URI = '',
-  VACCINES_CS_URI = 'http://snomed.info/sct',
-  VACCINES_TRANSLATE_CONCEPTMAP_URL = '',
-  VACCINES_TRANSLATE_SOURCE_VS = '',
-  VACCINES_TRANSLATE_TARGET_VS = '',
-  VACCINES_TRANSLATE_SOURCE_SYSTEM = 'http://snomed.info/sct',
-  VACCINES_TRANSLATE_TARGET_SYSTEM = 'http://hl7.org/fhir/sid/icd-10',
+    // ============ VACCINES ============
+    VACCINES_VS_EXPAND_URI = '',
+    VACCINES_VS_VALIDATE_URI = '',
+    VACCINES_CS_URI = 'http://snomed.info/sct',
+    VACCINES_TRANSLATE_CONCEPTMAP_URL = '',
+    VACCINES_TRANSLATE_SOURCE_VS = '',
+    VACCINES_TRANSLATE_TARGET_VS = '',
+    VACCINES_TRANSLATE_SOURCE_SYSTEM = 'http://snomed.info/sct',
+    VACCINES_TRANSLATE_TARGET_SYSTEM = 'http://hl7.org/fhir/sid/icd-10',
 
   // Nuevo: configuración para formatCode
   MHD_FORMAT_CODE = 'urn:ihe:iti:xds-sd:text:2008', // Default IHE para FHIR JSON
@@ -128,256 +128,170 @@ const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean)
 // ===================== Debug dir =====================
 const debugDir = DEBUG_DIR_icvp ? path.resolve(DEBUG_DIR_icvp) : '/tmp';
 try { fs.mkdirSync(debugDir, { recursive: true }); }
-catch (err) { console.error(`❌ Could not create debug directory at ${debugDir}:`, err.message); }
+catch (e) { console.warn('⚠️ No se pudo crear debugDir:', e.message); }
 
 // ===================== OpenHIM =====================
-const openhimConfig = {
-  username: OPENHIM_USER,
-  password: OPENHIM_PASS,
-  apiURL: OPENHIM_API,
-  trustSelfSigned: true,
-  urn: mediatorConfig.urn
-};
+console.log(`Starting LACPASS→ITI-65 Mediator...`);
 if (NODE_ENV === 'development') {
-  axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false });
-  console.log('⚠️ DEV MODE: self-signed certs accepted');
-}
-registerMediator(openhimConfig, mediatorConfig, (err) => {
-  if (err) { console.error('❌ Registration error:', err); process.exit(1); }
-  activateHeartbeat(openhimConfig);
-});
-
-// ===================== Express =====================
-const app = express();
-app.use(express.json({ limit: '20mb' }));
-
-// CORS opcional
-if (CORS_ORIGIN) {
-  const allowList = arr(CORS_ORIGIN);
-  app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    if (origin && allowList.includes(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
-    }
-    if (req.method === 'OPTIONS') return res.sendStatus(204);
-    next();
-  });
+    axios.defaults.httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    console.log('DEV MODE: https self-signed certificates accepted.');
 }
 
-app.get('/lacpass/_health', (_req, res) => res.status(200).send('OK'));
-
-
-// Middleware simple de correlación
-app.use((req, _res, next) => {
-  req.correlationId = req.headers['x-correlation-id'] || uuidv4();
-  console.log(`[${req.correlationId}] ${req.method} ${req.originalUrl}`);
-  next();
-});
-
-// ===================== PDQm helpers =====================
-async function pdqmFetchPatientByIdentifier(identifierValue) {
-  if (!identifierValue || !PDQM_FHIR_URL) return null;
-  try {
-    const url = `${PDQM_FHIR_URL.replace(/\/+$/, '')}/Patient`;
-    const headers = { Accept: 'application/fhir+json' };
-    if (PDQM_FHIR_TOKEN) headers.Authorization = `Bearer ${PDQM_FHIR_TOKEN}`;
-    const resp = await axios.get(url, {
-      params: { identifier: identifierValue, _count: 1 },
-      headers,
-      timeout: parseInt(PDQM_TIMEOUT_MS, 10) || 10000,
-      httpsAgent: axios.defaults.httpsAgent
-    });
-    const b = resp.data;
-    const pt = b?.entry?.find(e => e.resource?.resourceType === 'Patient')?.resource;
-    return pt || null;
-  } catch (e) {
-    const statuses = new Set(arr(PDQM_FALLBACK_HTTP_STATUSES));
-    const status = e.response?.status;
-    const canIgnoreAuth = isTrue(PDQM_ENABLE_FALLBACK_FOR_401_403);
-    const ignorable = statuses.has(String(status)) || (!canIgnoreAuth && (status === 401 || status === 403));
-    console.warn('⚠️ PDQm fetch error:', status, e.response?.data || e.message, 'ignorable=', ignorable);
-    return null; // No detiene el flujo
-  }
-}
-function mergePatientDemographics(localPt, pdqmPt) {
-  if (!localPt || !pdqmPt) return;
-  if (pdqmPt.name) localPt.name = pdqmPt.name;
-  if (pdqmPt.gender) localPt.gender = pdqmPt.gender;
-  if (pdqmPt.birthDate) localPt.birthDate = pdqmPt.birthDate;
-  if (pdqmPt.address) localPt.address = pdqmPt.address;
-  if (Array.isArray(pdqmPt.identifier) && pdqmPt.identifier.length > 0) {
-    localPt.identifier = pdqmPt.identifier;
-  }
+// ===================== Logging de configuración =====================
+console.log(`🔧 Terminology debug level: ${TS_DEBUG_LEVEL}`);
+console.log(`📋 MHD formatCode: ${MHD_FORMAT_CODE}`);
+if (NODE_ENV === 'production' && axios.defaults.httpsAgent?.rejectUnauthorized === false) {
+  console.warn('⚠️ WARNING: Self-signed certificates accepted in PRODUCTION mode');
 }
 
-// ITI-65: nueva función que trae el BUNDLE PDQm completo
-async function pdqmFetchBundleByIdentifier(identifierValue) {
-  if (!identifierValue || !PDQM_FHIR_URL) return null;
-  //if (PDQM_DEFAULT_IDENTIFIER_SYSTEM && !String(identifierValue).includes('|')) {
-  //  identifierValue = `${PDQM_DEFAULT_IDENTIFIER_SYSTEM}|${identifierValue}`;
-  //}
-  if (PDQM_DEFAULT_IDENTIFIER_SYSTEM) {
-   const s = String(identifierValue);
-   const normalized = s.includes('|') ? s : `${PDQM_DEFAULT_IDENTIFIER_SYSTEM}|${s}`;
-   identifierValue = normalized;
- }
-  try {
-    const url = `${PDQM_FHIR_URL.replace(/\/+$/, '')}/Patient`;
-    const headers = { Accept: 'application/fhir+json' };
-    if (PDQM_FHIR_TOKEN) headers.Authorization = `Bearer ${PDQM_FHIR_TOKEN}`;
-    const resp = await axios.get(url, {
-      params: { identifier: identifierValue, _count: 1 },
-      headers,
-      timeout: parseInt(PDQM_TIMEOUT_MS, 10) || 10000,
-      httpsAgent: axios.defaults.httpsAgent
-    });
-    return resp.data || null; // Bundle
-  } catch {
-    return null;
-  }
-}
+// ===================== OpenHIM =====================
+const TERMINO_BASE = TERMINOLOGY_BASE_URL || TERMINO_SERVER_URL;
 
-// Helper: reemplaza el Patient del summaryBundle por el del Bundle PDQm
-function replacePatientFromPdqmBundle(summaryBundle, pdqmBundle) {
-  if (!summaryBundle?.entry || !pdqmBundle?.entry) return false;
-  const pdqmPatient = pdqmBundle.entry.find(e => e.resource?.resourceType === 'Patient')?.resource;
-  if (!pdqmPatient) return false;
-  const idx = summaryBundle.entry.findIndex(e => e.resource?.resourceType === 'Patient');
-  if (idx < 0) return false;
-  summaryBundle.entry[idx].resource = pdqmPatient; // ← reemplazo 1:1
-  return true;
-}
-
-
-function pickSnomedCoding(cc, domainCfg) {
-  if (!cc?.coding || !Array.isArray(cc.coding)) return null;
-  // 1) Prioriza exactamente SNOMED
-  const snomed = cc.coding.find(c => c.system === 'http://snomed.info/sct' && c.code);
-  if (snomed) return snomed;
-  // 2) (opcional) si definiste otro codeSystem por dominio, úsalo
-  const alt = domainCfg?.codeSystem
-    ? cc.coding.find(c => c.system === domainCfg.codeSystem && c.code)
-    : null;
-  if (alt) return alt;
-  // 3) No hay system → no haces validate/lookup
-  return null;
-}
-
-
-
-
-function buildPipeline(domain, ts, base, domainCfg) {
-  if (domain === 'vaccines') {
-    // Solo translate para vacunas
-    return [ () => opTranslate(ts, base, domainCfg) ];
-  }
-  // Para conditions/procedures/allergies/medications → validate VS, validate CS, lookup
-  return [
-    () => opValidateVS(ts, base, domainCfg),
-    () => opValidateCS(ts, base, domainCfg),
-    () => opLookup(ts, base),
-    // opcional: () => opExpand(ts, base, domainCfg),
-  ];
-}
-
-
-
-// ===================== Terminology client =====================
-const TS_BASE_URL = (TERMINOLOGY_BASE_URL || TERMINO_SERVER_URL || '').replace(/\/+$/, '');
-function buildTsClient() {
-  if (!TS_BASE_URL) return null;
-  const headers = { Accept: 'application/fhir+json' };
-  if (TERMINO_BEARER_TOKEN) headers.Authorization = `Bearer ${TERMINO_BEARER_TOKEN}`;
-  const auth = (TERMINO_BASIC_USER && TERMINO_BASIC_PASS)
-    ? { username: TERMINO_BASIC_USER, password: TERMINO_BASIC_PASS }
-    : undefined;
-
-  return axios.create({
-    baseURL: TS_BASE_URL,
-    timeout: parseInt(TS_TIMEOUT_MS, 10) || 15000,
-    headers,
-    auth,
-    httpsAgent: axios.defaults.httpsAgent
-  });
-}
-
-// ===================== Domain config =====================
-const DOMAIN_CONFIG = {
-  conditions: {
-    vsExpand: CONDITIONS_VS_EXPAND_URI,
-    vsValidate: CONDITIONS_VS_VALIDATE_URI,
-    codeSystem: CONDITIONS_CS_URI,
-    translate: {
-      conceptMapUrl: CONDITIONS_TRANSLATE_CONCEPTMAP_URL || TS_TRANSLATE_DEFAULT_CONCEPTMAP_URL,
-      sourceVS: CONDITIONS_TRANSLATE_SOURCE_VS || TS_TRANSLATE_DEFAULT_SOURCE_VS,
-      targetVS: CONDITIONS_TRANSLATE_TARGET_VS || TS_TRANSLATE_DEFAULT_TARGET_VS,
-      sourceSystem: CONDITIONS_TRANSLATE_SOURCE_SYSTEM || TS_TRANSLATE_DEFAULT_SOURCE_SYSTEM,
-      targetSystem: CONDITIONS_TRANSLATE_TARGET_SYSTEM || TS_TRANSLATE_DEFAULT_TARGET_SYSTEM,
-    }
-  },
-  procedures: {
-    vsExpand: PROCEDURES_VS_EXPAND_URI,
-    vsValidate: PROCEDURES_VS_VALIDATE_URI,
-    codeSystem: PROCEDURES_CS_URI,
-    translate: {
-      conceptMapUrl: PROCEDURES_TRANSLATE_CONCEPTMAP_URL || TS_TRANSLATE_DEFAULT_CONCEPTMAP_URL,
-      sourceVS: PROCEDURES_TRANSLATE_SOURCE_VS || TS_TRANSLATE_DEFAULT_SOURCE_VS,
-      targetVS: PROCEDURES_TRANSLATE_TARGET_VS || TS_TRANSLATE_DEFAULT_TARGET_VS,
-      sourceSystem: PROCEDURES_TRANSLATE_SOURCE_SYSTEM || TS_TRANSLATE_DEFAULT_SOURCE_SYSTEM,
-      targetSystem: PROCEDURES_TRANSLATE_TARGET_SYSTEM || TS_TRANSLATE_DEFAULT_TARGET_SYSTEM,
-    }
-  },
-  medications: {
-    vsExpand: MEDICATIONS_VS_EXPAND_URI,
-    vsValidate: MEDICATIONS_VS_VALIDATE_URI,
-    codeSystem: MEDICATIONS_CS_URI,
-    translate: {
-      conceptMapUrl: MEDICATIONS_TRANSLATE_CONCEPTMAP_URL || TS_TRANSLATE_DEFAULT_CONCEPTMAP_URL,
-      sourceVS: MEDICATIONS_TRANSLATE_SOURCE_VS || TS_TRANSLATE_DEFAULT_SOURCE_VS,
-      targetVS: MEDICATIONS_TRANSLATE_TARGET_VS || TS_TRANSLATE_DEFAULT_TARGET_VS,
-      sourceSystem: MEDICATIONS_TRANSLATE_SOURCE_SYSTEM || TS_TRANSLATE_DEFAULT_SOURCE_SYSTEM,
-      targetSystem: MEDICATIONS_TRANSLATE_TARGET_SYSTEM || TS_TRANSLATE_DEFAULT_TARGET_SYSTEM,
-    }
-  },
-  vaccines: {
-    vsExpand: VACCINES_VS_EXPAND_URI,
-    vsValidate: VACCINES_VS_VALIDATE_URI,
-    codeSystem: VACCINES_CS_URI,
-    translate: {
-      conceptMapUrl: VACCINES_TRANSLATE_CONCEPTMAP_URL || TS_TRANSLATE_DEFAULT_CONCEPTMAP_URL,
-      sourceVS: VACCINES_TRANSLATE_SOURCE_VS || TS_TRANSLATE_DEFAULT_SOURCE_VS,
-      targetVS: VACCINES_TRANSLATE_TARGET_VS || TS_TRANSLATE_DEFAULT_TARGET_VS,
-      sourceSystem: VACCINES_TRANSLATE_SOURCE_SYSTEM || TS_TRANSLATE_DEFAULT_SOURCE_SYSTEM,
-      targetSystem: VACCINES_TRANSLATE_TARGET_SYSTEM || TS_TRANSLATE_DEFAULT_TARGET_SYSTEM,
-    }
-  }
+// Mediator registration
+const openHimOptions = {
+    username: OPENHIM_USER,
+    password: OPENHIM_PASS,
+    apiURL: OPENHIM_API,
+    trustSelfSigned: true,
+    urn: mediatorConfig.urn,
 };
-const DOMAIN_NAMES = new Set(arr(TS_DOMAINS));
 
-function pickIdentifierValueForPdqm(identifiers = []) {
-  const wantText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_PASSPORT || 'Pasaporte').toLowerCase();
-  const wantCode = process.env.PDQM_IDENTIFIER_TYPE_CODE_PASSPORT;
+if (openHimOptions.apiURL && openHimOptions.username && openHimOptions.password) {
+    registerMediator(openHimOptions, mediatorConfig, (err) => {
+        if (err) {
+            console.error('❌ OpenHIM registration failed:', err);
+            process.exit(1);
+        }
+        console.log('✅ Mediator registered with OpenHIM');
 
-  const byText = identifiers.find(i => (i.type?.text || '').toLowerCase() === wantText);
-  if (byText?.value) return byText.value;
+        activateHeartbeat(openHimOptions);
+    });
+} else {
+    console.warn('⚠️ OpenHIM credentials not provided. Skipping mediator registration.');
+}
 
-  if (wantCode) {
-    const byCode = identifiers.find(i =>
-      Array.isArray(i.type?.coding) && i.type.coding.some(c => c.code === wantCode)
-    );
-    if (byCode?.value) return byCode.value;
+// ===================== CORS =====================
+const app = express();
+app.use(express.json({ limit: '10mb' }));
+
+const corsOrigin = CORS_ORIGIN || '*';
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', corsOrigin);
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    if (req.method === 'OPTIONS') return res.sendStatus(200);
+    next();
+});
+
+// ===================== Correlation ID =====================
+app.use((req, res, next) => {
+    req.correlationId = req.headers['x-correlation-id'] || uuidv4();
+    res.header('X-Correlation-ID', req.correlationId);
+    next();
+});
+
+// ===================== Helper terminología =====================
+const DOMAIN_LIST = arr(TS_DOMAINS);
+
+// Mapa de configuración de dominio
+const DOMAIN_CONFIG = {};
+for (const domain of DOMAIN_LIST) {
+    const domainUpper = domain.toUpperCase();
+    DOMAIN_CONFIG[domain] = {
+        vsExpand: process.env[`${domainUpper}_VS_EXPAND_URI`] || '',
+        vsValidate: process.env[`${domainUpper}_VS_VALIDATE_URI`] || '',
+        codeSystem: process.env[`${domainUpper}_CS_URI`] || 'http://snomed.info/sct',
+        translate: {
+            conceptMapUrl: process.env[`${domainUpper}_TRANSLATE_CONCEPTMAP_URL`] || TS_TRANSLATE_DEFAULT_CONCEPTMAP_URL,
+            sourceVS: process.env[`${domainUpper}_TRANSLATE_SOURCE_VS`] || TS_TRANSLATE_DEFAULT_SOURCE_VS,
+            targetVS: process.env[`${domainUpper}_TRANSLATE_TARGET_VS`] || TS_TRANSLATE_DEFAULT_TARGET_VS,
+            sourceSystem: process.env[`${domainUpper}_TRANSLATE_SOURCE_SYSTEM`] || TS_TRANSLATE_DEFAULT_SOURCE_SYSTEM,
+            targetSystem: process.env[`${domainUpper}_TRANSLATE_TARGET_SYSTEM`] || TS_TRANSLATE_DEFAULT_TARGET_SYSTEM,
+        }
+    };
+}
+
+function resourceToDomain(resource) {
+    const type = resource?.resourceType;
+    if (type === 'Condition') return 'conditions';
+    if (type === 'Procedure') return 'procedures';
+    if (type === 'MedicationStatement' || type === 'MedicationRequest') return 'medications';
+    if (type === 'Immunization') return 'vaccines';
+    return TS_DEFAULT_DOMAIN;
+}
+
+function buildTsClient() {
+    if (!TERMINO_BASE) return null;
+    const client = axios.create({
+        baseURL: TERMINO_BASE,
+        timeout: parseInt(TS_TIMEOUT_MS, 10),
+        httpsAgent: axios.defaults.httpsAgent,
+    });
+
+    if (TERMINO_BEARER_TOKEN) {
+        client.defaults.headers.common['Authorization'] = `Bearer ${TERMINO_BEARER_TOKEN}`;
+    } else if (TERMINO_BASIC_USER && TERMINO_BASIC_PASS) {
+        const auth = Buffer.from(`${TERMINO_BASIC_USER}:${TERMINO_BASIC_PASS}`).toString('base64');
+        client.defaults.headers.common['Authorization'] = `Basic ${auth}`;
+    }
+
+    return client;
+}
+
+// ===================== PDQm Utils =====================
+function pickIdentifierValueForPdqm(identifiers) {
+    if (!Array.isArray(identifiers) || identifiers.length === 0) return null;
+
+    const fallbackParamNames = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES || 'RUN,RUNP,identifier');
+    const defaultSystem = PDQM_DEFAULT_IDENTIFIER_SYSTEM || '';
+
+    // 1. Buscar por sistema por defecto
+    if (defaultSystem) {
+        const idWithDefaultSystem = identifiers.find(id => id.system === defaultSystem);
+        if (idWithDefaultSystem?.value) return idWithDefaultSystem.value;
+    }
+
+    // 2. Buscar por type.text que contenga algún paramName de fallback
+    for (const paramName of fallbackParamNames) {
+        const match = identifiers.find(id => id.type?.text?.toLowerCase().includes(paramName.toLowerCase()));
+        if (match?.value) return match.value;
+    }
+
+    // 3. Buscar por value que contenga algún paramName de fallback
+    for (const paramName of fallbackParamNames) {
+        const match = identifiers.find(id => {
+            if (!id.value) return false;
+            const value = id.value.toLowerCase();
+            const param = paramName.toLowerCase();
+            return value.includes(param);
+        });
+        if (match?.value) return match.value;
+    }
+
+    // 4. Retornar el primer identifier con valor
+    return identifiers[0]?.value || null; // último fallback
+}
+
+// ===================== Logging helper para terminología =====================
+function tsLog(level, message, data = null) {
+  const debugLevel = TS_DEBUG_LEVEL.toLowerCase();
+  
+  if (debugLevel === 'silent') return;
+  
+  const shouldLog = {
+    debug: ['debug'].includes(debugLevel),
+    warn: ['debug', 'warn'].includes(debugLevel), 
+    error: ['debug', 'warn', 'error'].includes(debugLevel)
+  }[level];
+  
+  if (shouldLog) {
+    const prefix = `🔧 TS[${level.toUpperCase()}]:`;
+    if (data) {
+      console[level === 'error' ? 'error' : 'log'](prefix, message, data);
+    } else {
+      console[level === 'error' ? 'error' : 'log'](prefix, message);
+    }
   }
-
-  if (PDQM_DEFAULT_IDENTIFIER_SYSTEM) {
-    const bySystem = identifiers.find(i => i.system === PDQM_DEFAULT_IDENTIFIER_SYSTEM);
-    if (bySystem?.value) return bySystem.value;
-  }
-
-  return identifiers[0]?.value || null; // último fallback
 }
 
 // ===================== Terminology Ops (funciones) =====================
@@ -438,25 +352,6 @@ async function opValidateCS(ts, { code, system, display }, domainCfg) {
   return null;
 }
 
-async function opExpand(ts, { code, system, display }, domainCfg) {
-  if (!isTrue(FEATURE_TS_EXPAND_ENABLED)) return null;
-  if (!domainCfg?.vsExpand) return null;
-  try {
-    const params = { url: domainCfg.vsExpand };
-    // Usamos display o code como filtro
-    const filter = display || code;
-    if (filter) params.filter = filter;
-    if (TS_ACTIVE_ONLY) params.activeOnly = isTrue(TS_ACTIVE_ONLY);
-    if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
-
-    const { data } = await ts.get('/ValueSet/$expand', { params });
-    const c = data?.expansion?.contains?.[0];
-    if (c?.code) {
-      return { system: c.system || system, code: c.code, display: c.display || display || c.code, source: 'expand' };
-    }
-  } catch { /* noop */ }
-  return null;
-}
 async function opLookup(ts, { code, system, display }, domainCfg) {
   if (!system || !code) return null;
 
@@ -485,17 +380,17 @@ async function opLookup(ts, { code, system, display }, domainCfg) {
 }
 
 async function opTranslate(ts, { code, system, display }, domainCfg) {
-  if (!isTrue(FEATURE_TS_TRANSLATE_ENABLED)) return null;
+    if (!isTrue(FEATURE_TS_TRANSLATE_ENABLED)) return null;
 
-  const cm = domainCfg?.translate || {};
-  const params = {};
-  if (cm.conceptMapUrl) params.url = cm.conceptMapUrl;
-  if (cm.sourceVS) params.source = cm.sourceVS;
-  if (cm.targetVS) params.target = cm.targetVS;
-  if (cm.sourceSystem || system) params.system = cm.sourceSystem || system;
-  if (cm.targetSystem) params.targetsystem = cm.targetSystem;
-  if (code) params.code = code;
-  if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
+    const cm = domainCfg?.translate || {};
+    const params = {};
+    if (cm.conceptMapUrl) params.url = cm.conceptMapUrl;
+    if (cm.sourceVS) params.source = cm.sourceVS;
+    if (cm.targetVS) params.target = cm.targetVS;
+    if (cm.sourceSystem || system) params.system = cm.sourceSystem || system;
+    if (cm.targetSystem) params.targetsystem = cm.targetSystem;
+    if (code) params.code = code;
+    if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
 
   const hasConfig = params.url || params.source || params.target || params.targetsystem;
   if (!hasConfig) {
@@ -521,159 +416,111 @@ async function opTranslate(ts, { code, system, display }, domainCfg) {
   return null;
 }
 
-// ---- Parsers auxiliares ----
+// ===================== TerminologyOp Response Parsers =====================
 function extractResultFromParameters(data) {
-  // Parameters.parameter[name=result|message|display]
-  const out = { result: false, display: undefined };
-  if (data?.resourceType === 'Parameters' && Array.isArray(data.parameter)) {
-    for (const p of data.parameter) {
-      if (p.name === 'result') out.result = (p.valueBoolean === true || p.valueString === 'true');
-      if (p.name === 'display' && p.valueString) out.display = p.valueString;
-    }
-  } else if (data?.resourceType === 'OperationOutcome') {
-    // heurística
-    out.result = Array.isArray(data.issue) && data.issue.some(i => (i.severity === 'information' || i.severity === 'success'));
-  }
-  return out;
+    if (data?.resourceType !== 'Parameters') return { result: false };
+    const resultParam = data.parameter?.find(p => p.name === 'result');
+    const displayParam = data.parameter?.find(p => p.name === 'display');
+    return {
+        result: resultParam?.valueBoolean === true,
+        display: displayParam?.valueString || null
+    };
 }
+
 function extractDisplayFromLookup(data) {
-  if (data?.resourceType !== 'Parameters' || !Array.isArray(data.parameter)) return undefined;
-  const p = data.parameter.find(x => x.name === 'display');
-  return p?.valueString;
+    if (data?.resourceType !== 'Parameters') return null;
+    const displayParam = data.parameter?.find(p => p.name === 'display');
+    return displayParam?.valueString || null;
 }
+
 function extractMatchFromTranslate(data) {
-  // Parameters.parameter[name=match].part[name=concept].valueCoding{system,code,display}
-  if (data?.resourceType !== 'Parameters' || !Array.isArray(data.parameter)) return null;
-  const matchParam = data.parameter.find(p => p.name === 'match');
-  const parts = matchParam?.part || [];
-  const concept = parts.find(x => x.name === 'concept')?.valueCoding;
-  if (concept?.code) return { system: concept.system, code: concept.code, display: concept.display };
-  // fallback: algunos servidores devuelven primer 'match' en array
-  for (const p of data.parameter) {
-    if (p.name === 'match' && Array.isArray(p.part)) {
-      const c = p.part.find(x => x.name === 'concept')?.valueCoding;
-      if (c?.code) return { system: c.system, code: c.code, display: c.display };
+    if (data?.resourceType !== 'Parameters') return null;
+    const matchParam = data.parameter?.find(p => p.name === 'match');
+    if (!matchParam?.part) return null;
+
+    let equivalence, system, code, display;
+    for (const part of matchParam.part) {
+        if (part.name === 'equivalence') equivalence = part.valueCode;
+        if (part.name === 'concept') {
+            const concept = part.valueCoding;
+            system = concept?.system;
+            code = concept?.code;
+            display = concept?.display;
+        }
     }
-  }
-  return null;
-}
 
-// ===================== Mapeo recurso → dominio =====================
-function resourceToDomain(resource) {
-  switch (resource.resourceType) {
-    case 'Condition': return 'conditions';
-    case 'Procedure': return 'procedures';
-    case 'MedicationRequest':
-    case 'MedicationStatement': return 'medications';
-    case 'Immunization': return 'vaccines';
-    case 'AllergyIntolerance': return 'conditions'; // si más adelante agregas "allergies", cámbialo aquí
-    default: return TS_DEFAULT_DOMAIN || 'conditions';
-  }
-}
-
-// Helper util
-function isPdqmFallbackBundle(bundle) {
-  const tags = bundle?.meta?.tag || [];
-  return Array.isArray(tags) && tags.some(t =>
-    t.system === 'urn:pdqm:fallback' && t.code === 'synthetic'
-  );
-}
-
-// Helper: actualiza todas las referencias en un objeto recursivamente
-function updateReferencesInObject(obj, urlMap) {
-  if (!obj || typeof obj !== 'object') return;
-
-  // Si es un array, procesar cada elemento
-  if (Array.isArray(obj)) {
-    obj.forEach(item => updateReferencesInObject(item, urlMap));
-    return;
-  }
-
-  // Si tiene propiedad 'reference', actualizarla
-  if (obj.reference && typeof obj.reference === 'string') {
-    const mapped = urlMap.get(obj.reference);
-    if (mapped) {
-      obj.reference = mapped;
+    if (equivalence && system && code) {
+        return { system, code, display, equivalence };
     }
-  }
-
-  // Recursivamente procesar todas las propiedades
-  for (const key in obj) {
-    if (obj.hasOwnProperty(key) && key !== 'reference') {
-      updateReferencesInObject(obj[key], urlMap);
-    }
-  }
+    return null;
 }
 
-// ===================== Iterador de CodeableConcepts =====================
-function* iterateCodeableConcepts(resource) {
-  switch (resource.resourceType) {
-    case 'Condition':
-      if (resource.code) yield { path: 'code', cc: resource.code };
-      break;
-    case 'AllergyIntolerance':
-      if (resource.code) yield { path: 'code', cc: resource.code };
-      break;
-    case 'Procedure':
-      if (resource.code) yield { path: 'code', cc: resource.code };
-      break;
-    case 'MedicationRequest':
-      if (resource.medicationCodeableConcept) yield { path: 'medicationCodeableConcept', cc: resource.medicationCodeableConcept };
-      break;
-    case 'MedicationStatement':
-      if (resource.medicationCodeableConcept) yield { path: 'medicationCodeableConcept', cc: resource.medicationCodeableConcept };
-      break;
-    case 'Immunization':
-      if (resource.vaccineCode) yield { path: 'vaccineCode', cc: resource.vaccineCode };
-      break;
-    default:
-      break;
-  }
+// ===================== Terminology Pipeline =====================
+function buildPipeline(domain, ts, base, domainCfg) {
+    // Secuencia: validateVS → validateCS → lookup → translate
+    return [
+        () => opValidateVS(ts, base, domainCfg),
+        () => opValidateCS(ts, base, domainCfg),
+        () => opLookup(ts, base, domainCfg),
+        () => opTranslate(ts, base, domainCfg),
+    ];
 }
 
-// ===================== Pipeline por dominio =====================
 async function normalizeCC(ts, cc, domainCfg, domain) {
-  if (!cc?.coding || !Array.isArray(cc.coding) || cc.coding.length === 0) return;
+    if (!cc?.coding || !Array.isArray(cc.coding) || cc.coding.length === 0) return;
 
-  const target = pickSnomedCoding(cc, domainCfg);
-  if (!target) {
-    // No hay coding con system SNOMED (u otro codeSystem del dominio) → no validar/lookup
-    // Para vaccines igual haremos translate (si procede) usando el texto/código que haya.
-  }
+    const originalCoding = cc.coding[0];
+    const base = {
+        system: originalCoding.system,
+        code: originalCoding.code,
+        display: originalCoding.display || cc.text
+    };
 
-  // Base para las operaciones
-  const base = target
-    ? { system: target.system, code: target.code, display: target.display || cc.text }
-    : { system: undefined, code: undefined, display: cc.text };
+    const steps = buildPipeline(domain, ts, base, domainCfg);
 
-  const steps = buildPipeline(domain, ts, base, domainCfg);
-
-  for (const step of steps) {
-    const out = await step();
-    if (out && out.code) {
-      // Solo actualiza el coding que seleccionaste (SNOMED), no “el primero”
-      if (target) {
-        target.system = out.system || target.system;
-        target.code = out.code;
-        target.display = out.display || target.display || cc.text;
-      } else {
-        // Si no había coding seleccionado (p. ej. vaccines con solo texto) y el paso devuelve algo
-        // agrega un nuevo coding con lo resuelto (útil para $translate en vaccines)
-        cc.coding.unshift({
-          system: out.system,
-          code: out.code,
-          display: out.display || cc.text
-        });
-      }
-      return;
+    for (const step of steps) {
+        try {
+            const result = await step();
+            if (result?.system && result?.code) {
+                cc.coding[0] = {
+                    system: result.system,
+                    code: result.code,
+                    display: result.display || cc.text
+                };
+                return; // Usa el primer resultado exitoso
+            }
+        } catch (error) {
+            continue; // Continúa con el siguiente paso
+        }
     }
-  }
+}
+
+function* iterateCodeableConcepts(resource) {
+    if (!resource || typeof resource !== 'object') return;
+
+    const typeToFields = {
+        'Condition': ['code'],
+        'Procedure': ['code'],
+        'MedicationStatement': ['medicationCodeableConcept'],
+        'MedicationRequest': ['medicationCodeableConcept'],
+        'Immunization': ['vaccineCode'],
+        'AllergyIntolerance': ['code'],
+        'Observation': ['code'],
+    };
+
+    const fields = typeToFields[resource.resourceType] || [];
+    for (const field of fields) {
+        const cc = resource[field];
+        if (cc?.coding && Array.isArray(cc.coding)) {
+            yield { path: field, cc };
+        }
+    }
 }
 
 async function normalizeTerminologyInBundle(bundle) {
-  if (!isTrue(FEATURE_TS_ENABLED)) return;
-  const ts = buildTsClient();
-  if (!ts || !bundle?.entry?.length) return;
+    if (!isTrue(FEATURE_TS_ENABLED)) return;
+    const ts = buildTsClient();
+    if (!ts || !bundle?.entry?.length) return;
 
   console.log('🔍 Iniciando normalización terminológica con enfoque SNOMED...');
 
@@ -697,7 +544,7 @@ async function normalizeTerminologyInBundle(bundle) {
     for (const { path, cc } of iterateCodeableConcepts(res)) {
       try {
         console.log(`  └─ Normalizando ${path}:`, cc.coding?.map(c => `${c.system}|${c.code}`) || ['sin códigos']);
-        await normalizeCC(ts, cc, domainCfg, domain, res.resourceType);
+        await normalizeCC(ts, cc, domainCfg, domain);
       } catch (e) {
         console.warn(`⚠️ TS normalize error (${domain}.${path}):`, e.message);
       }
@@ -707,7 +554,7 @@ async function normalizeTerminologyInBundle(bundle) {
   console.log('✅ Normalización terminológica completada');
 }
 
-// Función para corregir el Bundle antes del envío
+// ===================== Función para corregir Bundle - INTEGRADA =====================
 function fixBundleValidationIssues(summaryBundle) {
   // 1. Asegurar que el Composition tenga custodian (requerido por el perfil lac-composition)
   const compositionEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
@@ -853,7 +700,172 @@ function checkAndFixReferences(obj, availableUrls, bundle) {
   }
 }
 
-// En la ruta ITI-65, después de obtener el summaryBundle y antes de la terminología:
+// ===================== Helper: actualiza todas las referencias recursivamente =====================
+function updateReferencesInObject(obj, urlMap) {
+  if (!obj || typeof obj !== 'object') return;
+
+  if (Array.isArray(obj)) {
+    obj.forEach(item => updateReferencesInObject(item, urlMap));
+    return;
+  }
+
+  if (obj.reference && typeof obj.reference === 'string') {
+    const mapped = urlMap.get(obj.reference);
+    if (mapped) {
+      obj.reference = mapped;
+    }
+  }
+
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key) && key !== 'reference') {
+      updateReferencesInObject(obj[key], urlMap);
+    }
+  }
+}
+
+// ===================== PDQm =====================
+async function pdqmFetchBundleByIdentifier(identifierValue) {
+    if (!PDQM_FHIR_URL || !identifierValue) return null;
+
+    const maxAttempts = 3;
+    let currentAttempt = 0;
+
+    while (currentAttempt < maxAttempts) {
+        currentAttempt++;
+        console.log(`PDQm attempt ${currentAttempt}/${maxAttempts} for identifier: ${identifierValue}`);
+
+        try {
+            // Construir configuración de solicitud
+            const config = {
+                timeout: parseInt(PDQM_TIMEOUT_MS, 10),
+                httpsAgent: axios.defaults.httpsAgent,
+                validateStatus: (status) => {
+                    // Considerar como válidos los estados esperados
+                    return status < 500 && status !== 429; // No reintentar en errores de servidor o throttling
+                }
+            };
+
+            if (PDQM_FHIR_TOKEN) {
+                config.headers = { 'Authorization': `Bearer ${PDQM_FHIR_TOKEN}` };
+            }
+
+            // Intentar con el parámetro identifier por defecto
+            let url = `${PDQM_FHIR_URL}/Patient?identifier=${encodeURIComponent(identifierValue)}`;
+            console.log(`PDQm GET: ${url}`);
+
+            let response = await axios.get(url, config);
+
+            // Si la respuesta es exitosa y contiene datos, retornar
+            if (response.status === 200 && response.data?.resourceType === 'Bundle') {
+                console.log(`✅ PDQm response: ${response.data.total || 0} patients found`);
+                return response.data;
+            }
+
+            // Si no hay resultados y hay parámetros de fallback configurados, intentar con ellos
+            if (response.status === 200 && response.data?.total === 0 && PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES) {
+                const fallbackParams = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES);
+                
+                for (const param of fallbackParams) {
+                    url = `${PDQM_FHIR_URL}/Patient?${param}=${encodeURIComponent(identifierValue)}`;
+                    console.log(`PDQm fallback GET: ${url}`);
+                    
+                    response = await axios.get(url, config);
+                    
+                    if (response.status === 200 && response.data?.resourceType === 'Bundle' && response.data.total > 0) {
+                        console.log(`✅ PDQm fallback response: ${response.data.total} patients found with param ${param}`);
+                        return response.data;
+                    }
+                }
+            }
+
+            // Manejar códigos de estado específicos
+            if (response.status === 401 || response.status === 403) {
+                if (isTrue(PDQM_ENABLE_FALLBACK_FOR_401_403)) {
+                    console.warn(`PDQm auth error (${response.status}), generating fallback bundle`);
+                    return generateFallbackBundle(identifierValue);
+                } else {
+                    console.error(`PDQm auth error (${response.status}), no fallback enabled`);
+                    return null;
+                }
+            }
+
+            // Verificar si debemos reintentar basado en el estado HTTP
+            const fallbackStatuses = arr(PDQM_FALLBACK_HTTP_STATUSES || '404,400');
+            if (fallbackStatuses.includes(response.status.toString())) {
+                console.warn(`PDQm response status ${response.status}, will retry or fallback`);
+                
+                if (currentAttempt >= maxAttempts) {
+                    console.warn(`Max attempts reached, generating fallback bundle`);
+                    return generateFallbackBundle(identifierValue);
+                }
+                
+                // Esperar antes del siguiente intento
+                await new Promise(resolve => setTimeout(resolve, 1000 * currentAttempt));
+                continue;
+            }
+
+            // Si llegamos aquí, retornar los datos obtenidos (aunque sean vacíos)
+            return response.data;
+
+        } catch (error) {
+            console.error(`PDQm error (attempt ${currentAttempt}):`, error.message);
+            
+            // Decidir si reintentar o generar fallback
+            if (currentAttempt >= maxAttempts) {
+                console.warn('Max attempts reached, generating fallback bundle');
+                return generateFallbackBundle(identifierValue);
+            }
+            
+            // Esperar antes del siguiente intento
+            await new Promise(resolve => setTimeout(resolve, 1000 * currentAttempt));
+        }
+    }
+
+    return null;
+}
+
+function generateFallbackBundle(identifierValue) {
+    const fallbackBundle = {
+        resourceType: 'Bundle',
+        id: `pdqm-fallback-${Date.now()}`,
+        type: 'searchset',
+        total: 1,
+        entry: [{
+            fullUrl: `Patient/pdqm-fallback-${identifierValue}`,
+            resource: {
+                resourceType: 'Patient',
+                id: `pdqm-fallback-${identifierValue}`,
+                identifier: [{
+                    system: PDQM_DEFAULT_IDENTIFIER_SYSTEM || 'urn:oid:1.2.3.4.5',
+                    value: identifierValue
+                }],
+                name: [{
+                    text: `Paciente PDQm Fallback ${identifierValue}`
+                }],
+                meta: {
+                    tag: [{
+                        system: 'http://example.org/tag',
+                        code: 'pdqm-fallback',
+                        display: 'PDQm Fallback Bundle'
+                    }]
+                }
+            }
+        }]
+    };
+
+    return fallbackBundle;
+}
+
+function isPdqmFallbackBundle(bundle) {
+    return bundle?.entry?.[0]?.resource?.meta?.tag?.some(tag => 
+        tag.code === 'pdqm-fallback'
+    ) === true;
+}
+
+// ===================== Routes =====================
+app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+
+// ===================== ROUTE ITI-65 - VERSIÓN INTEGRADA =====================
 app.post('/lacpass/_iti65', async (req, res) => {
   let summaryBundle;
 
@@ -944,20 +956,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const bundleSize = Buffer.byteLength(bundleString, 'utf8');
     const bundleHash = crypto.createHash('sha256').update(bundleString).digest('base64');
 
-    // FIX #1 — Bundle profile genérico
-    // summaryBundle.meta = summaryBundle.meta || {};
-    // summaryBundle.meta.profile = ['http://hl7.org/fhir/StructureDefinition/Bundle'];
-
-    // FIX #2 — Remover profiles en entries vacíos
-    // summaryBundle.entry.forEach(entry => {
-    //   const res = entry.resource;
-    //   if (res?.meta) {
-    //     if (res.meta.profile) delete res.meta.profile;
-    //     if (Object.keys(res.meta).length === 0) delete res.meta;
-    //   }
-    // });
-
-    // FIX #3 — Sanitize UV/IPS en meds/vacunas
+    // FIX #3 — Sanitize UV/IPS en meds/vacunas con logging mejorado
     summaryBundle.entry.forEach(entry => {
       const res = entry.resource;
       if (res?.resourceType === 'MedicationStatement' && res.medicationCodeableConcept?.coding) {
@@ -1011,7 +1010,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
     };
 
-    // DocumentReference
+    // DocumentReference con formatCode configurable
     const documentReference = {
       resourceType: 'DocumentReference',
       id: drId,
@@ -1068,15 +1067,12 @@ app.post('/lacpass/_iti65', async (req, res) => {
     console.log('DEBUG: saved →', debugFile);
 
     const resp = await axios.post(FHIR_NODO_NACIONAL_SERVER, provideBundle, {
-      //headers: { 'Content-Type': 'application/fhir+json' },
       headers: {
         'Content-Type': 'application/fhir+json',
         'X-Correlation-ID': req.correlationId
       },
-
       validateStatus: false
     });
-    //console.log(`⇒ ITI-65 sent, status ${resp.status}`);
     console.log(`[${req.correlationId}] ⇒ ITI-65 sent, status ${resp.status}`);
 
     return res.json({ status: 'sent', code: resp.status });
