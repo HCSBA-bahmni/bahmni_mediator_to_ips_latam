@@ -601,8 +601,136 @@ async function normalizeTerminologyInBundle(bundle) {
   console.log('✅ Normalización terminológica completada');
 }
 
+// ===================== Helpers nuevos =====================
+function isUrnOid(value) {
+  return typeof value === 'string' && /^urn:oid:\d+(\.\d+)+$/.test(value.trim());
+}
+
+function toUrnOid(value) {
+  if (!value) return value;
+  const v = value.trim();
+  // Corrige casos como "urn:oid:urn:oid:1.2.3" o espacios
+  const cleaned = v.replace(/^urn:oid:/i, '');
+  return `urn:oid:${cleaned}`;
+}
+
+function stripNarrativeLinkExtensions(resource) {
+  if (!resource || !Array.isArray(resource.extension)) return;
+  // En perfiles IPS varias resources usan slicing cerrado sobre extension;
+  // narrativeLink NO está permitido ahí => hay que removerla.
+  resource.extension = resource.extension.filter(
+    (e) => e?.url !== 'http://hl7.org/fhir/StructureDefinition/narrativeLink'
+  );
+  if (resource.extension.length === 0) {
+    delete resource.extension;
+  }
+}
+
+function fixPatientIdentifiers(patient) {
+  if (!patient?.identifier) return;
+  
+  const OID_NAT = LAC_NATIONAL_ID_SYSTEM_OID || '';
+  const OID_INT = LAC_PASSPORT_ID_SYSTEM_OID || '';
+  
+  patient.identifier.forEach(identifier => {
+    // Normalizar system a URN OID válido
+    if (identifier.system) {
+      identifier.system = toUrnOid(identifier.system);
+    }
+    
+    // Si hay type.coding, asegurar system correcto
+    if (identifier.type?.coding) {
+      identifier.type.coding.forEach(coding => {
+        if (!coding.system) {
+          coding.system = 'http://terminology.hl7.org/CodeSystem/v2-0203';
+          
+          // Mapear códigos conocidos
+          const codeMap = {
+            'd3153eb0-5e07-11ef-8f7c-0242ac120002': 'MR', // Medical Record Number
+            'a2551e57-6028-428b-be3c-21816c252e06': 'PPN' // Passport Number
+          };
+          
+          if (codeMap[coding.code]) {
+            coding.code = codeMap[coding.code];
+          }
+        }
+      });
+    }
+    
+    // Corregir slices LAC según el tipo de identifier
+    const codes = (identifier.type?.coding || []).map(c => c.code);
+    if (codes.includes('MR')) {
+      // Slice nacional: system debe ser URN OID, use = official
+      if (!identifier.system) {
+        if (OID_NAT) {
+          identifier.system = `urn:oid:${OID_NAT}`;
+        } else {
+          console.warn('⚠️ Falta LAC_NATIONAL_ID_SYSTEM_OID para Patient.identifier:national');
+        }
+      }
+      identifier.use = 'official';
+      // Quitar text - no permitido en slice LAC nacional
+      if (identifier.type?.text) delete identifier.type.text;
+    }
+    if (codes.includes('PPN')) {
+      // Slice internacional: system debe ser URN OID, use = official, sin type.text
+      if (!identifier.system) {
+        if (OID_INT) {
+          identifier.system = `urn:oid:${OID_INT}`;
+        } else {
+          console.warn('⚠️ Falta LAC_PASSPORT_ID_SYSTEM_OID para Patient.identifier:international');
+        }
+      }
+      identifier.use = 'official';
+      // Quitar text porque el slice de LAC lo fija y no permite texto libre
+      if (identifier.type?.text) delete identifier.type.text;
+    }
+  });
+  
+  // Si hay algún identifier con system no-URN, lo convertimos solo si parece OID crudo
+  patient.identifier.forEach(id => {
+    if (id.system && !isUrnOid(id.system)) {
+      // Si por alguna razón llega "1.2.3" lo convertimos
+      if (/^\d+(\.\d+)+$/.test(id.system)) {
+        id.system = toUrnOid(id.system);
+      }
+    }
+  });
+  
+  // Ordenar identifiers: primero nacional (MR), luego internacional (PPN)
+  patient.identifier.sort((a, b) => {
+    const ra = (a.type?.coding || []).some(c => c.code === 'MR') ? 0 : 1;
+    const rb = (b.type?.coding || []).some(c => c.code === 'MR') ? 0 : 1;
+    return ra - rb;
+  });
+}
+
+function ensureLacPatientProfile(patient) {
+  const LAC_PATIENT_PROFILE = 'http://lacpass.racsel.org/StructureDefinition/lac-patient';
+  patient.meta = patient.meta || {};
+  patient.meta.profile = Array.isArray(patient.meta.profile) ? patient.meta.profile : [];
+  if (!patient.meta.profile.includes(LAC_PATIENT_PROFILE)) {
+    patient.meta.profile.push(LAC_PATIENT_PROFILE);
+  }
+}
+
 // ===================== Función para corregir Bundle - INTEGRADA =====================
 function fixBundleValidationIssues(summaryBundle) {
+  if (!summaryBundle?.entry || !Array.isArray(summaryBundle.entry)) return;
+
+  // 0) QUITAR narrativeLink en recursos IPS con slicing cerrado
+  for (const e of summaryBundle.entry) {
+    const r = e.resource;
+    if (!r) continue;
+    // Aplicamos a tipos que el validador reportó: AllergyIntolerance, MedicationStatement y Condition
+    if (r.resourceType === 'AllergyIntolerance' ||
+        r.resourceType === 'MedicationStatement' ||
+        r.resourceType === 'Condition') {
+      stripNarrativeLinkExtensions(r);
+    }
+  }
+
+  // 1) Lógica de Patient movida después de canonicalización
   // === NUEVO: Canonicalizar fullUrl y referencias internas a urn:uuid:<id> ===
   // (Esto soluciona BUNDLE_BUNDLE_ENTRY_NOTFOUND_APPARENT y BUNDLE_BUNDLE_POSSIBLE_MATCH_WRONG_FU)
 
@@ -661,6 +789,31 @@ function fixBundleValidationIssues(summaryBundle) {
   // Ejecutar canonicalización al inicio
   canonicalizeBundleToUrn(summaryBundle);
 
+  // === Post-canonicalización: Patient
+  const patientEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
+  if (patientEntry?.resource) {
+    fixPatientIdentifiers(patientEntry.resource);
+    ensureLacPatientProfile(patientEntry.resource);
+    if (Array.isArray(patientEntry.resource.address)) {
+      patientEntry.resource.address.forEach(a => {
+        const v = String(a.country || '').trim().toUpperCase();
+        if (v === 'CHILE' || v === 'CHILE ' || v === 'CL ') a.country = 'CL';
+      });
+    }
+  }
+
+  // 0) QUITAR narrativeLink en recursos IPS con slicing cerrado
+  for (const e of summaryBundle.entry) {
+    const r = e.resource;
+    if (!r) continue;
+    // Aplicamos a tipos que el validador reportó: AllergyIntolerance, MedicationStatement y Condition
+    if (r.resourceType === 'AllergyIntolerance' ||
+        r.resourceType === 'MedicationStatement' ||
+        r.resourceType === 'Condition') {
+      stripNarrativeLinkExtensions(r);
+    }
+  }
+
   // 1. Corregir Composition - asegurar ID y custodian (LAC Bundle)
   const compositionEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
   if (compositionEntry?.resource) {
@@ -702,75 +855,7 @@ function fixBundleValidationIssues(summaryBundle) {
     }
   }
 
-  // 3. Corregir identifiers del Patient - LAC Patient slices
-  const OID_NAT = LAC_NATIONAL_ID_SYSTEM_OID || '';
-  const OID_INT = LAC_PASSPORT_ID_SYSTEM_OID || '';
-  
-  const patientEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
-  if (patientEntry?.resource?.identifier) {
-    patientEntry.resource.identifier.forEach(identifier => {
-      if (identifier.type?.coding) {
-        identifier.type.coding.forEach(coding => {
-          if (!coding.system) {
-            // Asignar system por defecto para identifier types
-            coding.system = 'http://terminology.hl7.org/CodeSystem/v2-0203';
-            
-            // Mapear códigos conocidos
-            const codeMap = {
-              'd3153eb0-5e07-11ef-8f7c-0242ac120002': 'MR', // Medical Record Number
-              'a2551e57-6028-428b-be3c-21816c252e06': 'PPN' // Passport Number
-            };
-            
-            if (codeMap[coding.code]) {
-              coding.code = codeMap[coding.code];
-            }
-          }
-        });
-      }
-      
-      // Corregir slices LAC según el tipo de identifier
-      const codes = (identifier.type?.coding || []).map(c => c.code);
-      if (codes.includes('MR')) {
-        // Slice nacional: system debe ser URN OID, use = official
-        if (!identifier.system) {
-          if (OID_NAT) {
-            identifier.system = `urn:oid:${OID_NAT}`;
-          } else {
-            console.warn('⚠️ Falta LAC_NATIONAL_ID_SYSTEM_OID para Patient.identifier:national');
-          }
-        }
-        identifier.use = 'official';
-        // Quitar text - no permitido en slice LAC nacional
-        if (identifier.type?.text) delete identifier.type.text;
-      }
-      if (codes.includes('PPN')) {
-        // Slice internacional: system debe ser URN OID, use = official, sin type.text
-        if (!identifier.system) {
-          if (OID_INT) {
-            identifier.system = `urn:oid:${OID_INT}`;
-          } else {
-            console.warn('⚠️ Falta LAC_PASSPORT_ID_SYSTEM_OID para Patient.identifier:international');
-          }
-        }
-        identifier.use = 'official';
-        // Quitar text porque el slice de LAC lo fija y no permite texto libre
-        if (identifier.type?.text) delete identifier.type.text;
-      }
-    });
-    
-    // Ordenar identifiers: primero nacional (MR), luego internacional (PPN)
-    patientEntry.resource.identifier.sort((a, b) => {
-      const ra = (a.type?.coding || []).some(c => c.code === 'MR') ? 0 : 1;
-      const rb = (b.type?.coding || []).some(c => c.code === 'MR') ? 0 : 1;
-      return ra - rb;
-    });
-    
-    // Agregar perfil IPS al Patient para ayudar con el slice del Bundle
-    if (!patientEntry.resource.meta) patientEntry.resource.meta = {};
-    if (!patientEntry.resource.meta.profile) {
-      patientEntry.resource.meta.profile = ["http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips"];
-    }
-  }
+  // 3. Continuar con patientEntry ya procesado en sección 1)
 
   // 4. Corregir address.country del Patient para cumplir ISO 3166
   if (patientEntry?.resource?.address) {
@@ -839,6 +924,30 @@ function fixBundleValidationIssues(summaryBundle) {
 
   // 8. Corregir narrativeLink para que apunten correctamente a fragmentos URN
   fixNarrativeLinks(summaryBundle, compositionEntry);
+
+  // 9) Refuerzo: Composition.meta.profile debe contener lac-composition
+  const LAC_COMPOSITION = 'http://lacpass.racsel.org/StructureDefinition/lac-composition';
+  if (compositionEntry?.resource) {
+    compositionEntry.resource.meta = compositionEntry.resource.meta || {};
+    compositionEntry.resource.meta.profile = Array.isArray(compositionEntry.resource.meta.profile)
+      ? compositionEntry.resource.meta.profile
+      : [];
+    if (!compositionEntry.resource.meta.profile.includes(LAC_COMPOSITION)) {
+      compositionEntry.resource.meta.profile.push(LAC_COMPOSITION);
+    }
+  }
+
+  // 10) Refuerzo menor: si una sección tiene entries hacia recursos IPS,
+  //     nos aseguramos de no dejar extensiones no permitidas en esos recursos
+  for (const e of summaryBundle.entry) {
+    const r = e.resource;
+    if (!r) continue;
+    if (r.resourceType === 'AllergyIntolerance' ||
+        r.resourceType === 'MedicationStatement' ||
+        r.resourceType === 'Condition') {
+      stripNarrativeLinkExtensions(r);
+    }
+  }
 }
 
 // Función auxiliar para corregir narrativeLink
