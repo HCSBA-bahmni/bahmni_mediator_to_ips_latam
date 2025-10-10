@@ -118,6 +118,10 @@ const {
   // Nuevo: configuración para formatCode
   MHD_FORMAT_CODE = 'urn:ihe:iti:xds-sd:text:2008', // Default IHE para FHIR JSON
   
+  // LAC Patient identifiers OIDs
+  LAC_NATIONAL_ID_SYSTEM_OID,
+  LAC_PASSPORT_ID_SYSTEM_OID,
+  
   // Debug level para ops terminológicas
   TS_DEBUG_LEVEL = 'warn', // 'debug', 'warn', 'error', 'silent'
 } = process.env;
@@ -657,15 +661,24 @@ function fixBundleValidationIssues(summaryBundle) {
   // Ejecutar canonicalización al inicio
   canonicalizeBundleToUrn(summaryBundle);
 
-  // 1. Asegurar que el Composition tenga custodian (requerido por el perfil lac-composition)
+  // 1. Corregir Composition - asegurar ID y custodian (LAC Bundle)
   const compositionEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
-  if (compositionEntry?.resource && !compositionEntry.resource.custodian) {
-    // Buscar Organization para usar como custodian
-    const orgEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Organization');
-    if (orgEntry) {
-      compositionEntry.resource.custodian = {
-        reference: orgEntry.fullUrl || `Organization/${orgEntry.resource.id}`
-      };
+  if (compositionEntry?.resource) {
+    // ID del Composition debe existir y empatar con el fullUrl (requerido por slice LAC)
+    const compUuid = (compositionEntry.fullUrl || '').replace('urn:uuid:', '');
+    if (!compositionEntry.resource.id && compUuid) {
+      compositionEntry.resource.id = compUuid;
+    }
+    
+    // Asegurar custodian (requerido por el perfil lac-composition)
+    if (!compositionEntry.resource.custodian) {
+      // Buscar Organization para usar como custodian
+      const orgEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Organization');
+      if (orgEntry) {
+        compositionEntry.resource.custodian = {
+          reference: orgEntry.fullUrl || `Organization/${orgEntry.resource.id}`
+        };
+      }
     }
   }
 
@@ -689,7 +702,10 @@ function fixBundleValidationIssues(summaryBundle) {
     }
   }
 
-  // 3. Corregir identifiers del Patient - agregar system a los coding sin system
+  // 3. Corregir identifiers del Patient - LAC Patient slices
+  const OID_NAT = LAC_NATIONAL_ID_SYSTEM_OID || '';
+  const OID_INT = LAC_PASSPORT_ID_SYSTEM_OID || '';
+  
   const patientEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
   if (patientEntry?.resource?.identifier) {
     patientEntry.resource.identifier.forEach(identifier => {
@@ -711,6 +727,40 @@ function fixBundleValidationIssues(summaryBundle) {
           }
         });
       }
+      
+      // Corregir slices LAC según el tipo de identifier
+      const codes = (identifier.type?.coding || []).map(c => c.code);
+      if (codes.includes('MR')) {
+        // Slice nacional: system debe ser URN OID, use = official
+        if (!identifier.system) {
+          if (OID_NAT) {
+            identifier.system = `urn:oid:${OID_NAT}`;
+          } else {
+            console.warn('⚠️ Falta LAC_NATIONAL_ID_SYSTEM_OID para Patient.identifier:national');
+          }
+        }
+        identifier.use = 'official';
+      }
+      if (codes.includes('PPN')) {
+        // Slice internacional: system debe ser URN OID, use = official, sin type.text
+        if (!identifier.system) {
+          if (OID_INT) {
+            identifier.system = `urn:oid:${OID_INT}`;
+          } else {
+            console.warn('⚠️ Falta LAC_PASSPORT_ID_SYSTEM_OID para Patient.identifier:international');
+          }
+        }
+        identifier.use = 'official';
+        // Quitar text porque el slice de LAC lo fija y no permite texto libre
+        if (identifier.type?.text) delete identifier.type.text;
+      }
+    });
+    
+    // Ordenar identifiers: primero nacional (MR), luego internacional (PPN)
+    patientEntry.resource.identifier.sort((a, b) => {
+      const ra = (a.type?.coding || []).some(c => c.code === 'MR') ? 0 : 1;
+      const rb = (b.type?.coding || []).some(c => c.code === 'MR') ? 0 : 1;
+      return ra - rb;
     });
   }
 
@@ -723,17 +773,17 @@ function fixBundleValidationIssues(summaryBundle) {
     });
   }
 
-  // 5. Corregir Conditions - agregar system a los coding que no lo tienen
+  // 5. Corregir Conditions - filtrar OpenMRS y codings sin system
   summaryBundle.entry?.forEach(entry => {
     if (entry.resource?.resourceType === 'Condition' && entry.resource.code?.coding) {
-      entry.resource.code.coding.forEach(coding => {
-        if (!coding.system && coding.code) {
-          // Si el código parece ser de OpenMRS (termina en AAAAAA...), usar sistema local
-          if (coding.code.includes('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')) {
-            coding.system = 'http://openmrs.org/concepts';
-          }
-        }
-      });
+      // Filtrar codings sin system y OpenMRS (problemático para validación IPS/LAC)
+      entry.resource.code.coding = entry.resource.code.coding
+        .filter(c => !!c.system && c.system !== 'http://openmrs.org/concepts');
+      
+      // Si quedan codings, ordenar con SNOMED primero
+      if (entry.resource.code.coding.length > 0) {
+        entry.resource.code.coding = sortCodingsPreferred(entry.resource.code.coding);
+      }
     }
   });
 
@@ -761,10 +811,13 @@ function fixBundleValidationIssues(summaryBundle) {
       }
     }
 
-    // Ordenar/filtrar codings de Condition (SNOMED primero, sin codings sin system) — refuerzo
+    // Refuerzo: filtrar OpenMRS y ordenar codings de Condition
     if (entry.resource?.resourceType === 'Condition' && Array.isArray(entry.resource.code?.coding)) {
-      entry.resource.code.coding = entry.resource.code.coding.filter(c => !!c.system);
-      entry.resource.code.coding = sortCodingsPreferred(entry.resource.code.coding);
+      entry.resource.code.coding = entry.resource.code.coding
+        .filter(c => !!c.system && c.system !== 'http://openmrs.org/concepts');
+      if (entry.resource.code.coding.length > 0) {
+        entry.resource.code.coding = sortCodingsPreferred(entry.resource.code.coding);
+      }
     }
   });
 
