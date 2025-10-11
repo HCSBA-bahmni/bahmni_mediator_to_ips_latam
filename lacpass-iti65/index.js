@@ -765,10 +765,13 @@ function isUrnOid(value) {
 
 function toUrnOid(value) {
   if (!value) return value;
-  const v = value.trim();
-  // Corrige casos como "urn:oid:urn:oid:1.2.3" o espacios
-  const cleaned = v.replace(/^urn:oid:/i, '');
-  return `urn:oid:${cleaned}`;
+  const v = String(value).trim();
+
+  // Extrae la cola con forma OID donde esté (p.ej., "urn:uuid:1.2.3" -> "1.2.3")
+  const m = v.match(/(\d+(?:\.\d+)+)$/);
+  if (!m) return v; // No parece OID: se resolverá por OID_NAT/INT en fixPatientIdentifiers
+
+  return `urn:oid:${m[1]}`;
 }
 
 function stripNarrativeLinkExtensions(resource) {
@@ -861,19 +864,75 @@ function ensureIpsPatientProfile(patient) {
 
 function ensureIpsProfile(resource) {
   if (!resource?.resourceType) return;
-  const map = {
+    const map = {
     'AllergyIntolerance': 'http://hl7.org/fhir/uv/ips/StructureDefinition/AllergyIntolerance-uv-ips',
     'MedicationStatement': 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationStatement-uv-ips',
     'MedicationRequest': 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationRequest-uv-ips',
+    'Medication': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Medication-uv-ips',
     'Condition': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Condition-uv-ips',
+    'Procedure': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Procedure-uv-ips',
+    'Immunization': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Immunization-uv-ips',
+    'Observation': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Observation-results-uv-ips', // genérica de resultados
+    'DiagnosticReport': 'http://hl7.org/fhir/uv/ips/StructureDefinition/DiagnosticReport-uv-ips',
+    'ImagingStudy': 'http://hl7.org/fhir/uv/ips/StructureDefinition/ImagingStudy-uv-ips',
+    'Specimen': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Specimen-uv-ips',
+    'Device': 'http://hl7.org/fhir/StructureDefinition/Device', // IPS remite al core aquí
+    'DeviceUseStatement': 'http://hl7.org/fhir/uv/ips/StructureDefinition/DeviceUseStatement-uv-ips',
+    'Media': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Media-observation-uv-ips',
+    'Practitioner': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Practitioner-uv-ips',
+    'PractitionerRole': 'http://hl7.org/fhir/uv/ips/StructureDefinition/PractitionerRole-uv-ips',
     'Organization': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Organization-uv-ips'
   };
+
   const prof = map[resource.resourceType];
   if (!prof) return;
   resource.meta = resource.meta || {};
   resource.meta.profile = Array.isArray(resource.meta.profile) ? resource.meta.profile : [];
   if (!resource.meta.profile.includes(prof)) {
     resource.meta.profile.push(prof);
+  }
+}
+
+function ensureLacBundleProfile(bundle) {
+  const prof = 'http://lacpass.racsel.org/StructureDefinition/lac-bundle';
+  bundle.meta = bundle.meta || {};
+  bundle.meta.profile = Array.isArray(bundle.meta.profile) ? bundle.meta.profile : [];
+  if (!bundle.meta.profile.includes(prof)) bundle.meta.profile.push(prof);
+}
+
+function ensureLacCompositionProfile(comp) {
+  const prof = 'http://lacpass.racsel.org/StructureDefinition/lac-composition';
+  comp.meta = comp.meta || {};
+  comp.meta.profile = Array.isArray(comp.meta.profile) ? comp.meta.profile : [];
+  if (!comp.meta.profile.includes(prof)) comp.meta.profile.push(prof);
+}
+
+function ensureCompositionSubject(comp, patientEntry) {
+  if (!comp || !patientEntry) return;
+  const ref = patientEntry.fullUrl || (patientEntry.resource?.id ? `Patient/${patientEntry.resource.id}` : null);
+  if (ref) comp.subject = { reference: ref };
+}
+
+// Asegura que exista al menos una entry válida para el slice requerido de la sección:
+// - loincCode: código LOINC de la sección (p.ej. 48765-2 Alergias, 11450-4 Problemas, 11348-0 Antecedentes)
+// - allowedTypes: tipos de recurso aceptados por el slice (p.ej. ['AllergyIntolerance'])
+function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes) {
+  if (!comp?.section) return;
+  const sec = comp.section.find(s => s.code?.coding?.some(c => c.system === 'http://loinc.org' && c.code === loincCode));
+  if (!sec) return;
+
+  // ¿ya hay una entry que apunte a un recurso permitido?
+  const ok = (sec.entry || []).some(e => {
+    const ref = e.reference;
+    return (summaryBundle.entry || []).some(x => x.fullUrl === ref && allowedTypes.includes(x.resource?.resourceType));
+  });
+  if (ok) return;
+
+  // Si no, enlaza la primera resource del tipo permitido presente en el Bundle
+  const candidate = (summaryBundle.entry || []).find(x => allowedTypes.includes(x.resource?.resourceType));
+  if (candidate) {
+    sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
+    sec.entry.unshift({ reference: candidate.fullUrl });
   }
 }
 
@@ -956,7 +1015,7 @@ function fixBundleValidationIssues(summaryBundle) {
   if (patientEntry?.resource) {
     fixPatientIdentifiers(patientEntry.resource);
     ensureLacPatientProfile(patientEntry.resource);
-    //ensureIpsPatientProfile(patientEntry.resource);
+    ensureIpsPatientProfile(patientEntry.resource);
     if (Array.isArray(patientEntry.resource.address)) {
       patientEntry.resource.address.forEach(a => {
         const v = String(a.country || '').trim().toUpperCase();
@@ -967,6 +1026,8 @@ function fixBundleValidationIssues(summaryBundle) {
 
 
   // 1. Corregir Composition - asegurar ID y custodian (LAC Bundle)
+  summaryBundle.type = summaryBundle.type || 'document';
+
   const compositionEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
   if (compositionEntry?.resource) {
     // ID del Composition DEBE empatar con el fullUrl (slice LAC exige esto)
@@ -982,6 +1043,27 @@ function fixBundleValidationIssues(summaryBundle) {
         };
       }
     }
+
+    // Perfiles canónicos
+    ensureLacCompositionProfile(compositionEntry.resource);
+    ensureLacBundleProfile(summaryBundle);
+
+    // Sujeto del Composition -> Patient
+    const patientEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
+    ensureCompositionSubject(compositionEntry.resource, patientEntry);
+
+    // Secciones obligatorias (garantiza al menos una entry válida por slice)
+    // Alergias: LOINC 48765-2 → AllergyIntolerance
+    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, '48765-2', ['AllergyIntolerance']);
+
+    // Problemas activos/lista de problemas: LOINC 11450-4 → Condition
+    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, '11450-4', ['Condition']);
+
+    // Antecedentes de enfermedad (Past Illness Hx): LOINC 11348-0 → Condition (historia pasada)
+    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, '11348-0', ['Condition']);
+
+    // (Opcional, pero recomendable) Medicación: LOINC 10160-0 → MedicationStatement o MedicationRequest
+    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, '10160-0', ['MedicationStatement','MedicationRequest']);
   }
 
   // 2. Perfiles IPS en recursos referenciados por las secciones para que pasen los discriminadores
