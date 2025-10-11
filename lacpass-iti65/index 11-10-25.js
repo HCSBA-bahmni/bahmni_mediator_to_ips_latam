@@ -126,94 +126,8 @@ const {
   TS_DEBUG_LEVEL = 'warn', // 'debug', 'warn', 'error', 'silent'
 } = process.env;
 
-const {
-  FULLURL_MODE_PROVIDE = 'urn',
-  FULLURL_MODE_DOCUMENT = 'absolute',
-  ABSOLUTE_FULLURL_BASE,
-  BINARY_DELIVERY_MODE = 'both',
-  ATTACHMENT_URL_MODE = 'absolute',
-} = process.env;
-
 const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
-
-// ===== Helpers de modos de URL =====
-function asAbsoluteBase(u) {
-  const x = (u || '').replace(/\/+$/, '');
-  return /\/fhir$/i.test(x) ? x : `${x}/fhir`;
-}
-function makeAbsolute(resourceType, id) {
-  const base = asAbsoluteBase(ABSOLUTE_FULLURL_BASE);
-  return `${base}/${resourceType}/${id}`;
-}
-function makeRelative(resourceType, id) {
-  return `${resourceType}/${id}`;
-}
-function makeUrn(id) {
-  return `urn:uuid:${id}`;
-}
-
-/**
- * Resuelve una referencia según el modo.
- * @param {'urn'|'absolute'|'relative'} mode
- * @param {string} resourceType
- * @param {string} id
- * @returns {string}
- */
-function buildRef(mode, resourceType, id) {
-  switch ((mode || '').toLowerCase()) {
-    case 'absolute':
-      return makeAbsolute(resourceType, id);
-    case 'relative':
-      return makeRelative(resourceType, id);
-    default:
-      return makeUrn(id);
-  }
-}
-
-/**
- * Aplica modo de URLs a un Bundle y reescribe referencias consistentes.
- * - Asume que cada entry tiene resourceType e ID derivable (ya usas UUIDs).
- * - Genera un mapa de reemplazos y llama a tu updateReferencesInObject(obj, map).
- */
-function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
-  if (!bundle?.entry?.length) return;
-
-  // construir mapa de reemplazos
-  const map = new Map();
-  for (const e of bundle.entry) {
-    const r = e.resource;
-    if (!r?.resourceType) continue;
-
-    // ID: si tu flujo ya usa URN en fullUrl, lo tomamos de ahí; si no, de r.id
-    let id = null;
-    if (e.fullUrl?.startsWith('urn:uuid:')) {
-      id = e.fullUrl.split(':').pop();
-    } else if (r.id) {
-      id = r.id;
-    }
-    if (!id) continue;
-
-    const abs = buildRef(mode, r.resourceType, id);
-
-    // rellenamos equivalencias para que cualquier variante apunte al destino
-    const variants = [
-      e.fullUrl,
-      `urn:uuid:${id}`,
-      `${r.resourceType}/${id}`,
-      `./${r.resourceType}/${id}`,
-      ABSOLUTE_FULLURL_BASE ? `${asAbsoluteBase(ABSOLUTE_FULLURL_BASE)}/${r.resourceType}/${id}` : null,
-    ].filter(Boolean);
-
-    for (const v of variants) map.set(v, abs);
-
-    // setear fullUrl según el modo
-    e.fullUrl = abs;
-  }
-
-  // reescribir TODAS las referencias recogiendo paths .reference y attachment.url
-  updateReferencesInObject(bundle, map);
-}
 
 // ===================== Helper functions para LAC compliance =====================
 // Quita acentos, espacios extra, pone minúsculas (para claves de mapa)
@@ -294,11 +208,6 @@ if (NODE_ENV === 'development') {
 // ===================== Logging de configuración =====================
 console.log(`🔧 Terminology debug level: ${TS_DEBUG_LEVEL}`);
 console.log(`📋 MHD formatCode: ${MHD_FORMAT_CODE}`);
-console.log(`🔗 URL Modes - Provide: ${FULLURL_MODE_PROVIDE}, Document: ${FULLURL_MODE_DOCUMENT}, Attachment: ${ATTACHMENT_URL_MODE}`);
-console.log(`📦 Binary delivery mode: ${BINARY_DELIVERY_MODE}`);
-if (ABSOLUTE_FULLURL_BASE) {
-  console.log(`🌐 Absolute URL base: ${ABSOLUTE_FULLURL_BASE}`);
-}
 if (NODE_ENV === 'production' && axios.defaults.httpsAgent?.rejectUnauthorized === false) {
   console.warn('⚠️ WARNING: Self-signed certificates accepted in PRODUCTION mode');
 }
@@ -840,7 +749,7 @@ function fixPatientIdentifiers(patient) {
 }
 
 function ensureLacPatientProfile(patient) {
-  const LAC_PATIENT_PROFILE = 'https://lacpass.racsel.org/StructureDefinition/lac-patient';
+  const LAC_PATIENT_PROFILE = 'http://lacpass.racsel.org/StructureDefinition/lac-patient';
   patient.meta = patient.meta || {};
   patient.meta.profile = Array.isArray(patient.meta.profile) ? patient.meta.profile : [];
   if (!patient.meta.profile.includes(LAC_PATIENT_PROFILE)) {
@@ -892,6 +801,8 @@ function fixBundleValidationIssues(summaryBundle) {
   // 1) Lógica de Patient movida después de canonicalización
   // === NUEVO: Canonicalizar fullUrl y referencias internas a urn:uuid:<id> ===
   // (Esto soluciona BUNDLE_BUNDLE_ENTRY_NOTFOUND_APPARENT y BUNDLE_BUNDLE_POSSIBLE_MATCH_WRONG_FU)
+
+  function makeUrn(id) { return `urn:uuid:${id}`; }
 
   function extractIdFromFullUrl(entry) {
     if (!entry) return null;
@@ -951,7 +862,7 @@ function fixBundleValidationIssues(summaryBundle) {
   if (patientEntry?.resource) {
     fixPatientIdentifiers(patientEntry.resource);
     ensureLacPatientProfile(patientEntry.resource);
-    //ensureIpsPatientProfile(patientEntry.resource);
+    ensureIpsPatientProfile(patientEntry.resource);
     if (Array.isArray(patientEntry.resource.address)) {
       patientEntry.resource.address.forEach(a => {
         const v = String(a.country || '').trim().toUpperCase();
@@ -1426,9 +1337,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
     // ===== Algunos nodos piden sí o sí Composition primero y Bundle.type = "document" =====
     summaryBundle.type = "document";
-    
-    // ===== Aplicar modo URL al document bundle =====
-    applyUrlModeToBundle(summaryBundle, FULLURL_MODE_DOCUMENT, updateReferencesInObject);
     if (summaryBundle.entry && summaryBundle.entry.length > 0) {
       // Buscar el Composition
       const compositionIndex = summaryBundle.entry.findIndex(e => e.resource && e.resource.resourceType === 'Composition');
@@ -1527,28 +1435,19 @@ app.post('/lacpass/_iti65', async (req, res) => {
     }
     const bundleUrn = `urn:uuid:${originalBundleId}`;
 
-    // Serializar bundle document para Binary
-    const bundleJson = JSON.stringify(summaryBundle);
-    const bundleBytes = Buffer.from(bundleJson, 'utf8');
-    const bundleB64 = bundleBytes.toString('base64');
-    const bundleHash = crypto.createHash('sha1').update(bundleBytes).digest('base64'); // o sha256 si prefieres
-    const bundleSize = bundleBytes.length;
+    // Tamaño y hash del resumen
+    const bundleString = JSON.stringify(summaryBundle);
+    const bundleSize = Buffer.byteLength(bundleString, 'utf8');
+    const bundleHash = crypto.createHash('sha256').update(bundleString).digest('base64');
 
+    // Crear Binary con el Bundle IPS en base64
     const binaryId = uuidv4();
-
-    // URL a usar en el attachment si corresponde
-    const attachmentUrl = buildRef(ATTACHMENT_URL_MODE, 'Binary', binaryId);
-
-    // 1) Construir Binary (si aplica)
-    const binaryEntry = {
-      fullUrl: attachmentUrl, // se ajusta solo si URL_MODE=urn/abs/rel
-      resource: {
-        resourceType: 'Binary',
-        id: binaryId, // opcional (el servidor puede reasignar igual)
-        contentType: 'application/fhir+json',
-        data: bundleB64,
-      },
-      request: { method: 'POST', url: 'Binary' },
+    const binaryUrn = `urn:uuid:${binaryId}`;
+    const binaryResource = {
+      resourceType: 'Binary',
+      id: binaryId,
+      contentType: 'application/fhir+json',
+      data: Buffer.from(bundleString, 'utf8').toString('base64')
     };
 
     // FIX #3 — Refuerzos quick-wins para los slices de secciones
@@ -1607,21 +1506,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
     };
 
-    // 2) Construir DocumentReference.content[0].attachment según BINARY_DELIVERY_MODE
-    const attachment = {
-      contentType: 'application/fhir+json',
-      // hash/size son útiles en MHD
-      hash: bundleHash,
-      size: bundleSize,
-    };
-
-    if (BINARY_DELIVERY_MODE === 'binary' || BINARY_DELIVERY_MODE === 'both') {
-      attachment.url = attachmentUrl; // referencia al Binary
-    }
-    if (BINARY_DELIVERY_MODE === 'nobinary' || BINARY_DELIVERY_MODE === 'both') {
-      attachment.data = bundleB64; // embebido
-    }
-
     // DocumentReference con formatCode configurable
     const documentReference = {
       resourceType: 'DocumentReference',
@@ -1634,12 +1518,24 @@ app.post('/lacpass/_iti65', async (req, res) => {
         status: 'generated',
         div: '<div xmlns="http://www.w3.org/1999/xhtml">Resumen clínico en formato DocumentReference</div>'
       },
-      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: attachmentUrl }, // referencia consistente
+      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: binaryUrn }, // en lugar de bundleUrn
       status: 'current',
       type: docType,
       subject: { reference: patientRef, display: patientDisplay },
       date: bundleDate,
-      content: [{ attachment }]
+      content: [{
+        attachment: {
+          contentType: 'application/fhir+json',
+          url: binaryUrn,      // ← antes: bundleUrn
+          size: bundleSize,
+          hash: bundleHash
+        },
+        format: {
+          system: 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode',
+          code: MHD_FORMAT_CODE, // ← Configurable
+          display: MHD_FORMAT_CODE === 'urn:ihe:iti:xds-sd:text:2008' ? 'FHIR JSON Document' : undefined
+        }
+      }]
     };
 
     // <<< NUEVO: incluir Patient como entrada del transaction >>>
@@ -1671,16 +1567,14 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
         { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
         { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
+
+        // NUEVO: Binary contiene el documento IPS en base64
+        { fullUrl: binaryUrn, resource: binaryResource, request: { method: 'POST', url: 'Binary' } }
+
+        // COMENTADO: El Bundle como documento - ahora solo se envía como Binary
+        // { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } }
       ]
     };
-
-    // 3) Insertar Binary según el modo
-    if (BINARY_DELIVERY_MODE === 'binary' || BINARY_DELIVERY_MODE === 'both') {
-      provideBundle.entry.push(binaryEntry);
-    }
-
-    // Aplicar modo URL al ProvideBundle
-    applyUrlModeToBundle(provideBundle, FULLURL_MODE_PROVIDE, updateReferencesInObject);
 
     // Debug + envío
     console.log('DEBUG: Sending ProvideBundle to', FHIR_NODO_NACIONAL_SERVER);
