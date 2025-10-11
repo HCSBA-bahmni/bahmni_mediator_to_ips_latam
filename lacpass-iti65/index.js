@@ -1539,67 +1539,28 @@ app.post('/lacpass/_iti65', async (req, res) => {
       originalBundleId = uuidv4();
       summaryBundle.id = originalBundleId;
     }
-    const bundleUrn = `urn:uuid:${originalBundleId}`;
 
-    // Serializar bundle document para Binary
+    // Serializar bundle document para métricas (size/hash) y, si aplica, data
     const bundleJson = JSON.stringify(summaryBundle);
     const bundleBytes = Buffer.from(bundleJson, 'utf8');
-    const bundleB64 = bundleBytes.toString('base64');
-    const bundleHash = crypto.createHash('sha1').update(bundleBytes).digest('base64'); // o sha256 si prefieres
     const bundleSize = bundleBytes.length;
+    // 🔒 Mantén SHA-256 para interoperabilidad (era así en la versión "anterior")
+    const bundleHash = crypto.createHash('sha256').update(bundleBytes).digest('base64');
 
-    const binaryId = uuidv4();
-
-    // URL a usar en el attachment si corresponde
-    const attachmentUrl = buildRef(ATTACHMENT_URL_MODE, 'Binary', binaryId);
-
-    // 1) Construir Binary (si aplica)
-    const binaryEntry = {
-      fullUrl: attachmentUrl, // se ajusta solo si URL_MODE=urn/abs/rel
-      resource: {
-        resourceType: 'Binary',
-        id: binaryId, // opcional (el servidor puede reasignar igual)
-        contentType: 'application/fhir+json',
-        data: bundleB64,
-      },
-      request: { method: 'POST', url: 'Binary' },
-    };
-
-    // FIX #3 — Refuerzos quick-wins para los slices de secciones
-    summaryBundle.entry?.forEach(entry => {
-      const res = entry.resource;
-
-      if (res?.resourceType === 'MedicationStatement') {
-        // Absent-unknown 'no-medication-info'
-        if (res.medicationCodeableConcept?.coding?.length) {
-          res.medicationCodeableConcept.coding.forEach(c => {
-            if ((c.code === 'no-medication-info') || (c.display === 'No information about medications')) {
-              c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
-              c.code = 'no-medication-info';
-              if (!c.display) c.display = 'No information about medications';
-            }
-          });
-        }
-        // effective[x] requerido por IPS
-        if (!res.effectiveDateTime && !res.effectivePeriod) {
-          res.effectiveDateTime = new Date().toISOString();
-        }
-      }
-    });
-
-    // Mantener el summaryBundle con sus referencias internas (URN/relativas)
+    // Refs base para reutilizar
+    const bundleUrn = `urn:uuid:${originalBundleId}`;
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
     const patientRef = patientEntry.fullUrl; // ya canonicalizado a urn:uuid:...
     const docType = compositionEntry?.resource?.type ?? {
-      coding: [{ system: 'http://loinc.org', code: '60591-5', display: 'Patient summary Document' }]
+      coding: [{ system: 'http://loinc.org', code: '60591-5', display: 'Patient Summary Document' }]
     };
     const patientDisplay = patientEntry.resource.name?.[0]?.text || `Patient ${patientEntry.resource.id}`;
 
-    // ✅ AHORA calcula el masterIdentifier, cuando compositionEntry ya existe
-    const docMasterIdentifier = `urn:uuid:${compositionEntry?.resource?.id || originalBundleId}`;
+    // ✅ masterIdentifier: hazlo coherente con el "documento" (el Bundle)
+    const docMasterIdentifier = buildRef(ATTACHMENT_URL_MODE, 'Bundle', originalBundleId);
 
-    // SubmissionSet
+    // ---- SubmissionSet
     const submissionSet = {
       resourceType: 'List',
       id: ssId,
@@ -1613,7 +1574,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       },
       extension: [{
         url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId',
-        valueIdentifier: { value: bundleUrn }
+        valueIdentifier: { value: buildRef('urn', 'Bundle', originalBundleId) }
       }],
       identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: `urn:uuid:${ssId}` }],
       status: 'current',
@@ -1624,22 +1585,44 @@ app.post('/lacpass/_iti65', async (req, res) => {
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
     };
 
-    // 2) Construir DocumentReference.content[0].attachment según BINARY_DELIVERY_MODE
+    // ---- Attachment (se arma según variables)
     const attachment = {
       contentType: 'application/fhir+json',
-      // hash/size son útiles en MHD
-      hash: bundleHash,
       size: bundleSize,
+      hash: bundleHash
     };
 
-    if (BINARY_DELIVERY_MODE === 'binary' || BINARY_DELIVERY_MODE === 'both') {
-      attachment.url = attachmentUrl; // referencia al Binary
-    }
-    if (BINARY_DELIVERY_MODE === 'nobinary' || BINARY_DELIVERY_MODE === 'both') {
-      attachment.data = bundleB64; // embebido
+    // Si NO queremos Binary ni base64 → "comportamiento anterior"
+    if (BINARY_DELIVERY_MODE === 'nobinary') {
+      // URL que apunta al Bundle incluído como entrada del transaction
+      attachment.url = buildRef(ATTACHMENT_URL_MODE, 'Bundle', originalBundleId);
     }
 
-    // DocumentReference con formatCode configurable
+    // Si queremos Binary o ambos, preparamos Binary y/o data
+    const binaryId = uuidv4();
+    const attachmentBinaryUrl = buildRef(ATTACHMENT_URL_MODE, 'Binary', binaryId);
+
+    const binaryTxEntry = {
+      fullUrl: attachmentBinaryUrl, // será normalizado luego por applyUrlModeToBundle
+      resource: {
+        resourceType: 'Binary',
+        id: binaryId,
+        contentType: 'application/fhir+json',
+        data: bundleBytes.toString('base64')
+      },
+      request: { method: 'POST', url: 'Binary' }
+    };
+
+    if (BINARY_DELIVERY_MODE === 'binary') {
+      attachment.url = attachmentBinaryUrl;           // URL → Binary
+      delete attachment.data;                         // sin data inline
+    }
+    if (BINARY_DELIVERY_MODE === 'both') {
+      attachment.url = attachmentBinaryUrl;           // URL → Binary
+      attachment.data = bundleBytes.toString('base64'); // y data inline
+    }
+
+    // ---- DocumentReference (usa Coding simple en format, como antes)
     const documentReference = {
       resourceType: 'DocumentReference',
       id: drId,
@@ -1651,7 +1634,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
         status: 'generated',
         div: '<div xmlns="http://www.w3.org/1999/xhtml">Resumen clínico en formato DocumentReference</div>'
       },
-      // masterIdentifier propio del documento (NO apuntar al Binary cuando BINARY_DELIVERY_MODE=nobinary)
       masterIdentifier: { system: 'urn:ietf:rfc:3986', value: docMasterIdentifier },
       status: 'current',
       type: docType,
@@ -1659,17 +1641,15 @@ app.post('/lacpass/_iti65', async (req, res) => {
       date: bundleDate,
       content: [{
         attachment,
-        // MHD requiere formatCode (content[x].format)
+        // format es Coding (no "coding: []"), igual que la versión anterior
         format: {
-          coding: [{
-            system: MHD_FORMAT_SYSTEM,
-            code: MHD_FORMAT_CODE
-          }]
+          system: MHD_FORMAT_SYSTEM || 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode',
+          code: MHD_FORMAT_CODE
         }
       }]
     };
 
-    // <<< NUEVO: incluir Patient como entrada del transaction >>>
+    // ---- Patient como entrada explícita (dedupe opcional con ifNoneExist)
     const patientTxEntry = {
       fullUrl: patientRef,
       resource: patientEntry.resource,
@@ -1682,7 +1662,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
         `identifier=${encodeURIComponent(`${pid.system}|${pid.value}`)}`;
 }
 
-    // ProvideBundle (transaction)
+    // ---- ProvideBundle (se arma con ramas según BINARY_DELIVERY_MODE)
     const provideBundle = {
       resourceType: 'Bundle',
       id: uuidv4(),
@@ -1693,20 +1673,28 @@ app.post('/lacpass/_iti65', async (req, res) => {
       type: 'transaction',
       timestamp: now,
       entry: [
-        // NUEVO: Patient a nivel superior (resuelve List.subject y DocumentReference.subject)
         patientTxEntry,
-
-        { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
-        { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
+        { fullUrl: buildRef('urn', 'List', ssId), resource: submissionSet, request: { method: 'POST', url: 'List' } },
+        { fullUrl: buildRef('urn', 'DocumentReference', drId), resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } }
       ]
     };
 
-    // 3) Insertar Binary según el modo
-    if (BINARY_DELIVERY_MODE === 'binary' || BINARY_DELIVERY_MODE === 'both') {
-      provideBundle.entry.push(binaryEntry);
+    // ➕ "comportamiento anterior": incluir el Bundle si no hay Binary
+    if (BINARY_DELIVERY_MODE === 'nobinary') {
+      provideBundle.entry.push({
+        fullUrl: buildRef(ATTACHMENT_URL_MODE, 'Bundle', originalBundleId),
+        resource: summaryBundle,
+        request: { method: 'POST', url: 'Bundle' }
+      });
     }
 
-    // Aplicar modo URL al ProvideBundle
+    // ➕ Incluir Binary si corresponde
+    if (BINARY_DELIVERY_MODE === 'binary' || BINARY_DELIVERY_MODE === 'both') {
+      provideBundle.entry.push(binaryTxEntry);
+    }
+
+    // Normalizar modos de URL en ambos bundles
+    applyUrlModeToBundle(summaryBundle, FULLURL_MODE_DOCUMENT, updateReferencesInObject);
     applyUrlModeToBundle(provideBundle, FULLURL_MODE_PROVIDE, updateReferencesInObject);
 
     // Debug + envío
