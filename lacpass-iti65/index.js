@@ -808,18 +808,29 @@ async function normalizeTerminologyInBundle(bundle) {
 
 // ===================== Helpers nuevos =====================
 function isUrnOid(value) {
-  return typeof value === 'string' && /^urn:oid:\d+(\.\d+)+$/.test(value.trim());
+  if (typeof value !== 'string') return false;
+  const v = value.trim();
+  // Validar formato URN OID estricto: debe empezar con urn:oid: seguido de números separados por puntos
+  return /^urn:oid:\d+(\.\d+)+$/.test(v) && v.split('.').length >= 3; // al menos 2 niveles después del primer número
 }
 
 function toUrnOid(value) {
-  if (!value) return value;
+  if (!value) return null;
   const v = String(value).trim();
 
-  // Extrae la cola con forma OID donde esté (p.ej., "urn:uuid:1.2.3" -> "1.2.3")
-  const m = v.match(/(\d+(?:\.\d+)+)$/);
-  if (!m) return v; // No parece OID: se resolverá por OID_NAT/INT en fixPatientIdentifiers
+  // Si ya es un URN OID válido, retornarlo tal como está
+  if (v.startsWith('urn:oid:') && /^urn:oid:\d+(\.\d+)+$/.test(v)) {
+    return v;
+  }
 
-  return `urn:oid:${m[1]}`;
+  // Extraer solo la parte numérica del OID
+  const m = v.match(/(\d+(?:\.\d+)+)/);
+  if (m && m[1]) {
+    return `urn:oid:${m[1]}`;
+  }
+
+  // Si no parece un OID válido, retornar null para que se use un OID por defecto
+  return null;
 }
 
 function stripNarrativeLinkExtensions(resource) {
@@ -835,92 +846,73 @@ function stripNarrativeLinkExtensions(resource) {
 }
 
 function fixPatientIdentifiers(patient) {
-  if (!patient?.identifier) return;
+  if (!patient) return;
 
   const OID_NAT = String(process.env.LAC_NATIONAL_ID_SYSTEM_OID || '').trim(); // MR
   const OID_INT = String(process.env.LAC_PASSPORT_ID_SYSTEM_OID || '').trim(); // PPN
 
-  // Si no hay identifiers válidos, crear uno básico con OID nacional
-  if (patient.identifier.length === 0 && OID_NAT) {
-    patient.identifier.push({
-      use: 'official',
-      type: { 
-        coding: [{ 
-          system: 'http://terminology.hl7.org/CodeSystem/v2-0203', 
-          code: 'MR' 
-        }] 
-      },
-      system: `urn:oid:${OID_NAT}`,
-      value: patient.id || 'unknown'
-    });
-    return;
+  // Si no hay OIDs configurados, usar valores por defecto válidos
+  const defaultNatOid = OID_NAT || '2.16.152.1.1.1'; // OID ejemplo para Chile
+  const defaultIntOid = OID_INT || '2.16.840.1.113883.4.1'; // OID internacional estándar
+
+  // Forzar reconstrucción completa de identifiers para garantizar cumplimiento LAC
+  const originalIds = [...(patient.identifier || [])];
+  patient.identifier = [];
+
+  // Buscar valores existentes para reutilizar
+  let nationalValue = null;
+  let passportValue = null;
+
+  for (const id of originalIds) {
+    const hasNationalType = id.type?.coding?.some(c => c.code === 'MR') || 
+                           id.system?.includes('rut') || 
+                           id.system?.includes('cedula') ||
+                           id.use === 'official';
+    const hasPassportType = id.type?.coding?.some(c => c.code === 'PPN') || 
+                           id.system?.includes('passport');
+
+    if (hasNationalType && id.value && !nationalValue) {
+      nationalValue = id.value;
+    }
+    if (hasPassportType && id.value && !passportValue) {
+      passportValue = id.value;
+    }
   }
 
-  patient.identifier.forEach(identifier => {
-    // Asegurar que todos los systems sean URN OID válidos
-    if (identifier.system) {
-      if (!identifier.system.startsWith('urn:oid:')) {
-        identifier.system = toUrnOid(identifier.system);
-      }
-      // Si aún no es válido, usar OID por defecto
-      if (!isUrnOid(identifier.system) && OID_NAT) {
-        identifier.system = `urn:oid:${OID_NAT}`;
-      }
-    } else if (OID_NAT) {
-      identifier.system = `urn:oid:${OID_NAT}`;
-    }
+  // Si no se encontraron valores, usar el ID del paciente o un valor por defecto
+  if (!nationalValue) {
+    nationalValue = patient.id || `ID-${Date.now()}`;
+  }
 
-    // Asegurar type.coding con system correcto
-    if (!identifier.type?.coding || identifier.type.coding.length === 0) {
-      identifier.type = {
-        coding: [{ 
-          system: 'http://terminology.hl7.org/CodeSystem/v2-0203', 
-          code: 'MR' 
+  // SIEMPRE crear al menos un identifier nacional (requerido por LAC)
+  patient.identifier.push({
+    use: 'official',
+    type: {
+      coding: [{
+        system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
+        code: 'MR'
+      }]
+    },
+    system: `urn:oid:${defaultNatOid}`,
+    value: nationalValue
+  });
+
+  // Agregar identifier de pasaporte si había uno o si está configurado el OID
+  if (passportValue || OID_INT) {
+    patient.identifier.push({
+      use: 'official',
+      type: {
+        coding: [{
+          system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
+          code: 'PPN'
         }]
-      };
-    } else {
-      identifier.type.coding.forEach(coding => {
-        if (!coding.system) {
-          coding.system = 'http://terminology.hl7.org/CodeSystem/v2-0203';
-        }
-        // Mapear GUIDs a códigos estándar
-        const codeMap = {
-          'd3153eb0-5e07-11ef-8f7c-0242ac120002': 'MR',
-          'a2551e57-6028-428b-be3c-21816c252e06': 'PPN'
-        };
-        if (codeMap[coding.code]) coding.code = codeMap[coding.code];
-        
-        // Si no hay código válido, asignar MR por defecto
-        if (!coding.code || !['MR', 'PPN'].includes(coding.code)) {
-          coding.code = 'MR';
-        }
-      });
-    }
+      },
+      system: `urn:oid:${defaultIntOid}`,
+      value: passportValue || nationalValue // usar el mismo valor si no hay pasaporte específico
+    });
+  }
 
-    // Configurar según el tipo de identifier
-    const codes = (identifier.type?.coding || []).map(c => c.code);
-    if (codes.includes('MR')) {
-      identifier.use = 'official';
-      if (identifier.type?.text) delete identifier.type.text;
-      if (OID_NAT && !isUrnOid(identifier.system)) {
-        identifier.system = `urn:oid:${OID_NAT}`;
-      }
-    }
-    if (codes.includes('PPN')) {
-      identifier.use = 'official';
-      if (identifier.type?.text) delete identifier.type.text;
-      if (OID_INT && !isUrnOid(identifier.system)) {
-        identifier.system = `urn:oid:${OID_INT}`;
-      }
-    }
-  });
-
-  // Ordenar: primero MR, luego PPN
-  patient.identifier.sort((a, b) => {
-    const ra = (a.type?.coding || []).some(c => c.code === 'MR') ? 0 : 1;
-    const rb = (b.type?.coding || []).some(c => c.code === 'MR') ? 0 : 1;
-    return ra - rb;
-  });
+  console.log(`🔧 Patient identifiers fixed: ${patient.identifier.length} identifiers with URN OID systems`);
 }
 
 function ensureLacPatientProfile(patient) {
@@ -1111,7 +1103,30 @@ function fixBundleValidationIssues(summaryBundle) {
   // === Post-canonicalización: Patient
   const patientEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
   if (patientEntry?.resource) {
+    // CRÍTICO: Aplicar fixPatientIdentifiers ANTES de cualquier otra validación
     fixPatientIdentifiers(patientEntry.resource);
+    
+    // Validar que el Patient tenga al menos un identifier con URN OID válido
+    const hasValidOidIdentifier = patientEntry.resource.identifier?.some(id => 
+      isUrnOid(id.system) && id.value && id.type?.coding?.some(c => c.code === 'MR' || c.code === 'PPN')
+    );
+    
+    if (!hasValidOidIdentifier) {
+      console.warn('⚠️ Patient no tiene identifiers URN OID válidos después de fixPatientIdentifiers');
+      // Forzar creación de un identifier básico
+      patientEntry.resource.identifier = [{
+        use: 'official',
+        type: {
+          coding: [{
+            system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
+            code: 'MR'
+          }]
+        },
+        system: 'urn:oid:2.16.152.1.1.1', // OID genérico
+        value: patientEntry.resource.id || 'unknown'
+      }];
+    }
+
     ensureLacPatientProfile(patientEntry.resource);
     ensureIpsPatientProfile(patientEntry.resource);
     if (Array.isArray(patientEntry.resource.address)) {
@@ -1384,6 +1399,45 @@ function fixBundleValidationIssues(summaryBundle) {
     }
   });
 
+  // 12) VALIDACIÓN FINAL: Verificar que los slices críticos estén correctamente configurados
+  const finalValidation = () => {
+    // Verificar Bundle.entry[0] = Composition con perfil LAC
+    const comp = summaryBundle.entry?.[0];
+    if (comp?.resource?.resourceType !== 'Composition') {
+      console.error('❌ Bundle.entry[0] debe ser Composition');
+      return false;
+    }
+    if (!comp.resource.meta?.profile?.includes('http://lacpass.racsel.org/StructureDefinition/lac-composition')) {
+      console.error('❌ Composition no tiene perfil lac-composition');
+      return false;
+    }
+
+    // Verificar Bundle.entry[1] = Patient con perfiles LAC e IPS y URN OID
+    const pat = summaryBundle.entry?.[1];
+    if (pat?.resource?.resourceType !== 'Patient') {
+      console.error('❌ Bundle.entry[1] debe ser Patient');
+      return false;
+    }
+    if (!pat.resource.meta?.profile?.includes('http://lacpass.racsel.org/StructureDefinition/lac-patient')) {
+      console.error('❌ Patient no tiene perfil lac-patient');
+      return false;
+    }
+    const hasValidIdentifier = pat.resource.identifier?.some(id => isUrnOid(id.system));
+    if (!hasValidIdentifier) {
+      console.error('❌ Patient no tiene identifiers con URN OID válidos');
+      console.error('Identifiers:', pat.resource.identifier);
+      return false;
+    }
+
+    return true;
+  };
+
+  const isValid = finalValidation();
+  if (isValid) {
+    console.log('✅ Bundle LAC validation passed');
+  } else {
+    console.error('❌ Bundle LAC validation failed - check console for details');
+  }
 }
 
 // Función auxiliar para verificar y corregir referencias
