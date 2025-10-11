@@ -129,77 +129,6 @@ const {
 const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
 
-// ===================== Helper functions para LAC compliance =====================
-// Quita acentos, espacios extra, pone minúsculas (para claves de mapa)
-function normKey(s) {
-  return (s ?? "")
-    .normalize("NFD").replace(/\p{Diacritic}/gu, "")
-    .toLowerCase().trim().replace(/\s+/g, " ");
-}
-
-// Alias (nombres) -> ISO2
-const COUNTRY_MAP = new Map(Object.entries({
-  "argentina": "AR",
-  "bahamas": "BS",
-  "barbados": "BB",
-  "belice": "BZ",
-  "brasil": "BR",
-  "brazil": "BR",
-  "chile": "CL",
-  "costa rica": "CR",
-  "ecuador": "EC",
-  "el salvador": "SV",
-  "guatemala": "GT",
-  "honduras": "HN",
-  "panama": "PA",
-  "panamá": "PA",
-  "paraguay": "PY",
-  "peru": "PE", "perú": "PE",
-  "republica dominicana": "DO", "rep dominicana": "DO", "republica dom": "DO",
-  "rep. dominicana": "DO", "republica do": "DO",
-  "suriname": "SR",
-  "uruguay": "UY",
-}));
-
-// ISO3 -> ISO2 para países LAC que manejas
-const ISO3_TO_ISO2 = {
-  ARG:"AR", BHS:"BS", BRB:"BB", BLZ:"BZ", BRA:"BR", CHL:"CL",
-  CRI:"CR", ECU:"EC", SLV:"SV", GTM:"GT", HND:"HN", PAN:"PA",
-  PRY:"PY", PER:"PE", DOM:"DO", SUR:"SR", URY:"UY"
-};
-
-function toIso2Country(input) {
-  if (!input) return null;
-  const raw = String(input).trim();
-  // Ya viene ISO-2
-  if (/^[A-Za-z]{2}$/.test(raw)) return raw.toUpperCase();
-  // Viene ISO-3
-  if (/^[A-Za-z]{3}$/.test(raw)) return ISO3_TO_ISO2[raw.toUpperCase()] ?? null;
-  // Viene por nombre
-  const key = normKey(raw);
-  return COUNTRY_MAP.get(key) ?? null;
-}
-
-function fixPatientCountry(bundle) {
-  const patient = (bundle.entry ?? [])
-    .map(e => e.resource)
-    .find(r => r?.resourceType === "Patient");
-  if (!patient) return;
-
-  (patient.address ?? []).forEach(addr => {
-    if (!addr.country) return;
-    const iso2 = toIso2Country(addr.country);
-    if (iso2) addr.country = iso2; // e.g., "CL"
-  });
-}
-
-function toUrnOid(value) {
-  if (!value) return value;
-  const v = value.trim();
-  const cleaned = v.replace(/^urn:oid:/i, '');
-  return `urn:oid:${cleaned}`;
-}
-
 // ===================== Debug dir =====================
 const debugDir = DEBUG_DIR_icvp ? path.resolve(DEBUG_DIR_icvp) : '/tmp';
 try { fs.mkdirSync(debugDir, { recursive: true }); }
@@ -1039,76 +968,6 @@ function fixBundleValidationIssues(summaryBundle) {
     }
   }
 
-  // 9) NUEVAS MEJORAS LAC: Patient identifiers con URN OIDs
-  const natOid = process.env.LAC_NATIONAL_ID_SYSTEM_OID;   // p.ej. 1.2.36.146.595.217.0.1
-  const ppnOid = process.env.LAC_PASSPORT_ID_SYSTEM_OID;   // p.ej. 2.16.840.1.113883.4.1
-  
-  // Reutilizar patientEntry ya definido anteriormente
-  if (patientEntry?.resource && (natOid || ppnOid)) {
-    const patient = patientEntry.resource;
-    
-    // Preservar identifiers originales y transformar sistemas a URN OIDs
-    const originalIds = [...(patient.identifier || [])];
-    patient.identifier = [];
-    
-    // Buscar identifier nacional (MR) existente
-    const nationalId = originalIds.find(id => 
-      id.type?.coding?.some(c => c.code === 'MR') || 
-      id.use === 'official' ||
-      id.system?.includes('rut') || id.system?.includes('cedula')
-    );
-    
-    if (natOid && nationalId) {
-      patient.identifier.push({
-        use: 'official',
-        type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MR' }] },
-        system: toUrnOid(natOid),
-        value: nationalId.value || 'unknown'
-      });
-    }
-    
-    // Buscar identifier de pasaporte (PPN) existente
-    const passportId = originalIds.find(id => 
-      id.type?.coding?.some(c => c.code === 'PPN') || 
-      id.system?.includes('passport') || id.system?.includes('pasaporte')
-    );
-    
-    if (ppnOid && passportId) {
-      patient.identifier.push({
-        use: 'official',
-        type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'PPN' }] },
-        system: toUrnOid(ppnOid),
-        value: passportId.value || 'unknown'
-      });
-    }
-    
-    // Si no encontramos identifiers apropiados, crear con valores por defecto
-    if (patient.identifier.length === 0) {
-      if (natOid) {
-        const defaultValue = originalIds[0]?.value || `ID-${patient.id || 'unknown'}`;
-        patient.identifier.push({
-          use: 'official',
-          type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MR' }] },
-          system: toUrnOid(natOid),
-          value: defaultValue
-        });
-      }
-    }
-  }
-
-  // 10) Corregir país a códigos ISO2
-  fixPatientCountry(summaryBundle);
-
-  // 11) Asegurar MedicationStatement.effectiveDateTime
-  summaryBundle.entry?.forEach(entry => {
-    const res = entry.resource;
-    if (res?.resourceType === 'MedicationStatement') {
-      if (!res.effectiveDateTime && !res.effectivePeriod) {
-        res.effectiveDateTime = new Date().toISOString();
-      }
-    }
-  });
-
 }
 
 // Función auxiliar para verificar y corregir referencias
@@ -1356,15 +1215,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
       // Asegurar que la referencia del Composition al paciente esté correcta
       const firstEntry = summaryBundle.entry[0];
       if (firstEntry && firstEntry.resource && firstEntry.resource.resourceType === 'Composition') {
-        // Verificar que el Composition.id coincida con fullUrl
-        if (firstEntry.fullUrl && firstEntry.fullUrl.startsWith('urn:uuid:')) {
-          const expectedId = firstEntry.fullUrl.split(':').pop();
-          if (firstEntry.resource.id !== expectedId) {
-            firstEntry.resource.id = expectedId;
-          }
-        }
-        
-        // Asegurar referencia correcta al Patient
         const patientEntry = summaryBundle.entry.find(e => e.resource && e.resource.resourceType === 'Patient');
         if (patientEntry && patientEntry.fullUrl) {
           firstEntry.resource.subject = { reference: patientEntry.fullUrl };
