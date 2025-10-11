@@ -117,6 +117,7 @@ const {
 
   // Nuevo: configuración para formatCode
   MHD_FORMAT_CODE = 'urn:ihe:iti:xds-sd:text:2008', // Default IHE para FHIR JSON
+  MHD_FORMAT_SYSTEM = 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode',
   
   // LAC Patient identifiers OIDs
   LAC_NATIONAL_ID_SYSTEM_OID,
@@ -294,6 +295,7 @@ if (NODE_ENV === 'development') {
 // ===================== Logging de configuración =====================
 console.log(`🔧 Terminology debug level: ${TS_DEBUG_LEVEL}`);
 console.log(`📋 MHD formatCode: ${MHD_FORMAT_CODE}`);
+console.log(`🧾 MHD format system: ${MHD_FORMAT_SYSTEM}`);
 console.log(`🔗 URL Modes - Provide: ${FULLURL_MODE_PROVIDE}, Document: ${FULLURL_MODE_DOCUMENT}, Attachment: ${ATTACHMENT_URL_MODE}`);
 console.log(`📦 Binary delivery mode: ${BINARY_DELIVERY_MODE}`);
 if (ABSOLUTE_FULLURL_BASE) {
@@ -1245,6 +1247,18 @@ function updateReferencesInObject(obj, urlMap) {
     }
   }
 
+  // Si es un Attachment (tiene contentType/data/size/hash) y trae url, también mapearla
+  if (obj.url && typeof obj.url === 'string' &&
+     (Object.prototype.hasOwnProperty.call(obj, 'contentType') ||
+      Object.prototype.hasOwnProperty.call(obj, 'data') ||
+      Object.prototype.hasOwnProperty.call(obj, 'size') ||
+      Object.prototype.hasOwnProperty.call(obj, 'hash'))) {
+    const mappedUrl = urlMap.get(obj.url);
+    if (mappedUrl) {
+      obj.url = mappedUrl;
+    }
+  }
+
   for (const key in obj) {
     if (obj.hasOwnProperty(key) && key !== 'reference') {
       updateReferencesInObject(obj[key], urlMap);
@@ -1535,6 +1549,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const bundleSize = bundleBytes.length;
 
     const binaryId = uuidv4();
+    // Master identifier del documento (debe ser estable e independiente del Binary)
+    const docMasterIdentifier = `urn:uuid:${compositionEntry?.resource?.id || originalBundleId}`;
 
     // URL a usar en el attachment si corresponde
     const attachmentUrl = buildRef(ATTACHMENT_URL_MODE, 'Binary', binaryId);
@@ -1634,12 +1650,22 @@ app.post('/lacpass/_iti65', async (req, res) => {
         status: 'generated',
         div: '<div xmlns="http://www.w3.org/1999/xhtml">Resumen clínico en formato DocumentReference</div>'
       },
-      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: attachmentUrl }, // referencia consistente
+      // masterIdentifier propio del documento (NO apuntar al Binary cuando BINARY_DELIVERY_MODE=nobinary)
+      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: docMasterIdentifier },
       status: 'current',
       type: docType,
       subject: { reference: patientRef, display: patientDisplay },
       date: bundleDate,
-      content: [{ attachment }]
+      content: [{
+        attachment,
+        // MHD requiere formatCode (content[x].format)
+        format: {
+          coding: [{
+            system: MHD_FORMAT_SYSTEM,
+            code: MHD_FORMAT_CODE
+          }]
+        }
+      }]
     };
 
     // <<< NUEVO: incluir Patient como entrada del transaction >>>
