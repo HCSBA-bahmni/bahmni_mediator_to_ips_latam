@@ -1686,11 +1686,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
     if (BINARY_DELIVERY_MODE === 'nobinary') {
       provideBundle.entry.push({
         fullUrl: buildRef(ATTACHMENT_URL_MODE, 'Bundle', originalBundleId),
-        resource: { ...summaryBundle, id: originalBundleId },
-        request: {
-          method: (ATTACHMENT_URL_MODE === 'urn') ? 'POST' : 'PUT',
-          url:     (ATTACHMENT_URL_MODE === 'urn') ? 'Bundle' : `Bundle/${originalBundleId}`
-        }
+        resource: summaryBundle,
+        request: { method: 'PUT', url: `Bundle/${originalBundleId}` }
       });
     }
 
