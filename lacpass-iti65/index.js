@@ -729,9 +729,7 @@ function fixBundleValidationIssues(summaryBundle) {
     const r = e.resource;
     if (!r) continue;
     // Aplicamos a tipos que el validador reportó: AllergyIntolerance, MedicationStatement y Condition
-    if (r.resourceType === 'AllergyIntolerance' ||
-        r.resourceType === 'MedicationStatement' ||
-        r.resourceType === 'Condition') {
+    if (['AllergyIntolerance','MedicationStatement','Condition','Immunization'].includes(r.resourceType)) {
       stripNarrativeLinkExtensions(r);
     }
   }
@@ -928,6 +926,23 @@ function fixBundleValidationIssues(summaryBundle) {
           c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
           c.code = 'no-allergy-info';
           if (!c.display) c.display = 'No information about allergies';
+        }
+      });
+    }
+  });
+
+  // 6.ter - Corregir Immunization - absent/unknown 'no-immunization-info'
+  summaryBundle.entry?.forEach(entry => {
+    const res = entry.resource;
+    if (res?.resourceType === 'Immunization' && res.vaccineCode?.coding?.length) {
+      res.vaccineCode.coding.forEach(c => {
+        if (!c.system) {
+          c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+        }
+        if (c.code === 'no-immunization-info' || c.display === 'No information about immunizations') {
+          c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+          c.code = 'no-immunization-info';
+          if (!c.display) c.display = 'No information about immunizations';
         }
       });
     }
@@ -1186,6 +1201,27 @@ app.post('/lacpass/_iti65', async (req, res) => {
     // ========= NUEVO: Corregir problemas de validación ANTES de PDQm =========
     fixBundleValidationIssues(summaryBundle);
 
+    // ===== Algunos nodos piden sí o sí Composition primero y Bundle.type = "document" =====
+    summaryBundle.type = "document";
+    if (summaryBundle.entry && summaryBundle.entry.length > 0) {
+      // Buscar el Composition
+      const compositionIndex = summaryBundle.entry.findIndex(e => e.resource && e.resource.resourceType === 'Composition');
+      if (compositionIndex !== -1 && compositionIndex !== 0) {
+        // Mover Composition al primer lugar
+        const compositionEntry = summaryBundle.entry.splice(compositionIndex, 1)[0];
+        summaryBundle.entry.unshift(compositionEntry);
+      }
+      
+      // Asegurar que la referencia del Composition al paciente esté correcta
+      const firstEntry = summaryBundle.entry[0];
+      if (firstEntry && firstEntry.resource && firstEntry.resource.resourceType === 'Composition') {
+        const patientEntry = summaryBundle.entry.find(e => e.resource && e.resource.resourceType === 'Patient');
+        if (patientEntry && patientEntry.fullUrl) {
+          firstEntry.resource.subject = { reference: patientEntry.fullUrl };
+        }
+      }
+    }
+
     // ===== Guard rails: asegurar recursos clave presentes =====
     const hasPatient = Array.isArray(summaryBundle.entry) && summaryBundle.entry.some(e => e.resource?.resourceType === 'Patient');
     const hasComposition = Array.isArray(summaryBundle.entry) && summaryBundle.entry.some(e => e.resource?.resourceType === 'Composition');
@@ -1380,6 +1416,11 @@ app.post('/lacpass/_iti65', async (req, res) => {
       validateStatus: false
     });
     console.log(`[${req.correlationId}] ⇒ ITI-65 sent, status ${resp.status}`);
+    if (resp.status >= 400) {
+      const ooFile = path.join(debugDir, `operationOutcome_${Date.now()}.json`);
+      try { fs.writeFileSync(ooFile, JSON.stringify(resp.data, null, 2)); } catch {}
+      console.error('❌ OperationOutcome guardado en:', ooFile);
+    }
 
     return res.json({ status: 'sent', code: resp.status });
 
