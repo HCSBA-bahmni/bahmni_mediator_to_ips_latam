@@ -172,48 +172,84 @@ function buildRef(mode, resourceType, id) {
   }
 }
 
-/**
- * Aplica modo de URLs a un Bundle y reescribe referencias consistentes.
- * - Asume que cada entry tiene resourceType e ID derivable (ya usas UUIDs).
- * - Genera un mapa de reemplazos y llama a tu updateReferencesInObject(obj, map).
- */
 function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
   if (!bundle?.entry?.length) return;
 
-  // construir mapa de reemplazos
-  const map = new Map();
+  // Mapa de reemplazos: cualquier forma conocida -> forma final (según 'mode')
+  const urlMap = new Map();
+
+  // Detectar bases absolutas *reales* que vengan en el Bundle (no asumir solo ABSOLUTE_FULLURL_BASE)
+  const absoluteBases = new Set();
+  for (const e of bundle.entry) {
+    if (typeof e.fullUrl === 'string' && /^https?:\/\//i.test(e.fullUrl)) {
+      // recorta hasta '/fhir' si existe, o hasta el recurso
+      const m = e.fullUrl.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/[A-Za-z]+\/[A-Za-z0-9\-\.]{1,64}$/);
+      if (m && m[1]) {
+        // siempre considerar la variante con /fhir al final
+        absoluteBases.add(`${m[1]}/fhir`);
+      }
+    }
+  }
+  if (ABSOLUTE_FULLURL_BASE) absoluteBases.add(asAbsoluteBase(ABSOLUTE_FULLURL_BASE));
+
   for (const e of bundle.entry) {
     const r = e.resource;
     if (!r?.resourceType) continue;
 
-    // ID: si tu flujo ya usa URN en fullUrl, lo tomamos de ahí; si no, de r.id
+    // Resolver ID (preferir el que provenga del fullUrl cuando sea URN)
     let id = null;
-    if (e.fullUrl?.startsWith('urn:uuid:')) {
-      id = e.fullUrl.split(':').pop();
-    } else if (r.id) {
-      id = r.id;
-    }
+    if (e.fullUrl?.startsWith('urn:uuid:')) id = e.fullUrl.split(':').pop();
+    else if (r.id) id = r.id;
     if (!id) continue;
 
-    const abs = buildRef(mode, r.resourceType, id);
+    const finalRef = buildRef(mode, r.resourceType, id);
 
-    // rellenamos equivalencias para que cualquier variante apunte al destino
-    const variants = [
+    // Variantes equivalentes que mapeamos a 'finalRef'
+    const variants = new Set([
       e.fullUrl,
       `urn:uuid:${id}`,
       `${r.resourceType}/${id}`,
       `./${r.resourceType}/${id}`,
-      ABSOLUTE_FULLURL_BASE ? `${asAbsoluteBase(ABSOLUTE_FULLURL_BASE)}/${r.resourceType}/${id}` : null,
-    ].filter(Boolean);
+    ]);
+    // agregar TODAS las bases absolutas detectadas
+    for (const base of absoluteBases) {
+      variants.add(`${base}/${r.resourceType}/${id}`);
+    }
 
-    for (const v of variants) map.set(v, abs);
+    for (const v of [...variants].filter(Boolean)) urlMap.set(v, finalRef);
 
-    // setear fullUrl según el modo
-    e.fullUrl = abs;
+    // asignar fullUrl final según el modo
+    e.fullUrl = finalRef;
   }
 
-  // reescribir TODAS las referencias recogiendo paths .reference y attachment.url
-  updateReferencesInObject(bundle, map);
+  // Reescribir todas las .reference y Attachment.url según urlMap
+  updateReferencesInObject(bundle, urlMap);
+}
+
+/**
+ * Mueve Composition a entry[0] y Patient a entry[1] (orden requerido por el slice LAC).
+ * Además, fuerza Composition.subject.reference = fullUrl del Patient en el modo ya aplicado.
+ */
+function ensureEntrySliceOrder(bundle) {
+  if (!bundle?.entry?.length) return;
+
+  const idxComp = bundle.entry.findIndex(e => e.resource?.resourceType === 'Composition');
+  if (idxComp > 0) {
+    const [comp] = bundle.entry.splice(idxComp, 1);
+    bundle.entry.unshift(comp);
+  }
+  const idxPat = bundle.entry.findIndex(e => e.resource?.resourceType === 'Patient');
+  if (idxPat > 1 || idxPat === -1) {
+    // si no está en la posición 1 y existe, llévalo a [1]
+    const e = idxPat === -1 ? null : bundle.entry.splice(idxPat, 1)[0];
+    if (e) bundle.entry.splice(1, 0, e);
+  }
+
+  const comp = bundle.entry[0]?.resource?.resourceType === 'Composition' ? bundle.entry[0].resource : null;
+  const patFullUrl = bundle.entry[1]?.resource?.resourceType === 'Patient' ? bundle.entry[1].fullUrl : null;
+  if (comp && patFullUrl) {
+    comp.subject = { reference: patFullUrl };
+  }
 }
 
 // ===================== Helper functions para LAC compliance =====================
@@ -1030,9 +1066,16 @@ function fixBundleValidationIssues(summaryBundle) {
 
   const compositionEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
   if (compositionEntry?.resource) {
-    // ID del Composition DEBE empatar con el fullUrl (slice LAC exige esto)
-    const compUuid = (compositionEntry.fullUrl || '').replace('urn:uuid:', '');
-    if (compUuid) compositionEntry.resource.id = compUuid;
+    // ID del Composition DEBE empatar con el fullUrl (soporta urn|relative|absolute)
+    const fu = String(compositionEntry.fullUrl || '');
+    let compId = null;
+    if (fu.startsWith('urn:uuid:')) {
+      compId = fu.split(':').pop();
+    } else if (fu) {
+      const parts = fu.split('/').filter(Boolean);
+      compId = parts[parts.length - 1] || null;
+    }
+    if (compId) compositionEntry.resource.id = compId;
 
     // Asegurar custodian (requerido por el perfil lac-composition)
     if (!compositionEntry.resource.custodian) {
@@ -1049,8 +1092,8 @@ function fixBundleValidationIssues(summaryBundle) {
     ensureLacBundleProfile(summaryBundle);
 
     // Sujeto del Composition -> Patient
-    const patientEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
-    ensureCompositionSubject(compositionEntry.resource, patientEntry);
+    const patEntryForComp = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
+    ensureCompositionSubject(compositionEntry.resource, patEntryForComp);
 
     // Secciones obligatorias (garantiza al menos una entry válida por slice)
     // Alergias: LOINC 48765-2 → AllergyIntolerance
@@ -1208,52 +1251,53 @@ function fixBundleValidationIssues(summaryBundle) {
     }
   }
 
-  // 9) NUEVAS MEJORAS LAC: Patient identifiers con URN OIDs
+  // 9) NUEVAS MEJORAS LAC: Patient identifiers con URN OIDs (solo si NO hay identifiers)
   const natOid = process.env.LAC_NATIONAL_ID_SYSTEM_OID;   // p.ej. 1.2.36.146.595.217.0.1
   const ppnOid = process.env.LAC_PASSPORT_ID_SYSTEM_OID;   // p.ej. 2.16.840.1.113883.4.1
-  
   // Reutilizar patientEntry ya definido anteriormente
   if (patientEntry?.resource && (natOid || ppnOid)) {
     const patient = patientEntry.resource;
-    
-    // Preservar identifiers originales y transformar sistemas a URN OIDs
-    const originalIds = [...(patient.identifier || [])];
-    patient.identifier = [];
-    
-    // Buscar identifier nacional (MR) existente
-    const nationalId = originalIds.find(id => 
-      id.type?.coding?.some(c => c.code === 'MR') || 
-      id.use === 'official' ||
-      id.system?.includes('rut') || id.system?.includes('cedula')
-    );
-    
-    if (natOid && nationalId) {
-      patient.identifier.push({
-        use: 'official',
-        type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MR' }] },
-        system: toUrnOid(natOid),
-        value: nationalId.value || 'unknown'
-      });
-    }
-    
-    // Buscar identifier de pasaporte (PPN) existente
-    const passportId = originalIds.find(id => 
-      id.type?.coding?.some(c => c.code === 'PPN') || 
-      id.system?.includes('passport') || id.system?.includes('pasaporte')
-    );
-    
-    if (ppnOid && passportId) {
-      patient.identifier.push({
-        use: 'official',
-        type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'PPN' }] },
-        system: toUrnOid(ppnOid),
-        value: passportId.value || 'unknown'
-      });
-    }
-    
-    // Si no encontramos identifiers apropiados, crear con valores por defecto
-    if (patient.identifier.length === 0) {
-      if (natOid) {
+    // Si ya hay identifiers (y fixPatientIdentifiers ya corrió), no rehacerlos
+    if (Array.isArray(patient.identifier) && patient.identifier.length > 0) {
+      // no-op: ya normalizados por fixPatientIdentifiers
+    } else {
+      // Preservar identifiers originales (si los hubiera) y construir por defecto
+      const originalIds = [...(patient.identifier || [])];
+      patient.identifier = [];
+      
+      // Buscar identifier nacional (MR) existente
+      const nationalId = originalIds.find(id => 
+        id.type?.coding?.some(c => c.code === 'MR') || 
+        id.use === 'official' ||
+        id.system?.includes('rut') || id.system?.includes('cedula')
+      );
+      
+      if (natOid && nationalId) {
+        patient.identifier.push({
+          use: 'official',
+          type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MR' }] },
+          system: toUrnOid(natOid),
+          value: nationalId.value || 'unknown'
+        });
+      }
+      
+      // Buscar identifier de pasaporte (PPN) existente
+      const passportId = originalIds.find(id => 
+        id.type?.coding?.some(c => c.code === 'PPN') || 
+        id.system?.includes('passport') || id.system?.includes('pasaporte')
+      );
+      
+      if (ppnOid && passportId) {
+        patient.identifier.push({
+          use: 'official',
+          type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'PPN' }] },
+          system: toUrnOid(ppnOid),
+          value: passportId.value || 'unknown'
+        });
+      }
+      
+      // Si no encontramos identifiers apropiados, crear con valores por defecto
+      if (patient.identifier.length === 0 && natOid) {
         const defaultValue = originalIds[0]?.value || `ID-${patient.id || 'unknown'}`;
         patient.identifier.push({
           use: 'official',
@@ -1528,32 +1572,18 @@ app.post('/lacpass/_iti65', async (req, res) => {
     
     // ===== Aplicar modo URL al document bundle =====
     applyUrlModeToBundle(summaryBundle, FULLURL_MODE_DOCUMENT, updateReferencesInObject);
+    // ===== Forzar orden de slices (Composition, Patient) y sujeto coherente =====
+    ensureEntrySliceOrder(summaryBundle);
     if (summaryBundle.entry && summaryBundle.entry.length > 0) {
-      // Buscar el Composition
-      const compositionIndex = summaryBundle.entry.findIndex(e => e.resource && e.resource.resourceType === 'Composition');
-      if (compositionIndex !== -1 && compositionIndex !== 0) {
-        // Mover Composition al primer lugar
-        const movedCompositionEntry = summaryBundle.entry.splice(compositionIndex, 1)[0];
-        summaryBundle.entry.unshift(movedCompositionEntry);
-      }
-      
-      // Asegurar que la referencia del Composition al paciente esté correcta
+      // Alinear Composition.id con el ID del fullUrl final (urn|relative|absolute)
       const firstEntry = summaryBundle.entry[0];
-      if (firstEntry && firstEntry.resource && firstEntry.resource.resourceType === 'Composition') {
-        
-      // Alinear Composition.id con el ID del fullUrl (urn|relative|absolute)
-      const fu = String(firstEntry.fullUrl || '');
-      const expectedId = fu.startsWith('urn:uuid:')
-        ? fu.split(':').pop()
-        : fu.split('/').filter(Boolean).pop(); // último segmento de "…/Composition/<id>"
-      if (expectedId && firstEntry.resource.id !== expectedId) {
-        firstEntry.resource.id = expectedId;
-      }
-        
-        // Asegurar referencia correcta al Patient
-        const patientEntry = summaryBundle.entry.find(e => e.resource && e.resource.resourceType === 'Patient');
-        if (patientEntry && patientEntry.fullUrl) {
-          firstEntry.resource.subject = { reference: patientEntry.fullUrl };
+      if (firstEntry?.resource?.resourceType === 'Composition') {
+        const fu = String(firstEntry.fullUrl || '');
+        const expectedId = fu.startsWith('urn:uuid:')
+          ? fu.split(':').pop()
+          : fu.split('/').filter(Boolean).pop();
+        if (expectedId && firstEntry.resource.id !== expectedId) {
+          firstEntry.resource.id = expectedId;
         }
       }
     }
