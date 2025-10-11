@@ -1590,17 +1590,15 @@ app.post('/lacpass/_iti65', async (req, res) => {
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
     };
 
-    // ---- Attachment (se arma según variables)
+    // ---- Attachment (cambio puntual): en 'nobinary' usar siempre el URN del Bundle
     const attachment = {
       contentType: 'application/fhir+json',
       size: bundleSize,
       hash: bundleHash
     };
-
-    // Si NO queremos Binary ni base64 → "comportamiento anterior"
     if (BINARY_DELIVERY_MODE === 'nobinary') {
-      // URL que apunta al Bundle incluído como entrada del transaction
-      attachment.url = buildRef(ATTACHMENT_URL_MODE, 'Bundle', originalBundleId);
+      // Referencia al Bundle incluido en el mismo transaction → evita 404
+      attachment.url = buildRef('urn', 'Bundle', originalBundleId);
     }
 
     // Si queremos Binary o ambos, preparamos Binary y/o data
