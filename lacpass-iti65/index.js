@@ -193,13 +193,6 @@ function fixPatientCountry(bundle) {
   });
 }
 
-function toUrnOid(value) {
-  if (!value) return value;
-  const v = value.trim();
-  const cleaned = v.replace(/^urn:oid:/i, '');
-  return `urn:oid:${cleaned}`;
-}
-
 // ===================== Debug dir =====================
 const debugDir = DEBUG_DIR_icvp ? path.resolve(DEBUG_DIR_icvp) : '/tmp';
 try { fs.mkdirSync(debugDir, { recursive: true }); }
