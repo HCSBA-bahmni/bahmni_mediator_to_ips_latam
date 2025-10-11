@@ -842,7 +842,7 @@ function fixPatientIdentifiers(patient) {
 }
 
 function ensureLacPatientProfile(patient) {
-  const LAC_PATIENT_PROFILE = 'https://lacpass.racsel.org/StructureDefinition/lac-patient';
+  const LAC_PATIENT_PROFILE = 'http://lacpass.racsel.org/StructureDefinition/lac-patient';
   patient.meta = patient.meta || {};
   patient.meta.profile = Array.isArray(patient.meta.profile) ? patient.meta.profile : [];
   if (!patient.meta.profile.includes(LAC_PATIENT_PROFILE)) {
@@ -892,8 +892,9 @@ function fixBundleValidationIssues(summaryBundle) {
   }
 
   // 1) Lógica de Patient movida después de canonicalización
-  // === NUEVO: Canonicalizar fullUrl y referencias internas a urn:uuid:<id> ===
-  // (Esto soluciona BUNDLE_BUNDLE_ENTRY_NOTFOUND_APPARENT y BUNDLE_BUNDLE_POSSIBLE_MATCH_WRONG_FU)
+  // === NUEVO: Canonicalizar fullUrl y referencias internas al MODO deseado ===
+  // Si FULLURL_MODE_DOCUMENT=absolute, tanto fullUrl como las referencias quedarán absolutas.
+  // Si es relative o urn, quedarán en ese modo (todo consistente).
 
   function extractIdFromFullUrl(entry) {
     if (!entry) return null;
@@ -910,9 +911,9 @@ function fixBundleValidationIssues(summaryBundle) {
     return null;
   }
 
-  function canonicalizeBundleToUrn(bundle) {
+  function canonicalizeBundleToMode(bundle, mode) {
     if (!bundle?.entry) return;
-    const urlMap = new Map(); // referencia original -> URN
+    const urlMap = new Map(); // referencia original -> destino según mode
 
     for (const e of bundle.entry) {
       if (!e.resource) continue;
@@ -922,18 +923,20 @@ function fixBundleValidationIssues(summaryBundle) {
         id = uuidv4();
         e.resource.id = id;
       }
-      const urn = makeUrn(id);
+      const targetRef = buildRef(mode, e.resource.resourceType, id);
 
       // Mapear variantes conocidas a URN
-      if (e.fullUrl && e.fullUrl !== urn) urlMap.set(e.fullUrl, urn);
+      if (e.fullUrl && e.fullUrl !== targetRef) urlMap.set(e.fullUrl, targetRef);
       if (e.resource.resourceType) {
-        urlMap.set(`${e.resource.resourceType}/${id}`, urn);
-        // También mapear posibles relative with leading './'
-        urlMap.set(`./${e.resource.resourceType}/${id}`, urn);
+        urlMap.set(`${e.resource.resourceType}/${id}`, targetRef);
+        // También mapear posibles relative con './'
+        urlMap.set(`./${e.resource.resourceType}/${id}`, targetRef);
+        // Y el URN equivalente (por si vino mezclado)
+        urlMap.set(`urn:uuid:${id}`, targetRef);
       }
 
-      // Reescribir fullUrl a URN
-      e.fullUrl = urn;
+      // Reescribir fullUrl al modo elegido
+      e.fullUrl = targetRef;
 
       // Limpiar meta.source interno (#...)
       if (e.resource.meta?.source && String(e.resource.meta.source).startsWith('#')) {
@@ -946,7 +949,7 @@ function fixBundleValidationIssues(summaryBundle) {
   }
 
   // Ejecutar canonicalización al inicio
-  canonicalizeBundleToUrn(summaryBundle);
+  canonicalizeBundleToMode(summaryBundle, (FULLURL_MODE_DOCUMENT || 'absolute').toLowerCase());
 
   // === Post-canonicalización: Patient
   const patientEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
