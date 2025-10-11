@@ -229,7 +229,6 @@ function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
 /**
  * Mueve Composition a entry[0] y Patient a entry[1] (orden requerido por el slice LAC).
  * Además, fuerza Composition.subject.reference = fullUrl del Patient en el modo ya aplicado.
- * También asegura que los recursos tengan los perfiles LAC correctos.
  */
 function ensureEntrySliceOrder(bundle) {
   if (!bundle?.entry?.length) return;
@@ -244,17 +243,6 @@ function ensureEntrySliceOrder(bundle) {
     // si no está en la posición 1 y existe, llévalo a [1]
     const e = idxPat === -1 ? null : bundle.entry.splice(idxPat, 1)[0];
     if (e) bundle.entry.splice(1, 0, e);
-  }
-
-  // Asegurar que Composition en [0] tenga perfil LAC
-  if (bundle.entry[0]?.resource?.resourceType === 'Composition') {
-    ensureLacCompositionProfile(bundle.entry[0].resource);
-  }
-
-  // Asegurar que Patient en [1] tenga perfiles LAC e IPS
-  if (bundle.entry[1]?.resource?.resourceType === 'Patient') {
-    ensureLacPatientProfile(bundle.entry[1].resource);
-    ensureIpsPatientProfile(bundle.entry[1].resource);
   }
 
   const comp = bundle.entry[0]?.resource?.resourceType === 'Composition' ? bundle.entry[0].resource : null;
@@ -840,77 +828,46 @@ function fixPatientIdentifiers(patient) {
   const OID_NAT = String(process.env.LAC_NATIONAL_ID_SYSTEM_OID || '').trim(); // MR
   const OID_INT = String(process.env.LAC_PASSPORT_ID_SYSTEM_OID || '').trim(); // PPN
 
-  // Si no hay identifiers válidos, crear uno básico con OID nacional
-  if (patient.identifier.length === 0 && OID_NAT) {
-    patient.identifier.push({
-      use: 'official',
-      type: { 
-        coding: [{ 
-          system: 'http://terminology.hl7.org/CodeSystem/v2-0203', 
-          code: 'MR' 
-        }] 
-      },
-      system: `urn:oid:${OID_NAT}`,
-      value: patient.id || 'unknown'
-    });
-    return;
-  }
-
   patient.identifier.forEach(identifier => {
-    // Asegurar que todos los systems sean URN OID válidos
+    // Normalizar system a URN OID válido
     if (identifier.system) {
-      if (!identifier.system.startsWith('urn:oid:')) {
-        identifier.system = toUrnOid(identifier.system);
-      }
-      // Si aún no es válido, usar OID por defecto
-      if (!isUrnOid(identifier.system) && OID_NAT) {
-        identifier.system = `urn:oid:${OID_NAT}`;
-      }
-    } else if (OID_NAT) {
-      identifier.system = `urn:oid:${OID_NAT}`;
+      identifier.system = toUrnOid(identifier.system);
     }
 
-    // Asegurar type.coding con system correcto
-    if (!identifier.type?.coding || identifier.type.coding.length === 0) {
-      identifier.type = {
-        coding: [{ 
-          system: 'http://terminology.hl7.org/CodeSystem/v2-0203', 
-          code: 'MR' 
-        }]
-      };
-    } else {
+    // Si hay type.coding, asegurar system y mapear codes
+    if (identifier.type?.coding) {
       identifier.type.coding.forEach(coding => {
         if (!coding.system) {
           coding.system = 'http://terminology.hl7.org/CodeSystem/v2-0203';
         }
-        // Mapear GUIDs a códigos estándar
+        // Refuerzo por si vinieran GUIDs
         const codeMap = {
           'd3153eb0-5e07-11ef-8f7c-0242ac120002': 'MR',
           'a2551e57-6028-428b-be3c-21816c252e06': 'PPN'
         };
         if (codeMap[coding.code]) coding.code = codeMap[coding.code];
-        
-        // Si no hay código válido, asignar MR por defecto
-        if (!coding.code || !['MR', 'PPN'].includes(coding.code)) {
-          coding.code = 'MR';
-        }
       });
     }
 
-    // Configurar según el tipo de identifier
+    // Forzar slices LAC: MR (nacional) y PPN (pasaporte)
     const codes = (identifier.type?.coding || []).map(c => c.code);
     if (codes.includes('MR')) {
       identifier.use = 'official';
       if (identifier.type?.text) delete identifier.type.text;
-      if (OID_NAT && !isUrnOid(identifier.system)) {
-        identifier.system = `urn:oid:${OID_NAT}`;
+
+      // ⚠️ aquí forzamos a tu OID configurado, incluso si venía otro
+      if (OID_NAT) identifier.system = toUrnOid(OID_NAT);
+      else if (identifier.system && /^\d+(\.\d+)+$/.test(identifier.system)) {
+        identifier.system = toUrnOid(identifier.system);
       }
     }
     if (codes.includes('PPN')) {
       identifier.use = 'official';
       if (identifier.type?.text) delete identifier.type.text;
-      if (OID_INT && !isUrnOid(identifier.system)) {
-        identifier.system = `urn:oid:${OID_INT}`;
+
+      if (OID_INT) identifier.system = toUrnOid(OID_INT);
+      else if (identifier.system && /^\d+(\.\d+)+$/.test(identifier.system)) {
+        identifier.system = toUrnOid(identifier.system);
       }
     }
   });
@@ -1001,36 +958,17 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
   if (!sec) return;
 
   // ¿ya hay una entry que apunte a un recurso permitido?
-  const existingValidEntries = (sec.entry || []).filter(e => {
+  const ok = (sec.entry || []).some(e => {
     const ref = e.reference;
-    const targetEntry = (summaryBundle.entry || []).find(x => x.fullUrl === ref);
-    return targetEntry && allowedTypes.includes(targetEntry.resource?.resourceType);
+    return (summaryBundle.entry || []).some(x => x.fullUrl === ref && allowedTypes.includes(x.resource?.resourceType));
   });
+  if (ok) return;
 
-  if (existingValidEntries.length > 0) {
-    // Asegurar que los recursos referenciados tengan perfiles IPS
-    existingValidEntries.forEach(e => {
-      const targetEntry = (summaryBundle.entry || []).find(x => x.fullUrl === e.reference);
-      if (targetEntry?.resource) {
-        ensureIpsProfile(targetEntry.resource);
-      }
-    });
-    return;
-  }
-
-  // Si no hay entries válidas, buscar candidatos y enlazarlos
-  const candidates = (summaryBundle.entry || []).filter(x => allowedTypes.includes(x.resource?.resourceType));
-  if (candidates.length > 0) {
+  // Si no, enlaza la primera resource del tipo permitido presente en el Bundle
+  const candidate = (summaryBundle.entry || []).find(x => allowedTypes.includes(x.resource?.resourceType));
+  if (candidate) {
     sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
-    candidates.forEach(candidate => {
-      // Asegurar perfil IPS antes de enlazar
-      ensureIpsProfile(candidate.resource);
-      // Enlazar si no está ya referenciado
-      const alreadyReferenced = sec.entry.some(e => e.reference === candidate.fullUrl);
-      if (!alreadyReferenced) {
-        sec.entry.push({ reference: candidate.fullUrl });
-      }
-    });
+    sec.entry.unshift({ reference: candidate.fullUrl });
   }
 }
 
@@ -1629,9 +1567,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
     // ========= NUEVO: Corregir problemas de validación ANTES de PDQm =========
     fixBundleValidationIssues(summaryBundle);
 
-    // ===== Asegurar perfil LAC Bundle desde el inicio =====
-    ensureLacBundleProfile(summaryBundle);
-    
     // ===== Algunos nodos piden sí o sí Composition primero y Bundle.type = "document" =====
     summaryBundle.type = "document";
     
