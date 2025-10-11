@@ -1297,16 +1297,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const bundleSize = Buffer.byteLength(bundleString, 'utf8');
     const bundleHash = crypto.createHash('sha256').update(bundleString).digest('base64');
 
-    // Crear Binary con el Bundle IPS en base64
-    const binaryId = uuidv4();
-    const binaryUrn = `urn:uuid:${binaryId}`;
-    const binaryResource = {
-      resourceType: 'Binary',
-      id: binaryId,
-      contentType: 'application/fhir+json',
-      data: Buffer.from(bundleString, 'utf8').toString('base64')
-    };
-
     // FIX #3 — Refuerzos quick-wins para los slices de secciones
     summaryBundle.entry?.forEach(entry => {
       const res = entry.resource;
@@ -1383,7 +1373,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       content: [{
         attachment: {
           contentType: 'application/fhir+json',
-          url: binaryUrn,        // ← antes era el URN del Bundle, ahora el del Binary
+          url: bundleUrn,
           size: bundleSize,
           hash: bundleHash
         },
@@ -1425,10 +1415,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
         { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
         { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
 
-        // NUEVO: adjuntar el documento como Binary (no como Bundle)
-        { fullUrl: binaryUrn, resource: binaryResource, request: { method: 'POST', url: 'Binary' } }
-
-        // ELIMINADO: { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } }
+        // El Bundle con el documento (tu IPS/summary) que referencia Bundle URN en el DocRef.attachment.url
+        { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } }
       ]
     };
 
