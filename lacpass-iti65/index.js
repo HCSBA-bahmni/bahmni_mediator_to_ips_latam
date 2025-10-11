@@ -1518,7 +1518,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
         status: 'generated',
         div: '<div xmlns="http://www.w3.org/1999/xhtml">Resumen clínico en formato DocumentReference</div>'
       },
-      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: bundleUrn },
+      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: binaryUrn }, // en lugar de bundleUrn
       status: 'current',
       type: docType,
       subject: { reference: patientRef, display: patientDisplay },
@@ -1526,7 +1526,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       content: [{
         attachment: {
           contentType: 'application/fhir+json',
-          url: bundleUrn,
+          url: binaryUrn,      // ← antes: bundleUrn
           size: bundleSize,
           hash: bundleHash
         },
@@ -1568,8 +1568,11 @@ app.post('/lacpass/_iti65', async (req, res) => {
         { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
         { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
 
-        // El Bundle con el documento (tu IPS/summary) que referencia Bundle URN en el DocRef.attachment.url
-        { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } }
+        // NUEVO: Binary contiene el documento IPS en base64
+        { fullUrl: binaryUrn, resource: binaryResource, request: { method: 'POST', url: 'Binary' } }
+
+        // COMENTADO: El Bundle como documento - ahora solo se envía como Binary
+        // { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } }
       ]
     };
 
