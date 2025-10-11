@@ -39,6 +39,10 @@ const {
     FEATURE_TS_VALIDATE_CS_ENABLED = 'true',
     FEATURE_TS_TRANSLATE_ENABLED = 'true',
 
+    // ===== OIDs para identificadores de paciente (desde tu .env) =====
+    LAC_NATIONAL_ID_SYSTEM_OID,
+    LAC_PASSPORT_ID_SYSTEM_OID,
+
     // ===== PDQm =====
     PDQM_PORT,
     PDQM_FHIR_URL,
@@ -119,10 +123,6 @@ const {
   MHD_FORMAT_CODE = 'urn:ihe:iti:xds-sd:text:2008', // Default IHE para FHIR JSON
   MHD_FORMAT_SYSTEM = 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode',
   
-  // LAC Patient identifiers OIDs
-  LAC_NATIONAL_ID_SYSTEM_OID,
-  LAC_PASSPORT_ID_SYSTEM_OID,
-  
   // Debug level para ops terminológicas
   TS_DEBUG_LEVEL = 'warn', // 'debug', 'warn', 'error', 'silent'
 } = process.env;
@@ -134,6 +134,45 @@ const {
   BINARY_DELIVERY_MODE = 'both',
   ATTACHMENT_URL_MODE = 'absolute',
 } = process.env;
+
+// ===== Constantes de Perfiles y Códigos =====
+
+// Perfiles LAC (racsel) — coinciden con el validador
+const LAC_PROFILES = {
+  BUNDLE: 'http://lacpass.racsel.org/StructureDefinition/lac-bundle',
+  COMPOSITION: 'http://lacpass.racsel.org/StructureDefinition/lac-composition',
+  PATIENT: 'http://lacpass.racsel.org/StructureDefinition/lac-patient'
+};
+
+// Perfiles IPS (http)
+const IPS_PROFILES = {
+  BUNDLE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Bundle-uv-ips',
+  COMPOSITION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Composition-uv-ips',
+  PATIENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips',
+  ALLERGY_INTOLERANCE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/AllergyIntolerance-uv-ips',
+  CONDITION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Condition-uv-ips',
+  MEDICATION_STATEMENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationStatement-uv-ips',
+  PROCEDURE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Procedure-uv-ips',
+  IMMUNIZATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Immunization-uv-ips',
+  OBSERVATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Observation-results-uv-ips'
+};
+
+// Códigos LOINC para secciones IPS
+const LOINC_CODES = {
+  ALLERGIES_SECTION: '48765-2',
+  PROBLEMS_SECTION: '11450-4',
+  MEDICATIONS_SECTION: '10160-0',
+  PAST_ILLNESS_SECTION: '11348-0',
+  IMMUNIZATIONS_SECTION: '11369-6',
+  PROCEDURES_SECTION: '47519-4',
+  RESULTS_SECTION: '30954-2'
+};
+
+// URN OID helpers
+const OID_SYSTEMS = {
+  NATIONAL: `urn:oid:${LAC_NATIONAL_ID_SYSTEM_OID}`,
+  PASSPORT: `urn:oid:${LAC_PASSPORT_ID_SYSTEM_OID}`
+};
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -224,6 +263,93 @@ function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
 
   // Reescribir todas las .reference y Attachment.url según urlMap
   updateReferencesInObject(bundle, urlMap);
+}
+
+// ===== Funciones Helper =====
+
+/**
+ * Asegura que una propiedad sea un array
+ */
+function ensureArray(obj, property) {
+  if (!obj[property]) {
+    obj[property] = [];
+  } else if (!Array.isArray(obj[property])) {
+    obj[property] = [obj[property]];
+  }
+  return obj[property];
+}
+
+/**
+ * Agrega un perfil a un recurso si no existe
+ */
+function addProfile(resource, profileUrl) {
+  if (!resource || !profileUrl) return;
+  
+  if (!resource.meta) resource.meta = {};
+  ensureArray(resource.meta, 'profile');
+  
+  if (!resource.meta.profile.includes(profileUrl)) {
+    resource.meta.profile.push(profileUrl);
+  }
+}
+
+// === Helpers URN OID (única implementación canónica) ===
+function isUrnOid(value) {
+  if (typeof value !== 'string') return false;
+  const v = value.trim();
+  return /^urn:oid:\d+(\.\d+)+$/.test(v);
+}
+function toUrnOid(value) {
+  if (!value) return null;
+  const v = String(value).trim();
+  if (v.startsWith('urn:oid:') && /^urn:oid:\d+(\.\d+)+$/.test(v)) return v;
+  const m = v.match(/(\d+(?:\.\d+)+)/);
+  return m ? `urn:oid:${m[1]}` : null;
+}
+
+/**
+ * Crea un recurso placeholder para secciones vacías
+ */
+function createPlaceholderResource(resourceType, id, text = 'No information available') {
+  const resource = {
+    resourceType,
+    id: id || generateId(),
+    text: {
+      status: 'generated',
+      div: `<div xmlns="http://www.w3.org/1999/xhtml">${text}</div>`
+    }
+  };
+
+  // Agregar perfil IPS según el tipo de recurso
+  switch (resourceType) {
+    case 'AllergyIntolerance':
+      addProfile(resource, IPS_PROFILES.ALLERGY_INTOLERANCE);
+      break;
+    case 'Condition':
+      addProfile(resource, IPS_PROFILES.CONDITION);
+      break;
+    case 'MedicationStatement':
+      addProfile(resource, IPS_PROFILES.MEDICATION_STATEMENT);
+      break;
+    case 'Procedure':
+      addProfile(resource, IPS_PROFILES.PROCEDURE);
+      break;
+    case 'Immunization':
+      addProfile(resource, IPS_PROFILES.IMMUNIZATION);
+      break;
+    case 'Observation':
+      addProfile(resource, IPS_PROFILES.OBSERVATION);
+      break;
+  }
+
+  return resource;
+}
+
+/**
+ * Genera un ID único
+ */
+function generateId() {
+  return Math.random().toString(36).substr(2, 9);
 }
 
 /**
@@ -848,12 +974,9 @@ function stripNarrativeLinkExtensions(resource) {
 function fixPatientIdentifiers(patient) {
   if (!patient) return;
 
-  const OID_NAT = String(process.env.LAC_NATIONAL_ID_SYSTEM_OID || '').trim(); // MR
-  const OID_INT = String(process.env.LAC_PASSPORT_ID_SYSTEM_OID || '').trim(); // PPN
-
-  // Si no hay OIDs configurados, usar valores por defecto válidos
-  const defaultNatOid = OID_NAT || '2.16.152.1.1.1'; // OID ejemplo para Chile
-  const defaultIntOid = OID_INT || '2.16.840.1.113883.4.1'; // OID internacional estándar
+  // Usar las constantes OID definidas globalmente
+  const defaultNatOid = LAC_NATIONAL_ID_SYSTEM_OID; // desde .env
+  const defaultIntOid = LAC_PASSPORT_ID_SYSTEM_OID; // desde .env
 
   // Forzar reconstrucción completa de identifiers para garantizar cumplimiento LAC
   const originalIds = [...(patient.identifier || [])];
@@ -893,12 +1016,12 @@ function fixPatientIdentifiers(patient) {
         code: 'MR'
       }]
     },
-    system: `urn:oid:${defaultNatOid}`,
+    system: toUrnOid(defaultNatOid) || 'urn:oid:2.16.152.1.1.1',
     value: nationalValue
   });
 
   // Agregar identifier de pasaporte si había uno o si está configurado el OID
-  if (passportValue || OID_INT) {
+  if (passportValue || defaultIntOid) {
     patient.identifier.push({
       use: 'official',
       type: {
@@ -907,7 +1030,7 @@ function fixPatientIdentifiers(patient) {
           code: 'PPN'
         }]
       },
-      system: `urn:oid:${defaultIntOid}`,
+      system: toUrnOid(defaultIntOid) || 'urn:oid:2.16.840.1.113883.4.1',
       value: passportValue || nationalValue // usar el mismo valor si no hay pasaporte específico
     });
   }
@@ -916,66 +1039,37 @@ function fixPatientIdentifiers(patient) {
 }
 
 function ensureLacPatientProfile(patient) {
-  const LAC_PATIENT_PROFILE = 'http://lacpass.racsel.org/StructureDefinition/lac-patient';
-  patient.meta = patient.meta || {};
-  patient.meta.profile = Array.isArray(patient.meta.profile) ? patient.meta.profile : [];
-  if (!patient.meta.profile.includes(LAC_PATIENT_PROFILE)) {
-    patient.meta.profile.push(LAC_PATIENT_PROFILE);
-  }
+  addProfile(patient, LAC_PROFILES.PATIENT);
 }
 
 function ensureIpsPatientProfile(patient) {
-  const IPS_PATIENT = 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips';
-  patient.meta = patient.meta || {};
-  patient.meta.profile = Array.isArray(patient.meta.profile) ? patient.meta.profile : [];
-  if (!patient.meta.profile.includes(IPS_PATIENT)) {
-    patient.meta.profile.push(IPS_PATIENT);
-  }
+  addProfile(patient, IPS_PROFILES.PATIENT);
 }
 
 function ensureIpsProfile(resource) {
   if (!resource?.resourceType) return;
-    const map = {
-    'AllergyIntolerance': 'http://hl7.org/fhir/uv/ips/StructureDefinition/AllergyIntolerance-uv-ips',
-    'MedicationStatement': 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationStatement-uv-ips',
-    'MedicationRequest': 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationRequest-uv-ips',
-    'Medication': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Medication-uv-ips',
-    'Condition': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Condition-uv-ips',
-    'Procedure': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Procedure-uv-ips',
-    'Immunization': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Immunization-uv-ips',
-    'Observation': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Observation-results-uv-ips', // genérica de resultados
-    'DiagnosticReport': 'http://hl7.org/fhir/uv/ips/StructureDefinition/DiagnosticReport-uv-ips',
-    'ImagingStudy': 'http://hl7.org/fhir/uv/ips/StructureDefinition/ImagingStudy-uv-ips',
-    'Specimen': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Specimen-uv-ips',
-    'Device': 'http://hl7.org/fhir/StructureDefinition/Device', // IPS remite al core aquí
-    'DeviceUseStatement': 'http://hl7.org/fhir/uv/ips/StructureDefinition/DeviceUseStatement-uv-ips',
-    'Media': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Media-observation-uv-ips',
-    'Practitioner': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Practitioner-uv-ips',
-    'PractitionerRole': 'http://hl7.org/fhir/uv/ips/StructureDefinition/PractitionerRole-uv-ips',
-    'Organization': 'http://hl7.org/fhir/uv/ips/StructureDefinition/Organization-uv-ips'
+  
+  const profileMap = {
+    'AllergyIntolerance': IPS_PROFILES.ALLERGY_INTOLERANCE,
+    'MedicationStatement': IPS_PROFILES.MEDICATION_STATEMENT,
+    'Condition': IPS_PROFILES.CONDITION,
+    'Procedure': IPS_PROFILES.PROCEDURE,
+    'Immunization': IPS_PROFILES.IMMUNIZATION,
+    'Observation': IPS_PROFILES.OBSERVATION
   };
 
-  const prof = map[resource.resourceType];
-  if (!prof) return;
-  resource.meta = resource.meta || {};
-  resource.meta.profile = Array.isArray(resource.meta.profile) ? resource.meta.profile : [];
-  if (!resource.meta.profile.includes(prof)) {
-    resource.meta.profile.push(prof);
+  const profile = profileMap[resource.resourceType];
+  if (profile) {
+    addProfile(resource, profile);
   }
 }
 
 function ensureLacBundleProfile(bundle) {
-  const prof = 'http://lacpass.racsel.org/StructureDefinition/lac-bundle';
-  bundle.meta = bundle.meta || {};
-  bundle.meta.profile = Array.isArray(bundle.meta.profile) ? bundle.meta.profile : [];
-  if (!bundle.meta.profile.includes(prof)) bundle.meta.profile.push(prof);
+  addProfile(bundle, LAC_PROFILES.BUNDLE);
 }
 
 function ensureLacCompositionProfile(comp) {
-  const prof = 'http://lacpass.racsel.org/StructureDefinition/lac-composition';
-  comp.meta = comp.meta || {};
-  comp.meta.profile = Array.isArray(comp.meta.profile) ? comp.meta.profile : [];
-  if (!comp.meta.profile.includes(prof)) comp.meta.profile.push(prof);
+  addProfile(comp, LAC_PROFILES.COMPOSITION);
 }
 
 function ensureCompositionSubject(comp, patientEntry) {
@@ -1014,15 +1108,75 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
   const candidates = (summaryBundle.entry || []).filter(x => allowedTypes.includes(x.resource?.resourceType));
   if (candidates.length > 0) {
     sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
-    candidates.forEach(candidate => {
-      // Asegurar perfil IPS antes de enlazar
-      ensureIpsProfile(candidate.resource);
-      // Enlazar si no está ya referenciado
-      const alreadyReferenced = sec.entry.some(e => e.reference === candidate.fullUrl);
-      if (!alreadyReferenced) {
-        sec.entry.push({ reference: candidate.fullUrl });
+    // Enlaza SOLO el primer candidato (satisface slice mínimo)
+    const candidate = candidates[0];
+    ensureIpsProfile(candidate.resource);
+    const alreadyReferenced = sec.entry.some(e => e.reference === candidate.fullUrl);
+    if (!alreadyReferenced) sec.entry.push({ reference: candidate.fullUrl });
+    return;
+  }
+
+  // Si tampoco hay candidatos: inyectar placeholder IPS "no known …"
+  const patientEntry = (summaryBundle.entry || []).find(e => e.resource?.resourceType === 'Patient');
+  const patRef = patientEntry?.fullUrl || (patientEntry?.resource?.id ? `Patient/${patientEntry.resource.id}` : null);
+  const nowIso = new Date().toISOString();
+  let placeholder = null;
+
+  if (allowedTypes.includes('AllergyIntolerance')) {
+    placeholder = {
+      fullUrl: 'urn:uuid:allergy-none',
+      resource: {
+        resourceType: 'AllergyIntolerance',
+        meta: { profile: [IPS_PROFILES.ALLERGY_INTOLERANCE] },
+        clinicalStatus: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical', code: 'active' }] },
+        verificationStatus: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-verification', code: 'unconfirmed' }] },
+        code: {
+          coding: [
+            { system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-allergies', display: 'No known allergies' },
+            { system: 'http://snomed.info/sct', code: '716186003', display: 'No known allergy (situation)' }
+          ],
+          text: 'No known allergies'
+        },
+        patient: patRef ? { reference: patRef } : undefined
       }
-    });
+    };
+  } else if (allowedTypes.includes('MedicationStatement')) {
+    placeholder = {
+      fullUrl: 'urn:uuid:meds-none',
+      resource: {
+        resourceType: 'MedicationStatement',
+        meta: { profile: [IPS_PROFILES.MEDICATION_STATEMENT] },
+        status: 'active',
+        medicationCodeableConcept: {
+          coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-medications', display: 'No known medications' }],
+          text: 'No known medications'
+        },
+        subject: patRef ? { reference: patRef } : undefined,
+        effectiveDateTime: nowIso
+      }
+    };
+  } else if (allowedTypes.includes('Condition')) {
+    const isPast = loincCode === LOINC_CODES.PAST_ILLNESS_SECTION;
+    placeholder = {
+      fullUrl: isPast ? 'urn:uuid:pasthx-none' : 'urn:uuid:problem-none',
+      resource: {
+        resourceType: 'Condition',
+        meta: { profile: [IPS_PROFILES.CONDITION] },
+        category: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/condition-category', code: 'problem-list-item' }] }],
+        code: {
+          coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-problems', display: 'No known problems' }],
+          text: isPast ? 'No known past illnesses' : 'No known problems'
+        },
+        subject: patRef ? { reference: patRef } : undefined
+      }
+    };
+  }
+
+  if (placeholder) {
+    summaryBundle.entry = Array.isArray(summaryBundle.entry) ? summaryBundle.entry : [];
+    summaryBundle.entry.push(placeholder);
+    sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
+    sec.entry.push({ reference: placeholder.fullUrl });
   }
 }
 
@@ -1174,16 +1328,16 @@ function fixBundleValidationIssues(summaryBundle) {
 
     // Secciones obligatorias (garantiza al menos una entry válida por slice)
     // Alergias: LOINC 48765-2 → AllergyIntolerance
-    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, '48765-2', ['AllergyIntolerance']);
+    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.ALLERGIES_SECTION, ['AllergyIntolerance']);
 
     // Problemas activos/lista de problemas: LOINC 11450-4 → Condition
-    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, '11450-4', ['Condition']);
+    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.PROBLEMS_SECTION, ['Condition']);
 
-    // Antecedentes de enfermedad (Past Illness Hx): LOINC 11348-0 → Condition (historia pasada)
-    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, '11348-0', ['Condition']);
+    // Medicación: LOINC 10160-0 → MedicationStatement o MedicationRequest
+    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.MEDICATIONS_SECTION, ['MedicationStatement','MedicationRequest']);
 
-    // (Opcional, pero recomendable) Medicación: LOINC 10160-0 → MedicationStatement o MedicationRequest
-    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, '10160-0', ['MedicationStatement','MedicationRequest']);
+    // Antecedentes (Past Illness Hx): LOINC 11348-0 → Condition
+    ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.PAST_ILLNESS_SECTION, ['Condition']);
   }
 
   // 2. Perfiles IPS en recursos referenciados por las secciones para que pasen los discriminadores
@@ -1316,8 +1470,8 @@ function fixBundleValidationIssues(summaryBundle) {
     checkAndFixReferences(entry.resource, allFullUrls, summaryBundle);
   });
 
-  // 8) Refuerzo: Composition.meta.profile debe contener lac-composition
-  const LAC_COMPOSITION = 'http://lacpass.racsel.org/StructureDefinition/lac-composition';
+  // 8) Refuerzo: Composition.meta.profile debe contener lac-composition (racsel)
+  const LAC_COMPOSITION = LAC_PROFILES.COMPOSITION;
   if (compositionEntry?.resource) {
     compositionEntry.resource.meta = compositionEntry.resource.meta || {};
     compositionEntry.resource.meta.profile = Array.isArray(compositionEntry.resource.meta.profile)
@@ -1329,8 +1483,8 @@ function fixBundleValidationIssues(summaryBundle) {
   }
 
   // 9) NUEVAS MEJORAS LAC: Patient identifiers con URN OIDs (solo si NO hay identifiers)
-  const natOid = process.env.LAC_NATIONAL_ID_SYSTEM_OID;   // p.ej. 1.2.36.146.595.217.0.1
-  const ppnOid = process.env.LAC_PASSPORT_ID_SYSTEM_OID;   // p.ej. 2.16.840.1.113883.4.1
+  const natOid = LAC_NATIONAL_ID_SYSTEM_OID;   // p.ej. 1.2.36.146.595.217.0.1
+  const ppnOid = LAC_PASSPORT_ID_SYSTEM_OID;   // p.ej. 2.16.840.1.113883.4.1
   // Reutilizar patientEntry ya definido anteriormente
   if (patientEntry?.resource && (natOid || ppnOid)) {
     const patient = patientEntry.resource;
