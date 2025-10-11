@@ -933,31 +933,6 @@ async function normalizeTerminologyInBundle(bundle) {
 }
 
 // ===================== Helpers nuevos =====================
-function isUrnOid(value) {
-  if (typeof value !== 'string') return false;
-  const v = value.trim();
-  // Validar formato URN OID estricto: debe empezar con urn:oid: seguido de números separados por puntos
-  return /^urn:oid:\d+(\.\d+)+$/.test(v) && v.split('.').length >= 3; // al menos 2 niveles después del primer número
-}
-
-function toUrnOid(value) {
-  if (!value) return null;
-  const v = String(value).trim();
-
-  // Si ya es un URN OID válido, retornarlo tal como está
-  if (v.startsWith('urn:oid:') && /^urn:oid:\d+(\.\d+)+$/.test(v)) {
-    return v;
-  }
-
-  // Extraer solo la parte numérica del OID
-  const m = v.match(/(\d+(?:\.\d+)+)/);
-  if (m && m[1]) {
-    return `urn:oid:${m[1]}`;
-  }
-
-  // Si no parece un OID válido, retornar null para que se use un OID por defecto
-  return null;
-}
 
 function stripNarrativeLinkExtensions(resource) {
   if (!resource || !Array.isArray(resource.extension)) return;
