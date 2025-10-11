@@ -1455,13 +1455,15 @@ app.post('/lacpass/_iti65', async (req, res) => {
       // Asegurar que la referencia del Composition al paciente esté correcta
       const firstEntry = summaryBundle.entry[0];
       if (firstEntry && firstEntry.resource && firstEntry.resource.resourceType === 'Composition') {
-        // Verificar que el Composition.id coincida con fullUrl
-        if (firstEntry.fullUrl && firstEntry.fullUrl.startsWith('urn:uuid:')) {
-          const expectedId = firstEntry.fullUrl.split(':').pop();
-          if (firstEntry.resource.id !== expectedId) {
-            firstEntry.resource.id = expectedId;
-          }
-        }
+        
+      // Alinear Composition.id con el ID del fullUrl (urn|relative|absolute)
+      const fu = String(firstEntry.fullUrl || '');
+      const expectedId = fu.startsWith('urn:uuid:')
+        ? fu.split(':').pop()
+        : fu.split('/').filter(Boolean).pop(); // último segmento de "…/Composition/<id>"
+      if (expectedId && firstEntry.resource.id !== expectedId) {
+        firstEntry.resource.id = expectedId;
+      }
         
         // Asegurar referencia correcta al Patient
         const patientEntry = summaryBundle.entry.find(e => e.resource && e.resource.resourceType === 'Patient');
@@ -1659,7 +1661,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const pid = patientEntry.resource.identifier?.[0];
     if (pid?.system && pid?.value) {
       patientTxEntry.request.ifNoneExist =
-        `identifier=${encodeURIComponent(`${pid.system}|${pid.value}`)}`;
+        `identifier=${encodeURIComponent(pid.system)}|${encodeURIComponent(pid.value)}`;
 }
 
     // ---- ProvideBundle (se arma con ramas según BINARY_DELIVERY_MODE)
