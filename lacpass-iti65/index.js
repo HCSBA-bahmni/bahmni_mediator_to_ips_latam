@@ -1385,6 +1385,19 @@ app.post('/lacpass/_iti65', async (req, res) => {
       }]
     };
 
+    // <<< NUEVO: incluir Patient como entrada del transaction >>>
+    const patientTxEntry = {
+      fullUrl: patientRef,
+      resource: patientEntry.resource,
+      request: { method: 'POST', url: 'Patient' }
+    };
+    // Opcional y recomendado: evitar duplicados con ifNoneExist si tienes un identifier
+    const pid = patientEntry.resource.identifier?.[0];
+    if (pid?.system && pid?.value) {
+      patientTxEntry.request.ifNoneExist =
+        `identifier=${encodeURIComponent(pid.system)}|${encodeURIComponent(pid.value)}`;
+    }
+
     // ProvideBundle (transaction)
     const provideBundle = {
       resourceType: 'Bundle',
@@ -1396,8 +1409,13 @@ app.post('/lacpass/_iti65', async (req, res) => {
       type: 'transaction',
       timestamp: now,
       entry: [
+        // NUEVO: Patient a nivel superior (resuelve List.subject y DocumentReference.subject)
+        patientTxEntry,
+
         { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
         { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
+
+        // El Bundle con el documento (tu IPS/summary) que referencia Bundle URN en el DocRef.attachment.url
         { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } }
       ]
     };
