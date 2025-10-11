@@ -1448,8 +1448,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
       const compositionIndex = summaryBundle.entry.findIndex(e => e.resource && e.resource.resourceType === 'Composition');
       if (compositionIndex !== -1 && compositionIndex !== 0) {
         // Mover Composition al primer lugar
-        const compositionEntry = summaryBundle.entry.splice(compositionIndex, 1)[0];
-        summaryBundle.entry.unshift(compositionEntry);
+        const movedCompositionEntry = summaryBundle.entry.splice(compositionIndex, 1)[0];
+        summaryBundle.entry.unshift(movedCompositionEntry);
       }
       
       // Asegurar que la referencia del Composition al paciente esté correcta
@@ -1549,8 +1549,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const bundleSize = bundleBytes.length;
 
     const binaryId = uuidv4();
-    // Master identifier del documento (debe ser estable e independiente del Binary)
-    const docMasterIdentifier = `urn:uuid:${compositionEntry?.resource?.id || originalBundleId}`;
 
     // URL a usar en el attachment si corresponde
     const attachmentUrl = buildRef(ATTACHMENT_URL_MODE, 'Binary', binaryId);
@@ -1597,6 +1595,9 @@ app.post('/lacpass/_iti65', async (req, res) => {
       coding: [{ system: 'http://loinc.org', code: '60591-5', display: 'Patient summary Document' }]
     };
     const patientDisplay = patientEntry.resource.name?.[0]?.text || `Patient ${patientEntry.resource.id}`;
+
+    // ✅ AHORA calcula el masterIdentifier, cuando compositionEntry ya existe
+    const docMasterIdentifier = `urn:uuid:${compositionEntry?.resource?.id || originalBundleId}`;
 
     // SubmissionSet
     const submissionSet = {
@@ -1678,8 +1679,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const pid = patientEntry.resource.identifier?.[0];
     if (pid?.system && pid?.value) {
       patientTxEntry.request.ifNoneExist =
-        `identifier=${encodeURIComponent(pid.system)}|${encodeURIComponent(pid.value)}`;
-    }
+        `identifier=${encodeURIComponent(`${pid.system}|${pid.value}`)}`;
+}
 
     // ProvideBundle (transaction)
     const provideBundle = {
