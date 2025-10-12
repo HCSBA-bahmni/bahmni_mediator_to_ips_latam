@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import express from 'express';
 import axios from 'axios';
+// Nota: cambios para soportar OID con "urn:oid." en lugar de "urn:oid:"
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
@@ -127,6 +128,9 @@ const {
   TS_DEBUG_LEVEL = 'warn', // 'debug', 'warn', 'error', 'silent'
 } = process.env;
 
+// ====== NUEVO: separador configurable para URN OID (por defecto ".")
+const OID_URN_SEPARATOR = process.env.OID_URN_SEPARATOR || '.';
+
 const {
   FULLURL_MODE_PROVIDE = 'urn',
   FULLURL_MODE_DOCUMENT = 'absolute',
@@ -166,12 +170,6 @@ const LOINC_CODES = {
   IMMUNIZATIONS_SECTION: '11369-6',
   PROCEDURES_SECTION: '47519-4',
   RESULTS_SECTION: '30954-2'
-};
-
-// URN OID helpers
-const OID_SYSTEMS = {
-  NATIONAL: `urn:oid:${LAC_NATIONAL_ID_SYSTEM_OID}`,
-  PASSPORT: `urn:oid:${LAC_PASSPORT_ID_SYSTEM_OID}`
 };
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
@@ -293,18 +291,24 @@ function addProfile(resource, profileUrl) {
   }
 }
 
-// === Helpers URN OID (única implementación canónica) ===
+// === Helpers URN OID (admiten ":" y "."; emiten con separador configurable) ===
 function isUrnOid(value) {
   if (typeof value !== 'string') return false;
   const v = value.trim();
-  return /^urn:oid:\d+(\.\d+)+$/.test(v);
+  // Aceptar 'urn:oid:1.2.3' o 'urn:oid.1.2.3'
+  return /^urn:oid[.:]\d+(?:\.\d+)+$/.test(v);
 }
 function toUrnOid(value) {
   if (!value) return null;
   const v = String(value).trim();
-  if (v.startsWith('urn:oid:') && /^urn:oid:\d+(\.\d+)+$/.test(v)) return v;
+  // Si ya viene como URN con ":" o ".", normalizar al separador elegido
+  if (/^urn:oid[.:]\d+(?:\.\d+)+$/.test(v)) {
+    // Reemplaza el separador actual por el configurado
+    return v.replace(/^urn:oid[.:]/, `urn:oid${OID_URN_SEPARATOR}`);
+  }
+  // Si viene como OID "crudo" (solo dígitos y puntos), formatear
   const m = v.match(/(\d+(?:\.\d+)+)/);
-  return m ? `urn:oid:${m[1]}` : null;
+  return m ? `urn:oid${OID_URN_SEPARATOR}${m[1]}` : null;
 }
 
 /**
@@ -949,9 +953,9 @@ function stripNarrativeLinkExtensions(resource) {
 function fixPatientIdentifiers(patient) {
   if (!patient) return;
 
-  // Usar las constantes OID definidas globalmente
-  const defaultNatOid = LAC_NATIONAL_ID_SYSTEM_OID; // desde .env
-  const defaultIntOid = LAC_PASSPORT_ID_SYSTEM_OID; // desde .env
+  // Usar las constantes OID definidas globalmente (se formatearán como urn:oid.<OID>)
+  const defaultNatOid = toUrnOid(LAC_NATIONAL_ID_SYSTEM_OID); // desde .env
+  const defaultIntOid = toUrnOid(LAC_PASSPORT_ID_SYSTEM_OID); // desde .env
 
   // Forzar reconstrucción completa de identifiers para garantizar cumplimiento LAC
   const originalIds = [...(patient.identifier || [])];
@@ -991,7 +995,8 @@ function fixPatientIdentifiers(patient) {
         code: 'MR'
       }]
     },
-    system: toUrnOid(defaultNatOid) || 'urn:oid:2.16.152.1.1.1',
+    // Emite con separador configurado (por defecto ".")
+    system: defaultNatOid || toUrnOid('2.16.152'),
     value: nationalValue
   });
 
@@ -1005,7 +1010,7 @@ function fixPatientIdentifiers(patient) {
           code: 'PPN'
         }]
       },
-      system: toUrnOid(defaultIntOid) || 'urn:oid:2.16.840.1.113883.4.1',
+      system: defaultIntOid || toUrnOid('2.16.840.1.113883.4.1'),
       value: passportValue || nationalValue // usar el mismo valor si no hay pasaporte específico
     });
   }
@@ -1169,65 +1174,7 @@ function fixBundleValidationIssues(summaryBundle) {
     }
   }
 
-  // 1) Lógica de Patient movida después de canonicalización
-  // === NUEVO: Canonicalizar fullUrl y referencias internas al MODO deseado ===
-  // Si FULLURL_MODE_DOCUMENT=absolute, tanto fullUrl como las referencias quedarán absolutas.
-  // Si es relative o urn, quedarán en ese modo (todo consistente).
-
-  function extractIdFromFullUrl(entry) {
-    if (!entry) return null;
-    if ((entry.fullUrl || '').startsWith('urn:uuid:')) {
-      return entry.fullUrl.split(':').pop();
-    }
-    // Preferir resource.id si existe
-    if (entry.resource?.id) return entry.resource.id;
-    // Fallback: último segmento del fullUrl
-    if (entry.fullUrl) {
-      const parts = entry.fullUrl.split('/').filter(Boolean);
-      return parts[parts.length - 1] || null;
-    }
-    return null;
-  }
-
-  function canonicalizeBundleToMode(bundle, mode) {
-    if (!bundle?.entry) return;
-    const urlMap = new Map(); // referencia original -> destino según mode
-
-    for (const e of bundle.entry) {
-      if (!e.resource) continue;
-      let id = extractIdFromFullUrl(e);
-      if (!id) {
-        // Generar uno si falta
-        id = uuidv4();
-        e.resource.id = id;
-      }
-      const targetRef = buildRef(mode, e.resource.resourceType, id);
-
-      // Mapear variantes conocidas a URN
-      if (e.fullUrl && e.fullUrl !== targetRef) urlMap.set(e.fullUrl, targetRef);
-      if (e.resource.resourceType) {
-        urlMap.set(`${e.resource.resourceType}/${id}`, targetRef);
-        // También mapear posibles relative con './'
-        urlMap.set(`./${e.resource.resourceType}/${id}`, targetRef);
-        // Y el URN equivalente (por si vino mezclado)
-        urlMap.set(`urn:uuid:${id}`, targetRef);
-      }
-
-      // Reescribir fullUrl al modo elegido
-      e.fullUrl = targetRef;
-
-      // Limpiar meta.source interno (#...)
-      if (e.resource.meta?.source && String(e.resource.meta.source).startsWith('#')) {
-        delete e.resource.meta.source;
-      }
-    }
-
-    // Reescribir todas las referencias usando el urlMap
-    updateReferencesInObject(bundle, urlMap);
-  }
-
-  // Ejecutar canonicalización al inicio
-  canonicalizeBundleToMode(summaryBundle, (FULLURL_MODE_DOCUMENT || 'absolute').toLowerCase());
+  // Las URL se normalizan más abajo con applyUrlModeToBundle(), evitando doble canonicalización.
 
   // === Post-canonicalización: Patient
   const patientEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
@@ -1251,7 +1198,7 @@ function fixBundleValidationIssues(summaryBundle) {
             code: 'MR'
           }]
         },
-        system: 'urn:oid:2.16.152.1.1.1', // OID genérico
+        system: toUrnOid('2.16.152'), // OID genérico normalizado a urn:oid.<...>
         value: patientEntry.resource.id || 'unknown'
       }];
     }
@@ -1754,7 +1701,7 @@ function generateFallbackBundle(identifierValue) {
                 resourceType: 'Patient',
                 id: `pdqm-fallback-${identifierValue}`,
                 identifier: [{
-                    system: PDQM_DEFAULT_IDENTIFIER_SYSTEM || 'urn:oid:1.2.3.4.5',
+                    system: PDQM_DEFAULT_IDENTIFIER_SYSTEM || toUrnOid('1.2.3.4.5'),
                     value: identifierValue
                 }],
                 name: [{
