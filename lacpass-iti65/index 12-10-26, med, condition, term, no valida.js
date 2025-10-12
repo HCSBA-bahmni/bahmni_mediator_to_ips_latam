@@ -1066,47 +1066,6 @@ function stripNarrativeLinkExtensions(resource) {
   }
 }
 
-// --- NUEVO: Sanitizar Medication (quitar ext OMRS y dejar solo SNOMED) ---
-function sanitizeMedicationResource(med) {
-  if (!med || med.resourceType !== 'Medication') return;
-  // 1) quitar extensiones OMRS
-  if (Array.isArray(med.extension)) {
-    med.extension = med.extension.filter(e => !String(e.url).startsWith('http://fhir.openmrs.org/ext/medicine'));
-    if (med.extension.length === 0) delete med.extension;
-  }
-  // 2) code.coding → solo SNOMED, y sin codings sin system
-  if (med.code?.coding) {
-    med.code.coding = med.code.coding
-      .filter(c => c?.system && c.system === 'http://snomed.info/sct');
-    if (med.code.coding.length === 0) delete med.code.coding;
-  }
-  // 3) form.coding → solo SNOMED; si queda vacío, elimina form
-  if (med.form?.coding) {
-    med.form.coding = med.form.coding
-      .filter(c => c?.system && c.system === 'http://snomed.info/sct');
-    if (med.form.coding.length === 0) delete med.form.coding;
-  }
-  if (med.form && !med.form.coding && !med.form.text) delete med.form;
-  // 4) asegurar textos básicos
-  if (med.code && !med.code.text) med.code.text = 'Medication';
-}
-
-// --- OPCIONAL: Sanitizar Practitioner.identifier.system no estándar (OMRS) ---
-function sanitizePractitionerIdentifiers(prac) {
-  if (!prac || prac.resourceType !== 'Practitioner') return;
-  if (!Array.isArray(prac.identifier)) return;
-  prac.identifier.forEach(id => {
-    if (typeof id?.system === 'string' &&
-        id.system.startsWith('http://fhir.openmrs.org/ext/provider/identifier')) {
-      // quita el system no resoluble; deja value/type para que siga siendo usable
-      delete id.system;
-    }
-  });
-  // limpia identifiers vacíos
-  prac.identifier = prac.identifier.filter(id => id.value || id.type || id.system);
-  if (prac.identifier.length === 0) delete prac.identifier;
-}
-
 function fixPatientIdentifiers(patient) {
   if (!patient) return;
 
@@ -1371,13 +1330,6 @@ function fixBundleValidationIssues(summaryBundle) {
     // Aplicamos a tipos que el validador reportó: AllergyIntolerance, MedicationStatement y Condition
     if (['AllergyIntolerance','MedicationStatement','Condition','Immunization'].includes(r.resourceType)) {
       stripNarrativeLinkExtensions(r);
-    }
-    // LIMPIEZA NUEVA: Medication y Practitioner
-    if (r.resourceType === 'Medication') {
-      sanitizeMedicationResource(r);
-    }
-    if (r.resourceType === 'Practitioner') {
-      sanitizePractitionerIdentifiers(r);
     }
   }
 

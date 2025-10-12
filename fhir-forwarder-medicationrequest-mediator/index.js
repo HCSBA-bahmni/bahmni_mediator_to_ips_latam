@@ -211,13 +211,53 @@ function isGoneOrMissingError(err) {
   return code === 404 || code === 410
 }
 
+// --- Sanitize Medication: quitar extensiones OMRS y dejar solo SNOMED ---
+function sanitizeMedication(med) {
+  if (!med || med.resourceType !== 'Medication') return med
+  // 1) eliminar extensiones de OpenMRS
+  if (Array.isArray(med.extension)) {
+    med.extension = med.extension.filter(e => !String(e.url).startsWith('http://fhir.openmrs.org/ext/medicine'))
+    if (med.extension.length === 0) delete med.extension
+  }
+  // 2) code.coding → solo SNOMED
+  if (med.code?.coding) {
+    med.code.coding = med.code.coding.filter(c => c.system === 'http://snomed.info/sct')
+    if (med.code.coding.length === 0) delete med.code.coding
+  }
+  // 3) form.coding → solo SNOMED (si existe)
+  if (med.form?.coding) {
+    med.form.coding = med.form.coding.filter(c => c.system === 'http://snomed.info/sct')
+    if (med.form.coding.length === 0) delete med.form.coding
+  }
+  // 4) asegurar textos
+  if (med.code && !med.code.text) med.code.text = 'Medication'
+  if (med.form && !med.form.coding && !med.form.text) delete med.form
+  return med
+}
+
+// --- Sanitize Condition: dejar solo SNOMED en code.coding (y preservar text) ---
+function sanitizeCondition(cond) {
+  if (!cond || cond.resourceType !== 'Condition') return cond
+  if (cond.code?.coding) {
+    cond.code.coding = cond.code.coding.filter(c => c.system === 'http://snomed.info/sct')
+    if (cond.code.coding.length === 0) delete cond.code.coding
+  }
+  // Asegurar que haya algún texto para no perder entendibilidad
+  if (cond.code && !cond.code.text) cond.code.text = 'Condition'
+  return cond
+}
+
 // 4) PUT a Nodo con retries de dependencias mínimas
 async function putToNode(resource) {
   const base = String(process.env.FHIR_NODE_URL || '').replace(/\/$/, '')
   const url = `${base}/fhir/${resource.resourceType}/${resource.id}`
   const doPut = async () => {
     logStep('PUT (node)', url)
-    const r = await axios.put(url, resource, {
+    // Sanitizar según tipo antes de subir
+    let payload = resource
+    if (payload?.resourceType === 'Medication') payload = sanitizeMedication({ ...payload })
+    else if (payload?.resourceType === 'Condition') payload = sanitizeCondition({ ...payload })
+    const r = await axios.put(url, payload, {
       headers:{ 'Content-Type':'application/fhir+json' },
       validateStatus: false,
       httpsAgent: axios.defaults.httpsAgent || devAgent
@@ -479,10 +519,8 @@ async function buildMedicationFromOMRS(drugUuid) {
     code: { text: conceptName },
     ...(drug?.form ? { form: { text: drug.form } } : {})
   }
-  // Nota: Si quieres representar 'strength' libre, evita ponerlo en Ratio inválido.
-  // Podrías añadir una extension si tu nodo lo tolera:
-  // if (drug?.strength) med.extension = [...(med.extension||[]), { url:'https://example.org/fhir/StructureDefinition/medication-strength-text', valueString: drug.strength }]
-  return med
+  // Sanitizar por consistencia (aunque no agregamos extensiones aquí)
+  return sanitizeMedication(med)
 }
 
 async function uploadMedication(medId) {
@@ -512,7 +550,7 @@ async function uploadMedication(medId) {
       // Fallback 2: OpenMRS REST /drug → construir Medication mínimo
       if (baseOMRS_REST && omrsAuth) {
         try {
-          const medBuilt = await buildMedicationFromOMRS(medId)
+          const medBuilt = await buildMedicationFromOMRS(medId) // ya viene sanitizado
           logStep('🏗️ Construyendo Medication desde REST drug…', medId)
           await putToNode(medBuilt)
           uploadedMedications.add(medId)
