@@ -1392,6 +1392,18 @@ function fixBundleValidationIssues(summaryBundle) {
     checkAndFixReferences(entry.resource, allFullUrls, summaryBundle);
   });
 
+  // 7.bis. Sanear meta.source que empiecen con '#' (problemático para validación)
+  for (const e of summaryBundle.entry || []) {
+    const r = e.resource;
+    if (r?.meta?.source && typeof r.meta.source === 'string' && r.meta.source.startsWith('#')) {
+      // Opción A: borrar
+      delete r.meta.source;
+
+      // O si prefieres Opción B: convertir a una URI canónica del sistema
+      // r.meta.source = asFhirBase(process.env.ABSOLUTE_FULLURL_BASE || process.env.FHIR_NODE_URL || 'urn:uuid:' + r.id);
+    }
+  }
+
   // 8) Refuerzo: Composition.meta.profile debe contener lac-composition (racsel)
   const LAC_COMPOSITION = LAC_PROFILES.COMPOSITION;
   if (compositionEntry?.resource) {
