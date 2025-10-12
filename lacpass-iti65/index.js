@@ -1824,7 +1824,9 @@ function updateReferencesInObject(obj, urlMap) {
 
 // ===================== PDQm =====================
 async function pdqmFetchBundleByIdentifier(identifierValue) {
+    console.log('🔍 PDQm fetch for identifier:', identifierValue, 'using PDQM_FHIR_URL:', PDQM_FHIR_URL);
     if (!PDQM_FHIR_URL || !identifierValue) return null;
+    console.log('---')
 
     const maxAttempts = 3;
     let currentAttempt = 0;
