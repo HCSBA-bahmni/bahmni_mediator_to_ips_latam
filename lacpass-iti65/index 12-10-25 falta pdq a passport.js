@@ -643,64 +643,55 @@ function robustUrlEncode(value) {
   return encoded;
 }
 
-// Nuevo: devuelve una lista ORDENADA de candidatos (pasaporte -> nacional -> último recurso)
-function pickIdentifiersOrderedForPdqm(identifiers) {
-  if (!Array.isArray(identifiers) || identifiers.length === 0) return [];
+function pickIdentifierValueForPdqm(identifiers) {
+  if (!Array.isArray(identifiers) || identifiers.length === 0) return null;
 
   const passportTypeCode = (process.env.PDQM_IDENTIFIER_TYPE_CODE_PASSPORT || 'PPN').trim();
   const passportTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_PASSPORT || 'Pasaporte').toLowerCase();
-  const nationalTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_NATIONAL  || 'RUN').toLowerCase();
+  const passportOidRaw   = (process.env.LAC_PASSPORT_ID_SYSTEM_OID || '').trim();
+  const passportSystemUrn = toUrnOid(passportOidRaw);
 
-  const norm = (s) => String(s || '').trim();
   const isPassportId = (id) => {
-    const codeHit = (id.type?.coding || []).some(c => norm(c.code).toUpperCase() === passportTypeCode.toUpperCase());
-    const textHit = norm(id.type?.text).toLowerCase().includes(passportTypeText) ||
-                    /passport|pasaporte/i.test(norm(id.type?.text));
-    return (codeHit || textHit) && !!norm(id.value);
+    if (!id || !id.value) return false;
+    const byCode = id.type?.coding?.some(c => (c.code || '').toUpperCase() === passportTypeCode.toUpperCase());
+    const byText = (id.type?.text || '').toLowerCase().includes(passportTypeText);
+    const bySys  = !!id.system && (
+      id.system.toLowerCase().includes('passport') ||
+      id.system.toLowerCase().includes('pasaporte') ||
+      (passportSystemUrn && id.system === passportSystemUrn)
+    );
+    return byCode || byText || bySys;
   };
-  const isNationalId = (id) => {
-    const txt = norm(id.type?.text);
-    const code = norm(id.type?.coding?.[0]?.code);
-    const val = norm(id.value);
-    if (/^RUN\*/i.test(val)) return true;                 // RUN*...
-    if (/run|nacional|national/i.test(txt)) return true;  // por texto
-    if (code && /RUN/i.test(code)) return true;           // por code si existiera
-    return false;
-  };
+
+  // Evita valores tipo RUN*... y prefiere patrones de pasaporte (p.ej. CLxxxx)
   const looksLikePassportValue = (v) => {
     if (!v) return false;
-    if (/\*/.test(v)) return false;        // valores con * no se usan
-    if (/^RUN\*/i.test(v)) return false;   // descartar RUN*...
-    // patrón genérico "CLxxxxxx" u otros pasaportes: 2 letras + 5+ alfanum.
+    if (/\*/.test(v)) return false;       // nunca usar valores con "*"
+    if (/^RUN\*/i.test(v)) return false;  // descartar RUN*...
+    // patrón "país + resto" (pasaporte típico)
     return /^[A-Z]{2}[A-Z0-9]{5,}$/i.test(v);
   };
   const preferCL = (arr) =>
     arr.sort((a, b) => {
-      const av = norm(a.value), bv = norm(b.value);
-      const aCL = /^CL/i.test(av), bCL = /^CL/i.test(bv);
-      return (bCL ? 1 : 0) - (aCL ? 1 : 0);
+      const av = String(a.value || '');
+      const bv = String(b.value || '');
+      const aCL = /^CL/i.test(av); const bCL = /^CL/i.test(bv);
+      return (bCL ? 1 : 0) - (aCL ? 1 : 0); // primero los que **empiezan** con CL
     });
 
-  // 1) Pasaporte "formal"
-  const passportFormal = preferCL(
-    identifiers.filter(isPassportId).filter(i => looksLikePassportValue(i.value))
-  ).map(i => norm(i.value));
-  // 2) Pasaporte "por forma" (value parece pasaporte) excluyendo RUN
-  const passportShape  = preferCL(
-    identifiers.filter(i => !isNationalId(i) && looksLikePassportValue(i.value))
-  ).map(i => norm(i.value));
-  // 3) Nacional (RUN) como fallback
-  const nationals      = identifiers.filter(isNationalId).map(i => norm(i.value));
-  // 4) Último recurso: cualquier value sin * ni RUN*
-  const lastResort     = identifiers
-    .filter(i => !!norm(i.value) && !/\*/.test(norm(i.value)) && !/^RUN\*/i.test(norm(i.value)))
-    .map(i => norm(i.value));
+  // 1) Prioridad: PPN real con valor válido → SOLO value
+  const passportIds = preferCL(
+    identifiers.filter(isPassportId).filter(id => looksLikePassportValue(id.value))
+  );
+  if (passportIds.length) return passportIds[0].value.trim();
 
-  // Unificar preservando orden y sin duplicados
-  const seen = new Set();
-  const ordered = [...passportFormal, ...passportShape, ...nationals, ...lastResort]
-    .filter(v => { if (seen.has(v)) return false; seen.add(v); return true; });
-  return ordered;
+  // 2) Cualquier id cuyo value parezca pasaporte → value
+  const anyPassportish = preferCL(identifiers.filter(id => looksLikePassportValue(id.value)))[0];
+  if (anyPassportish) return anyPassportish.value.trim();
+
+  // 3) Último recurso: algún value que NO tenga "*" ni empiece por RUN*
+  const lastResort = identifiers.find(id => !!id.value && !/\*/.test(id.value) && !/^RUN\*/i.test(id.value));
+  return lastResort ? lastResort.value.trim() : null;
 }
 
 // ===================== Logging helper para terminología =====================
@@ -2028,32 +2019,10 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
       if (localPatient) {
         const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
-        
-        // Nuevo: probar múltiples identificadores en cascada (Pasaporte -> Nacional -> otros)
-        const idCandidates = pickIdentifiersOrderedForPdqm(ids);
-        let pdqmBundle = null;
-        
-        if (idCandidates.length) {
-          for (const cand of idCandidates) {
-            try {
-              console.log(`🔍 PDQm: buscando por identifier=${cand}`);
-              const tryBundle = await pdqmFetchBundleByIdentifier(cand);
-              const hasHits = !!tryBundle && (
-                (Array.isArray(tryBundle.entry) && tryBundle.entry.length > 0) ||
-                (typeof tryBundle.total === 'number' && tryBundle.total > 0)
-              );
-              if (hasHits) {
-                pdqmBundle = tryBundle;
-                console.log(`✅ PDQm: resultados encontrados con identifier=${cand}`);
-                break;
-              } else {
-                console.warn(`⚠️ PDQm: sin resultados con identifier=${cand}`);
-              }
-            } catch (e) {
-              console.warn(`⚠️ PDQm: error buscando identifier=${cand} → ${e?.message || e}`);
-            }
-          }
-        }
+        const idValue = pickIdentifierValueForPdqm(ids);
+
+        // Trae el BUNDLE PDQm completo (no reemplaza Patient local)
+        const pdqmBundle = await pdqmFetchBundleByIdentifier(idValue);
 
         if (pdqmBundle?.resourceType === 'Bundle' && Array.isArray(pdqmBundle.entry) && pdqmBundle.entry.length > 0) {
           // Guardar para trazabilidad/debug
@@ -2073,7 +2042,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
           // Dejar disponible para uso posterior (p. ej. adjuntar como Binary/DocumentReference)
           req._pdqmBundle = pdqmBundle;
         } else {
-          console.warn('ℹ️ PDQm: sin resultados con ningún identificador de los candidatos');
+          console.warn('ℹ️ PDQm: sin resultados para el identificador:', idValue);
         }
       } else {
         console.warn('ℹ️ PDQm: no se encontró recurso Patient en el summaryBundle');
