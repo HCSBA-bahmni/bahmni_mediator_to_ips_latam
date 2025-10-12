@@ -67,6 +67,9 @@ function logStep(msg, ...d) { console.log(new Date().toISOString(), msg, ...d) }
 if (!process.env.FHIR_NODE_URL) { console.error('❌ FHIR_NODE_URL es obligatorio'); process.exit(1) }
 if (!process.env.FHIR_PROXY_URL) { console.error('❌ FHIR_PROXY_URL es obligatorio'); process.exit(1) }
 
+// Opcional: cantidad de visitas a considerar en Bahmni drugOrders
+const BAHMNI_NUMBER_OF_VISITS = Number(process.env.BAHMNI_NUMBER_OF_VISITS || 3)
+
 // -------- Defaults (SOLO Organization) --------
 const DEF_ORG_ENABLED = (process.env.DEFAULT_ORG_ENABLED || 'true').toLowerCase() === 'true'
 const DEF_ORG_ID   = process.env.DEFAULT_ORG_ID   || 'hcsba'
@@ -250,6 +253,21 @@ async function putToNode(resource) {
 
   if (res.status >= 400) throw new Error(`PUT failed ${res.status}`)
   return res.status
+}
+
+/**
+ * Determina el estado FHIR de una MedicationRequest según fechas.
+ * - Si hay dateStopped <= now  → 'stopped'
+ * - Si hay autoExpireDate <= now sin evidencia de dispensación → 'stopped'
+ * - En otro caso → 'active'
+ * (Si más adelante agregas evidencia de dispense completo, podrías devolver 'completed')
+ */
+function resolveMedReqStatus(dateStoppedMillis, autoExpireMillis, nowMillis = Date.now()) {
+  const ds = typeof dateStoppedMillis === 'number' ? dateStoppedMillis : undefined
+  const ae = typeof autoExpireMillis === 'number' ? dateStoppedMillis ? undefined : autoExpireMillis : undefined
+  if (ds != null && ds <= nowMillis) return 'stopped'
+  if (ae != null && ae <= nowMillis) return 'stopped'
+  return 'active'
 }
 
 // 5) Caches
@@ -454,18 +472,17 @@ async function buildMedicationFromOMRS(drugUuid) {
     }
   } catch { /* no crítico */ }
 
-  // 3) Ingredientes (si hay fuerza/concentración)
-  // OpenMRS drug tiene fields como strength (texto) y dosageForm, pero suelen ser libres.
-  // Aquí generamos Medication mínimo; si puedes mapear a SNOMED/UCUM, mejor.
-  return {
+  // 3) Ingredientes / forma: enriquecimiento mínimo y seguro (sin parsear strength libre)
+  const med = {
     resourceType: 'Medication',
     id: drugUuid,
     code: { text: conceptName },
-    // Opcional: agregar form si la tienes:
-    // form: { text: drug?.dosageForm?.display || drug?.dosageForm },
-    // Opcional: ingredient desde strength "500 mg" (requiere parseo si quieres UCUM):
-    // ingredient: [{ itemCodeableConcept: { text: conceptName }, strength: { numerator:{value:500, unit:'mg'} } }]
+    ...(drug?.form ? { form: { text: drug.form } } : {})
   }
+  // Nota: Si quieres representar 'strength' libre, evita ponerlo en Ratio inválido.
+  // Podrías añadir una extension si tu nodo lo tolera:
+  // if (drug?.strength) med.extension = [...(med.extension||[]), { url:'https://example.org/fhir/StructureDefinition/medication-strength-text', valueString: drug.strength }]
+  return med
 }
 
 async function uploadMedication(medId) {
@@ -514,16 +531,11 @@ async function uploadMedication(medId) {
 
 // 6) Fallback REST → MedicationRequest
 function mapRestOrderToFhirMedReq(order, patientUuid) {
-  // Status
-  const now = new Date()
-  let status = 'active'
-  const stopped = order.dateStopped ? new Date(order.dateStopped) : null
-  const autoExp = order.autoExpireDate ? new Date(order.autoExpireDate) : null
-  if (stopped && stopped <= now) status = 'completed'
-  else if (autoExp && autoExp <= now) status = 'completed'
+  // Estado (más fiel a R4: usar 'stopped' en vez de 'completed' cuando sólo hay fin/expiración)
+  const status = resolveMedReqStatus(order.dateStopped, order.autoExpireDate)
 
   // authoredOn
-  const authoredOn = order.dateActivated || order.dateCreated || null
+  const authoredOn = toIsoIfMillis(order.dateActivated) || toIsoIfMillis(order.dateCreated)
 
   // Encounter
   const encRef = order.encounter?.uuid ? { reference: `Encounter/${order.encounter.uuid}` } : undefined
@@ -581,8 +593,8 @@ function mapRestOrderToFhirMedReq(order, patientUuid) {
   } : undefined
 
   const validityPeriod = (order.dateActivated || order.autoExpireDate) ? {
-    start: order.dateActivated || undefined,
-    end:   order.autoExpireDate || undefined
+    start: toIsoIfMillis(order.dateActivated),
+    end:   toIsoIfMillis(order.autoExpireDate)
   } : undefined
 
   return {
@@ -590,7 +602,7 @@ function mapRestOrderToFhirMedReq(order, patientUuid) {
     id: order.uuid,
     status,
     intent: 'order',
-    authoredOn: authoredOn || undefined,
+    ...(authoredOn ? { authoredOn } : {}),
     subject: { reference: `Patient/${patientUuid}` },
     encounter: encRef,
     requester, // se omite si no existe Practitioner
@@ -602,6 +614,109 @@ function mapRestOrderToFhirMedReq(order, patientUuid) {
       expectedSupplyDuration,
       validityPeriod
     } : undefined
+  }
+}
+
+function toIsoIfMillis(v) {
+  if (v == null) return undefined
+  // Si ya viene ISO string, la dejamos; si es número, convertimos a ISO.
+  if (typeof v === 'number') return new Date(v).toISOString()
+  if (typeof v === 'string') return v
+  return undefined
+}
+
+// Bahmni: drugOrders por paciente (últimas N visitas, incluye visita activa)
+async function fetchBahmniDrugOrders(patientUuid, numberOfVisits = 3) {
+  if (!baseOMRS_REST || !omrsAuth) throw new Error('OpenMRS REST no configurado')
+  const path = `/bahmnicore/drugOrders?includeActiveVisit=true&numberOfVisits=${encodeURIComponent(numberOfVisits)}&patientUuid=${encodeURIComponent(patientUuid)}`
+  const arr = await getFromOpenMRS_REST(path)
+  return Array.isArray(arr) ? arr : []
+}
+
+function mapBahmniDrugOrderToFhirMedReq(item, patientUuid) {
+  const o = item?.drugOrder || item
+  if (!o?.uuid) return null
+
+  // Estado coherente con R4 ('stopped' cuando hay fin/expiración)
+  const autoExp = (typeof o.autoExpireDate === 'number') ? o.autoExpireDate : (typeof o.effectiveStopDate === 'number' ? o.effectiveStopDate : undefined)
+  const status = resolveMedReqStatus(o.dateStopped, autoExp)
+
+  // authoredOn
+  const authoredOn = toIsoIfMillis(o.dateActivated) || toIsoIfMillis(o.dateCreated)
+
+  // encounter
+  const encRef = item.encounterUuid ? { reference: `Encounter/${item.encounterUuid}` } : undefined
+
+  // requester (provider → Practitioner)
+  const requester = item.provider?.uuid ? { reference: `Practitioner/${item.provider.uuid}` } : undefined
+
+  // medication
+  let medicationReference, medicationCodeableConcept
+  if (o.drug?.uuid) {
+    medicationReference = { reference: `Medication/${o.drug.uuid}` }
+  } else {
+    const name = o.concept?.name || o.drug?.name || 'Medication'
+    const coding = []
+    for (const m of (o.concept?.mappings || [])) {
+      if (!m?.code || !m?.source) continue
+      const src = String(m.source).toUpperCase()
+      const system =
+        src.includes('SNOMED') ? 'http://snomed.info/sct' :
+        src.includes('RXNORM') ? 'http://www.nlm.nih.gov/research/umls/rxnorm' :
+        src.includes('CIEL')   ? 'https://openconceptlab.org/orgs/CIEL/sources/CIEL' :
+        undefined
+      if (system) coding.push({ system, code: m.code })
+    }
+    medicationCodeableConcept = { text: name, ...(coding.length ? { coding } : {}) }
+  }
+
+  // dosageInstruction
+  const diRaw = o.dosingInstructions || {}
+  // en Bahmni adminInstructions puede venir anidado como string JSON
+  let adminTxt
+  if (typeof diRaw.administrationInstructions === 'string') {
+    try {
+      const p = JSON.parse(diRaw.administrationInstructions)
+      adminTxt = p?.instructions
+    } catch { /* ignore */ }
+  }
+  const doseQuantity = (diRaw.dose != null) ? { value: diRaw.dose, unit: diRaw.doseUnits || undefined } : undefined
+  const route = diRaw.route ? { text: diRaw.route } : undefined
+  const timing = diRaw.frequency ? { code: { text: diRaw.frequency } } : undefined
+  const di = {
+    ...(adminTxt ? { text: adminTxt } : {}),
+    ...(route ? { route } : {}),
+    ...(timing ? { timing } : {}),
+    ...(doseQuantity ? { doseAndRate: [{ type: { text: 'ordered' }, doseQuantity }] } : {})
+  }
+  const dosageInstruction = Object.keys(di).length ? [di] : undefined
+
+  // dispenseRequest
+  const quantity = (diRaw.quantity != null) ? { value: diRaw.quantity, unit: diRaw.quantityUnits || diRaw.doseUnits || undefined } : undefined
+  const expectedSupplyDuration = (o.duration != null) ? { value: o.duration, unit: o.durationUnits || 'days' } : undefined
+  const startISO = toIsoIfMillis(o.dateActivated) || toIsoIfMillis(o.effectiveStartDate)
+  const endISO   = toIsoIfMillis(o.autoExpireDate) || toIsoIfMillis(o.effectiveStopDate)
+  const validityPeriod = (startISO || endISO) ? { start: startISO, end: endISO } : undefined
+
+  return {
+    resourceType: 'MedicationRequest',
+    id: o.uuid,
+    status,
+    intent: 'order',
+    ...(authoredOn ? { authoredOn } : {}),
+    subject: { reference: `Patient/${patientUuid}` },
+    ...(encRef ? { encounter: encRef } : {}),
+    ...(requester ? { requester } : {}),
+    ...(medicationReference ? { medicationReference } : {}),
+    ...(medicationCodeableConcept ? { medicationCodeableConcept } : {}),
+    ...(dosageInstruction ? { dosageInstruction } : {}),
+    ...(quantity || expectedSupplyDuration || validityPeriod ? {
+      dispenseRequest: {
+        ...(quantity ? { quantity } : {}),
+        ...(expectedSupplyDuration ? { expectedSupplyDuration } : {}),
+        ...(validityPeriod ? { validityPeriod } : {})
+      }
+    } : {})
   }
 }
 
@@ -699,14 +814,26 @@ app.post('/medreq/_event', async (req, res) => {
       notes.push(`FHIR search error: ${e.message}`)
     }
 
-    // 5) Fallback: REST /order → transformar (si vacío o error)
+    // 5) Fallback: Bahmni drugOrders → transformar (si vacío)
+    if (!medReqs.length) {
+      try {
+        const bah = await fetchBahmniDrugOrders(patientId, BAHMNI_NUMBER_OF_VISITS)
+        const mapped = bah.map(it => mapBahmniDrugOrderToFhirMedReq(it, patientId)).filter(Boolean)
+        medReqs.push(...mapped)
+        if (mapped.length) notes.push(`fallback Bahmni drugOrders: ${mapped.length} transformado(s)`)
+      } catch (eBah) {
+        notes.push(`Bahmni drugOrders error: ${eBah.message}`)
+      }
+    }
+
+    // 6) Fallback adicional: REST /order → transformar (si aún vacío)
     if (!medReqs.length) {
       const transformed = await fallbackDrugOrdersToMedReq(patientId)
       medReqs.push(...transformed)
       if (transformed.length) notes.push(`fallback REST drugorder: ${transformed.length} transformado(s)`)
     }
 
-    // 6) Por cada MedicationRequest: asegurar refs mínimas y subir
+    // 7) Por cada MedicationRequest: asegurar refs mínimas y subir
     for (const mr of medReqs) {
       if (!mr?.resourceType || !mr.id) continue
 
