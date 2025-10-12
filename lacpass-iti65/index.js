@@ -650,11 +650,15 @@ function pickIdentifiersOrderedForPdqm(identifiers) {
   if (!Array.isArray(identifiers) || identifiers.length === 0) return [];
 
   const norm = (s) => String(s || '').trim();
+  // IMPORTANTE: para "Pasaporte" por texto NO exigimos formato ni system
+  const anyPassportByText = (id) =>
+    /passport|pasaporte/i.test(norm(id?.type?.text)) && !!norm(id?.value);
+
+  // Mantengo un detector opcional de "valor con pinta de pasaporte" para el resto de casos
   const looksLikePassportValue = (v) => {
     if (!v) return false;
-    if (/\*/.test(v)) return false;        // evitar valores con '*'
-    if (/^RUN\*/i.test(v)) return false;   // descartar RUN*...
-    // patrón genérico: 2 letras + ≥5 alfanum (ej. CL12345, BR125845)
+    if (/\*/.test(v)) return false;
+    if (/^RUN\*/i.test(v)) return false;
     return /^[A-Z]{2}[A-Z0-9]{5,}$/i.test(v);
   };
   const preferCL = (arr) =>
@@ -680,25 +684,30 @@ function pickIdentifiersOrderedForPdqm(identifiers) {
     return false;
   };
 
-  // 1) Pasaporte "formal"
+  // 1) Pasaporte por TEXTO (sin exigir system/format)
+  const passportByText = preferCL(
+    identifiers.filter(anyPassportByText)
+  ).map(i => norm(i.value));
+
+  // 2) Pasaporte formal (por coding o texto, pero además con pinta de pasaporte)
   const passportFormal = preferCL(
     identifiers.filter(isPassportId).filter(i => looksLikePassportValue(i.value))
   ).map(i => norm(i.value));
 
-  // 2) Pasaporte "por forma" (value parece pasaporte) excluyendo RUN
+  // 3) Pasaporte "por forma" (value parece pasaporte) excluyendo RUN
   const passportShape  = preferCL(
     identifiers.filter(i => !isNationalId(i) && looksLikePassportValue(i.value))
   ).map(i => norm(i.value));
-  // 3) Nacional (RUN) como fallback
+  // 4) Nacional (RUN) como fallback
   const nationals      = identifiers.filter(isNationalId).map(i => norm(i.value));
-  // 4) Último recurso: cualquier value sin * ni RUN*
+  // 5) Último recurso: cualquier value sin * ni RUN*
   const lastResort     = identifiers
     .filter(i => !!norm(i.value) && !/\*/.test(norm(i.value)) && !/^RUN\*/i.test(norm(i.value)))
     .map(i => norm(i.value));
 
   // Unificar preservando orden y sin duplicados
   const seen = new Set();
-  const ordered = [...passportFormal, ...passportShape, ...nationals, ...lastResort]
+  const ordered = [...passportByText, ...passportFormal, ...passportShape, ...nationals, ...lastResort]
     .filter(v => { if (seen.has(v)) return false; seen.add(v); return true; });
   return ordered;
 }
@@ -2133,6 +2142,54 @@ app.post('/lacpass/_iti65', async (req, res) => {
     // ✅ masterIdentifier: hazlo coherente con el "documento" (el Bundle)
     const docMasterIdentifier = buildRef(ATTACHMENT_URL_MODE, 'Bundle', originalBundleId);
 
+    // === Alergias: tomar EXACTAMENTE las del LAC Composition (LOINC 48765-2) ===
+    const comp = compositionEntry?.resource;
+    const isAllergySection = (sec) =>
+      (sec?.code?.coding || []).some(c => (c.system === 'http://loinc.org') && (c.code === '48765-2'));
+
+    const byRef = (ref) => {
+      // admite absolute, relative y urn:uuid
+      const clean = String(ref || '').trim();
+      if (!clean) return null;
+      // buscar por fullUrl exacto
+      let found = (summaryBundle.entry || []).find(e => e.fullUrl === clean)?.resource;
+      if (found) return found;
+      // buscar por resourceType/id relativo
+      const m = clean.match(/^([A-Za-z]+)\/([A-Za-z0-9\-\.]{1,64})$/);
+      if (m) {
+        const [ , rt, id ] = m;
+        found = (summaryBundle.entry || []).map(e => e.resource).find(r => r?.resourceType === rt && r?.id === id);
+        if (found) return found;
+      }
+      // buscar por urn:uuid id
+      if (/^urn:uuid:/i.test(clean)) {
+        const uu = clean.replace(/^urn:uuid:/i, '');
+        found = (summaryBundle.entry || []).map(e => e.resource).find(r => r?.id === uu);
+        if (found) return found;
+      }
+      return null;
+    };
+
+    let lacAllergies = [];
+    const allergySections = (comp?.section || []).filter(isAllergySection);
+    for (const sec of allergySections) {
+      for (const ent of (sec.entry || [])) {
+        const ai = byRef(ent.reference);
+        if (ai && ai.resourceType === 'AllergyIntolerance') lacAllergies.push(ai);
+      }
+    }
+    // dedupe por id
+    const seenAI = new Set();
+    lacAllergies = lacAllergies.filter(ai => {
+      const k = `${ai.resourceType}/${ai.id || JSON.stringify(ai)}`;
+      if (seenAI.has(k)) return false; seenAI.add(k); return true;
+    });
+    console.log(`🧩 Alergias detectadas en LAC: ${lacAllergies.length}`);
+
+    // Si hay alergias reales, NO introducir "no-allergy-info"
+    // (mantenemos cualquier normalización terminológica, pero no reemplazamos por ausencia)
+    const hasRealAllergy = lacAllergies.length > 0;
+
     // ---- SubmissionSet
     const submissionSet = {
       resourceType: 'List',
@@ -2250,6 +2307,15 @@ app.post('/lacpass/_iti65', async (req, res) => {
       ]
     };
 
+    // Agregar las alergias del LAC al transaction bundle
+    for (const ai of lacAllergies) {
+      provideBundle.entry.push({
+        fullUrl: buildRef('urn', 'AllergyIntolerance', ai.id || uuidv4()),
+        resource: ai,
+        request: { method: 'POST', url: 'AllergyIntolerance' }
+      });
+    }
+
     // ➕ "comportamiento anterior": incluir el Bundle si no hay Binary
     if (BINARY_DELIVERY_MODE === 'nobinary') {
       provideBundle.entry.push({
@@ -2286,6 +2352,11 @@ app.post('/lacpass/_iti65', async (req, res) => {
       const ooFile = path.join(debugDir, `operationOutcome_${Date.now()}.json`);
       try { fs.writeFileSync(ooFile, JSON.stringify(resp.data, null, 2)); } catch {}
       console.error('❌ OperationOutcome guardado en:', ooFile);
+    }
+
+    // Si ANTES creábamos un AllergyIntolerance "no-allergy-info", proteger aquí:
+    if (!hasRealAllergy) {
+      // ← aquí, y SOLO aquí, crear el recurso "no-allergy-info" si tu flujo lo requiere
     }
 
     return res.json({ status: 'sent', code: resp.status });
