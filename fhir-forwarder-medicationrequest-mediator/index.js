@@ -63,6 +63,10 @@ if (process.env.NODE_ENV === 'development') {
 
 function logStep(msg, ...d) { console.log(new Date().toISOString(), msg, ...d) }
 
+// Validaciones de configuración obligatoria
+if (!process.env.FHIR_NODE_URL) { console.error('❌ FHIR_NODE_URL es obligatorio'); process.exit(1) }
+if (!process.env.FHIR_PROXY_URL) { console.error('❌ FHIR_PROXY_URL es obligatorio'); process.exit(1) }
+
 // -------- Defaults (SOLO Organization) --------
 const DEF_ORG_ENABLED = (process.env.DEFAULT_ORG_ENABLED || 'true').toLowerCase() === 'true'
 const DEF_ORG_ID   = process.env.DEFAULT_ORG_ID   || 'hcsba'
@@ -139,24 +143,7 @@ registerMediator(openhimConfig, mediatorConfig, err => {
   })
 })
 
-// 2) seen (por Encounter.versionId) para evitar reprocesos
-const SEEN_FILE = './seen-medreq.json'
-let seenVersions = {}
-try {
-  if (!fs.existsSync(SEEN_FILE)) fs.writeFileSync(SEEN_FILE, '{}', 'utf8')
-  const raw = fs.readFileSync(SEEN_FILE, 'utf8').trim()
-  seenVersions = raw ? JSON.parse(raw) : {}
-} catch (e) {
-  console.warn('⚠️ No pude parsear seen-medreq.json; reinicio a {}:', e.message)
-  seenVersions = {}
-  try { fs.writeFileSync(SEEN_FILE, '{}', 'utf8') } catch (err) {
-    console.error('❌ No pude reescribir seen-medreq.json:', err)
-  }
-}
-function saveSeen() {
-  try { fs.writeFileSync(SEEN_FILE, JSON.stringify(seenVersions), 'utf8') }
-  catch (err) { console.error('❌ Error al escribir seen-medreq.json:', err) }
-}
+// (sin "seen": comportamiento como Immunization)
 
 // 3) Fuentes
 const baseProxy = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
@@ -166,6 +153,10 @@ const baseOMRS_REST = (process.env.OPENMRS_REST_URL || '').replace(/\/$/, '')
 const omrsAuth = (process.env.OPENMRS_USER && process.env.OPENMRS_PASS)
   ? { username: process.env.OPENMRS_USER, password: process.env.OPENMRS_PASS }
   : null
+
+// Filtros de búsqueda de MedicationRequest (opcional)
+const MR_AUTHOR_FROM = process.env.MR_AUTHOR_FROM   // ej: '2025-01-01'
+const MR_AUTHOR_TO   = process.env.MR_AUTHOR_TO     // ej: '2025-12-31'
 
 async function getFromProxy(path) {
   const url = `${baseProxy}${path}`
@@ -219,7 +210,8 @@ function isGoneOrMissingError(err) {
 
 // 4) PUT a Nodo con retries de dependencias mínimas
 async function putToNode(resource) {
-  const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
+  const base = String(process.env.FHIR_NODE_URL || '').replace(/\/$/, '')
+  const url = `${base}/fhir/${resource.resourceType}/${resource.id}`
   const doPut = async () => {
     logStep('PUT (node)', url)
     const r = await axios.put(url, resource, {
@@ -324,6 +316,7 @@ async function uploadPractitionerByRef(ref) {
 async function uploadPractitionerById(pracId) {
   if (!pracId) return 0
   if (uploadedPractitioners.has(pracId)) return 0
+  // 1) Proxy FHIR
   try {
     logStep('🔍 Fetching Practitioner…', pracId)
     const prac = await getFromProxy(`/Practitioner/${pracId}`)
@@ -332,21 +325,46 @@ async function uploadPractitionerById(pracId) {
     uploadedPractitioners.add(pracId)
     return 1
   } catch (e) {
+    // 2) OMRS FHIR
     if (isGoneOrMissingError(e) && baseOMRS_FHIR && omrsAuth) {
       try {
         const prac = await getFromOpenMRS_FHIR(`/Practitioner/${pracId}`)
-        logStep('📤 Subiendo Practitioner (omrs)…', pracId)
+        logStep('📤 Subiendo Practitioner (omrs-fhir)…', pracId)
         await putToNode(prac)
         uploadedPractitioners.add(pracId)
         return 1
       } catch (e2) {
-        if (isGoneOrMissingError(e2)) { logStep('🗑️  Practitioner no disponible, se omite:', pracId); return 0 }
-        throw e2
+        if (!isGoneOrMissingError(e2)) throw e2
       }
-    } else {
-      if (isGoneOrMissingError(e)) { logStep('🗑️  Practitioner no disponible, se omite:', pracId); return 0 }
-      throw e
     }
+    // 3) OMRS REST /provider → construir Practitioner mínimo
+    if (isGoneOrMissingError(e) && baseOMRS_REST && omrsAuth) {
+      try {
+        const prov = await getFromOpenMRS_REST(`/provider/${encodeURIComponent(pracId)}?v=full`)
+        const personUuid = prov?.person?.uuid
+        const name = prov?.person?.display || prov?.identifier || 'Practitioner'
+        const practitioner = {
+          resourceType: 'Practitioner',
+          id: pracId, // 👈 mantener el ID solicitado (coincide con la referencia faltante)
+          name: [{ text: name }],
+          ...(personUuid ? {
+            identifier: [{
+              system: 'https://openmrs.org/person-uuid',
+              value: personUuid
+            }]
+          } : {})
+        }
+        logStep('🏗️ Construyendo Practitioner desde REST provider…', pracId)
+        await putToNode(practitioner)
+        uploadedPractitioners.add(pracId)
+        return 1
+      } catch (e3) {
+        if (isGoneOrMissingError(e3)) { logStep('🗑️ Practitioner (provider) no disponible:', pracId); return 0 }
+        throw e3
+      }
+    }
+    if (isGoneOrMissingError(e)) { logStep('🗑️ Practitioner no disponible:', pracId); return 0 }
+    throw e
   }
 }
 
@@ -423,6 +441,33 @@ async function uploadEncounterWithParents(encId) {
   uploadedEncounters.add(encId)
 }
 
+async function buildMedicationFromOMRS(drugUuid) {
+  // 1) REST /drug
+  const drug = await getFromOpenMRS_REST(`/drug/${encodeURIComponent(drugUuid)}?v=full`)
+  // 2) (opcional) REST /concept de respaldo
+  let conceptName = drug?.concept?.display || drug?.display || 'Medication'
+  try {
+    if (drug?.concept?.uuid) {
+      const concept = await getFromOpenMRS_REST(`/concept/${encodeURIComponent(drug.concept.uuid)}?v=full`)
+      const pref = (concept?.names||[]).find(n => n?.localePreferred) || (concept?.names||[])[0]
+      if (pref?.name) conceptName = pref.name
+    }
+  } catch { /* no crítico */ }
+
+  // 3) Ingredientes (si hay fuerza/concentración)
+  // OpenMRS drug tiene fields como strength (texto) y dosageForm, pero suelen ser libres.
+  // Aquí generamos Medication mínimo; si puedes mapear a SNOMED/UCUM, mejor.
+  return {
+    resourceType: 'Medication',
+    id: drugUuid,
+    code: { text: conceptName },
+    // Opcional: agregar form si la tienes:
+    // form: { text: drug?.dosageForm?.display || drug?.dosageForm },
+    // Opcional: ingredient desde strength "500 mg" (requiere parseo si quieres UCUM):
+    // ingredient: [{ itemCodeableConcept: { text: conceptName }, strength: { numerator:{value:500, unit:'mg'} } }]
+  }
+}
+
 async function uploadMedication(medId) {
   if (!medId) return 0
   if (uploadedMedications.has(medId)) return 0
@@ -434,7 +479,35 @@ async function uploadMedication(medId) {
     uploadedMedications.add(medId)
     return 1
   } catch (e) {
-    if (isGoneOrMissingError(e)) { logStep('🗑️  Medication no disponible, se omite:', medId); return 0 }
+    if (isGoneOrMissingError(e)) {
+      // Fallback 1: OpenMRS FHIR (si existe módulo FHIR de OpenMRS)
+      if (baseOMRS_FHIR && omrsAuth) {
+        try {
+          const med = await getFromOpenMRS_FHIR(`/Medication/${medId}`)
+          logStep('📤 Subiendo Medication (omrs-fhir)…', medId)
+          await putToNode(med)
+          uploadedMedications.add(medId)
+          return 1
+        } catch (e2) {
+          if (!isGoneOrMissingError(e2)) throw e2
+        }
+      }
+      // Fallback 2: OpenMRS REST /drug → construir Medication mínimo
+      if (baseOMRS_REST && omrsAuth) {
+        try {
+          const medBuilt = await buildMedicationFromOMRS(medId)
+          logStep('🏗️ Construyendo Medication desde REST drug…', medId)
+          await putToNode(medBuilt)
+          uploadedMedications.add(medId)
+          return 1
+        } catch (e3) {
+          if (isGoneOrMissingError(e3)) { logStep('🗑️ Medication no disponible en OMRS:', medId); return 0 }
+          throw e3
+        }
+      }
+      logStep('🗑️ Medication no disponible en ninguna fuente:', medId)
+      return 0
+    }
     throw e
   }
 }
@@ -472,8 +545,7 @@ function mapRestOrderToFhirMedReq(order, patientUuid) {
     unit: order.doseUnits?.display || undefined
   } : undefined
 
-  const route = order.route?.uuid ? { coding: [{ code: order.route.uuid }], text: order.route.display } :
-                order.route?.display ? { text: order.route.display } : undefined
+  const route = order.route?.display ? { text: order.route.display } : undefined
 
   // timing (difícil derivar rítmica exacta desde display; guardamos texto)
   const timing = order.frequency?.display ? { code: { text: order.frequency.display } } : undefined
@@ -489,12 +561,13 @@ function mapRestOrderToFhirMedReq(order, patientUuid) {
     }
   } catch { /* ignore json parse */ }
 
-  const dosageInstruction = [{
-    text: instrText,
-    route,
-    timing,
-    doseAndRate: doseQuantity ? [{ type: { text: 'ordered' }, doseQuantity }] : undefined
-  }]
+  const di = {
+    ...(instrText ? { text: instrText } : {}),
+    ...(route ? { route } : {}),
+    ...(timing ? { timing } : {}),
+    ...(doseQuantity ? { doseAndRate: [{ type: { text: 'ordered' }, doseQuantity }] } : {})
+  }
+  const dosageInstruction = Object.keys(di).length ? [di] : undefined
 
   // dispenseRequest
   const quantity = (order.quantity != null) ? {
@@ -545,17 +618,30 @@ async function fallbackDrugOrdersToMedReq(patientUuid) {
   return medOrders.map(o => mapRestOrderToFhirMedReq(o, patientUuid))
 }
 
+// --- util: paginación FHIR
+async function fhirSearchAll(getter, firstPath) {
+  let out = []
+  let bundle = await getter(firstPath)
+  const push = b => { if (Array.isArray(b?.entry)) out.push(...b.entry.map(e => e.resource).filter(Boolean)) }
+  push(bundle)
+  while (true) {
+    const next = (bundle.link || []).find(l => l.relation === 'next')?.url
+    if (!next) break
+    let path = next
+    try { const u = new URL(next); path = u.pathname + (u.search || '') } catch { /* next ya era relativo */ }
+    bundle = await getter(path)
+    push(bundle)
+  }
+  return out
+}
+
 // --- util: recolectar refs Practitioner de un MedReq
 function collectPractitionerRefsFromMedReq(mr) {
   const refs = []
   if (mr.requester?.reference?.startsWith('Practitioner/')) refs.push(mr.requester.reference)
   if (mr.recorder?.reference?.startsWith('Practitioner/')) refs.push(mr.recorder.reference)
-  if (Array.isArray(mr.performer)) {
-    for (const p of mr.performer) {
-      const r = p.actor?.reference
-      if (r?.startsWith('Practitioner/')) refs.push(r)
-    }
-  }
+  const perf = mr.performer?.reference
+  if (perf?.startsWith('Practitioner/')) refs.push(perf)
   return [...new Set(refs)]
 }
 
@@ -575,16 +661,10 @@ app.post('/medreq/_event', async (req, res) => {
 
   let sent = { MedicationRequest:0, Medication:0, Patient:0, Encounter:0, Practitioner:0, Organization:0, Location:0 }
   const notes = []
-  let encVersion = null
 
   try {
-    // 1) Encounter y control de duplicados
+    // 1) Encounter (sin control de duplicados por "seen")
     const enc = await getFromProxy(`/Encounter/${uuid}`)
-    encVersion = enc?.meta?.versionId || null
-    if (encVersion && seenVersions[uuid] === encVersion) {
-      logStep('🔁 No version change, skipping', uuid, encVersion)
-      return res.json({ status:'duplicate', uuid, version: encVersion })
-    }
 
     // 2) Patient
     const patientId = enc.subject?.reference?.split('/').pop()
@@ -598,13 +678,23 @@ app.post('/medreq/_event', async (req, res) => {
     // 4) Buscar MedicationRequest por paciente (FHIR primero)
     let medReqs = []
     try {
-      const bundle = await getFromProxy(`/MedicationRequest?patient=${encodeURIComponent(patientId)}`)
-      if (bundle?.resourceType === 'Bundle' && Array.isArray(bundle.entry) && bundle.entry.length) {
-        medReqs = bundle.entry.map(e => e.resource).filter(Boolean)
-        notes.push('FHIR search ok')
-      } else {
-        notes.push('FHIR search 0 resultados')
+      // Construir parámetros de filtro de fecha
+      const dateParams = []
+      if (MR_AUTHOR_FROM) dateParams.push(`authoredon=ge${encodeURIComponent(MR_AUTHOR_FROM)}`)
+      if (MR_AUTHOR_TO) dateParams.push(`authoredon=le${encodeURIComponent(MR_AUTHOR_TO)}`)
+      const queryTail = dateParams.length ? ('&' + dateParams.join('&')) : ''
+      
+      const basePath = `/MedicationRequest?patient=${encodeURIComponent(patientId)}&_include=MedicationRequest:medication&_count=200${queryTail}`
+      const resources = await fhirSearchAll(getFromProxy, basePath)
+      
+      medReqs = resources.filter(r => r.resourceType === 'MedicationRequest')
+      // precarga Medication incluidas
+      for (const m of resources) {
+        if (m.resourceType === 'Medication' && m.id) {
+          uploadedMedications.add(m.id) // ya disponible; NO sumar al contador
+        }
       }
+      notes.push(`FHIR search ok (${medReqs.length} MR)`)
     } catch (e) {
       notes.push(`FHIR search error: ${e.message}`)
     }
@@ -645,10 +735,7 @@ app.post('/medreq/_event', async (req, res) => {
             // limpiar el campo correspondiente para no romper el PUT
             if (mr.requester?.reference === r) delete mr.requester
             if (mr.recorder?.reference === r) delete mr.recorder
-            if (Array.isArray(mr.performer)) {
-              mr.performer = mr.performer.filter(p => p.actor?.reference !== r)
-              if (mr.performer.length === 0) delete mr.performer
-            }
+            if (mr.performer?.reference === r) delete mr.performer
           } else { throw e }
         }
       }
@@ -659,14 +746,8 @@ app.post('/medreq/_event', async (req, res) => {
       sent.MedicationRequest++
     }
 
-    // 7) Persistir seen
-    if (encVersion) {
-      seenVersions[uuid] = encVersion
-      saveSeen()
-    }
-
     logStep('🎉 MedReq done', uuid)
-    res.json({ status:'ok', uuid, version: encVersion || undefined, sent, notes })
+    res.json({ status:'ok', uuid, sent, notes })
   } catch (e) {
     logStep('❌ ERROR /medreq/_event:', e.message)
     res.status(500).json({ error: e.message, sent, notes })
