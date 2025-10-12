@@ -602,9 +602,14 @@ function resourceToDomain(resource) {
 }
 
 function buildTsClient() {
-    if (!TERMINO_BASE) return null;
+    const baseURL =
+        process.env.TERMINOLOGY_BASE_URL || // prioridad: var que estás usando
+        process.env.TERMINO_BASE ||
+        'http://localhost:8081/fhir';
+    
+    if (!baseURL) return null;
     const client = axios.create({
-        baseURL: TERMINO_BASE,
+        baseURL: baseURL,
         timeout: parseInt(TS_TIMEOUT_MS, 10),
         httpsAgent: axios.defaults.httpsAgent,
         headers: { Accept: 'application/fhir+json' }
@@ -622,36 +627,75 @@ function buildTsClient() {
 
 // ===================== PDQm Utils =====================
 function pickIdentifierValueForPdqm(identifiers) {
-    if (!Array.isArray(identifiers) || identifiers.length === 0) return null;
+  if (!Array.isArray(identifiers) || identifiers.length === 0) return null;
 
-    const fallbackParamNames = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES || 'RUN,RUNP,identifier');
-    const defaultSystem = PDQM_DEFAULT_IDENTIFIER_SYSTEM || '';
+  // 0) Configs relevantes
+  const passportTypeCode = (process.env.PDQM_IDENTIFIER_TYPE_CODE_PASSPORT || 'PPN').trim();
+  const passportTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_PASSPORT || 'Pasaporte').toLowerCase();
+  const passportOid = (process.env.LAC_PASSPORT_ID_SYSTEM_OID || '').trim(); // e.g. 2.16.840.1.113883.4.330.152
+  const fallbackParamNames = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES || 'RUN,RUNP,identifier');
+  const defaultSystem = (process.env.PDQM_DEFAULT_IDENTIFIER_SYSTEM || '').trim(); // puede venir como "urn:oid.x"
 
-    // 1. Buscar por sistema por defecto
-    if (defaultSystem) {
-        const idWithDefaultSystem = identifiers.find(id => id.system === defaultSystem);
-        if (idWithDefaultSystem?.value) return idWithDefaultSystem.value;
-    }
+  // Helper para devolver system|value
+  const asSystemPipeValue = (id, preferOid=null) => {
+    const value = id?.value;
+    if (!value) return null;
+    let system = id?.system;
+    if (!system && preferOid) system = toUrnOid(preferOid);
+    if (!system && defaultSystem) system = defaultSystem;
+    if (!system) return value; // último recurso, solo valor (no ideal, pero evita null)
+    return `${system}|${value}`;
+  };
 
-    // 2. Buscar por type.text que contenga algún paramName de fallback
-    for (const paramName of fallbackParamNames) {
-        const match = identifiers.find(id => id.type?.text?.toLowerCase().includes(paramName.toLowerCase()));
-        if (match?.value) return match.value;
-    }
+  // 1) **PRIORIDAD**: buscar PASAPORTE por type.coding.code === 'PPN' (o code configurado)
+  const ppnByCode = identifiers.find(id =>
+    Array.isArray(id.type?.coding) &&
+    id.type.coding.some(c => (c.code || '').toUpperCase() === passportTypeCode.toUpperCase())
+  );
+  if (ppnByCode) {
+    const out = asSystemPipeValue(ppnByCode, passportOid);
+    if (out) return out;
+  }
 
-    // 3. Buscar por value que contenga algún paramName de fallback
-    for (const paramName of fallbackParamNames) {
-        const match = identifiers.find(id => {
-            if (!id.value) return false;
-            const value = id.value.toLowerCase();
-            const param = paramName.toLowerCase();
-            return value.includes(param);
-        });
-        if (match?.value) return match.value;
-    }
+  // 2) Alternativa: buscar PASAPORTE por type.text ~ "Pasaporte"
+  const ppnByText = identifiers.find(id => (id.type?.text || '').toLowerCase().includes(passportTypeText));
+  if (ppnByText) {
+    const out = asSystemPipeValue(ppnByText, passportOid);
+    if (out) return out;
+  }
 
-    // 4. Retornar el primer identifier con valor
-    return identifiers[0]?.value || null; // último fallback
+  // 3) Otra heurística: system que parezca de pasaporte
+  const ppnBySystemHint = identifiers.find(id => {
+    const sys = (id.system || '').toLowerCase();
+    return sys.includes('passport') || sys.includes('pasaporte');
+  });
+  if (ppnBySystemHint) {
+    const out = asSystemPipeValue(ppnBySystemHint, passportOid);
+    if (out) return out;
+  }
+
+  // 4) Si hay un system por defecto configurado y coincide con algún identifier
+  if (defaultSystem) {
+    const byDefaultSystem = identifiers.find(id => id.system === defaultSystem);
+    const out = asSystemPipeValue(byDefaultSystem);
+    if (out) return out;
+  }
+
+  // 5) Fallbacks por nombres/etiquetas configuradas (RUN, RUNP, identifier, etc.)
+  for (const paramName of fallbackParamNames) {
+    const m1 = identifiers.find(id => (id.type?.text || '').toLowerCase().includes(paramName.toLowerCase()));
+    const out = asSystemPipeValue(m1);
+    if (out) return out;
+  }
+  for (const paramName of fallbackParamNames) {
+    const m2 = identifiers.find(id => (id.value || '').toLowerCase().includes(paramName.toLowerCase()));
+    const out = asSystemPipeValue(m2);
+    if (out) return out;
+  }
+
+  // 6) Último recurso: primer identifier con valor (en formato system|value si hay system)
+  const first = identifiers.find(id => !!id.value);
+  return asSystemPipeValue(first);
 }
 
 // ===================== Logging helper para terminología =====================
@@ -949,15 +993,13 @@ async function normalizeTerminologyInBundle(bundle) {
   // --- SOLO CONSULTA: ejecutar $lookup para cada código SNOMED sin usar datos ---
   // Se puede habilitar/forzar con LOOKUP_SNOMED_ONLY=true
   if (LOOKUP_SNOMED_ONLY) {
-    // Recolectar pares únicos system|code para evitar consultas duplicadas
-    const uniq = new Set();
+    const uniq = new Set(); // system|code|version
     const entries = bundle?.entry || [];
     const versionDefault = process.env.SNOMED_VERSION_URI
       || 'http://snomed.info/sct/900000000000207008/version/20240331';
     for (const ent of entries) {
       const res = ent.resource;
       if (!res) continue;
-      // Campos típicos con codificaciones; puedes añadir otros si lo necesitas
       const codables = [
         res.code, res.medicationCodeableConcept, res.category, res.clinicalStatus
       ].filter(Boolean);
@@ -970,11 +1012,12 @@ async function normalizeTerminologyInBundle(bundle) {
         }
       }
     }
-    // Disparar todas las consultas en paralelo (respuesta ignorada)
-    await Promise.all([...uniq].map(k => {
-      const [system, code, versionUri] = k.split('|');
-      return fireAndForgetSnomedLookup(ts, system, code, versionUri);
-    }));
+    await Promise.all(
+      [...uniq].map(k => {
+        const [system, code, versionUri] = k.split('|');
+        return fireAndForgetSnomedLookup(ts, system, code, versionUri);
+      })
+    );
   }
 
   console.log('🔍 Iniciando normalización terminológica con enfoque SNOMED...');
