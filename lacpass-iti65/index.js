@@ -666,21 +666,32 @@ function pickIdentifierValueForPdqm(identifiers) {
   // Evita valores tipo RUN*... y prefiere patrones de pasaporte (p.ej. CLxxxx)
   const looksLikePassportValue = (v) => {
     if (!v) return false;
-    if (/^RUN\*/i.test(v)) return false;
-    return /^[A-Z]{2}[A-Z0-9]+$/i.test(v) || /^[A-Z0-9]{5,}$/i.test(v);
+    if (/\*/.test(v)) return false;       // nunca usar valores con "*"
+    if (/^RUN\*/i.test(v)) return false;  // descartar RUN*...
+    // patrón "país + resto" (pasaporte típico)
+    return /^[A-Z]{2}[A-Z0-9]{5,}$/i.test(v);
   };
+  const preferCL = (arr) =>
+    arr.sort((a, b) => {
+      const av = String(a.value || '');
+      const bv = String(b.value || '');
+      const aCL = /^CL/i.test(av); const bCL = /^CL/i.test(bv);
+      return (bCL ? 1 : 0) - (aCL ? 1 : 0); // primero los que **empiezan** con CL
+    });
 
-  // 1) Prioridad: PPN real con valor válido → devuelve SOLO el value
-  const passportIds = identifiers.filter(isPassportId).filter(id => looksLikePassportValue(id.value));
+  // 1) Prioridad: PPN real con valor válido → SOLO value
+  const passportIds = preferCL(
+    identifiers.filter(isPassportId).filter(id => looksLikePassportValue(id.value))
+  );
   if (passportIds.length) return passportIds[0].value.trim();
 
   // 2) Cualquier id cuyo value parezca pasaporte → value
-  const anyPassportish = identifiers.find(id => looksLikePassportValue(id.value));
+  const anyPassportish = preferCL(identifiers.filter(id => looksLikePassportValue(id.value)))[0];
   if (anyPassportish) return anyPassportish.value.trim();
 
-  // 3) Último recurso: primer value disponible (value-only; sin system)
-  const first = identifiers.find(id => !!id.value);
-  return first ? first.value.trim() : null;
+  // 3) Último recurso: algún value que NO tenga "*" ni empiece por RUN*
+  const lastResort = identifiers.find(id => !!id.value && !/\*/.test(id.value) && !/^RUN\*/i.test(id.value));
+  return lastResort ? lastResort.value.trim() : null;
 }
 
 // ===================== Logging helper para terminología =====================
@@ -1142,8 +1153,10 @@ function fixPatientIdentifiers(patient) {
     value: nationalValue
   });
 
-  // Agregar identifier de pasaporte si había uno o si está configurado el OID
-  if (passportValue || defaultIntOid) {
+  // Agregar identifier de pasaporte **solo** si hay valor real de pasaporte
+  const looksLikeRealPassport = (v) =>
+    !!v && !/\*/.test(v) && !/^RUN\*/i.test(v) && /^[A-Z]{2}[A-Z0-9]{5,}$/i.test(v);
+  if (passportValue && looksLikeRealPassport(passportValue)) {
     patient.identifier.push({
       use: 'official',
       type: {
@@ -1153,7 +1166,7 @@ function fixPatientIdentifiers(patient) {
         }]
       },
       system: defaultIntOid || toUrnOid('2.16.840.1.113883.4.1'),
-      value: passportValue || nationalValue // usar el mismo valor si no hay pasaporte específico
+      value: passportValue
     });
   }
 
