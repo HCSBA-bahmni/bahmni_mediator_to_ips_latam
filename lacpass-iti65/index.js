@@ -171,6 +171,25 @@ const LOINC_CODES = {
   PROCEDURES_SECTION: '47519-4',
   RESULTS_SECTION: '30954-2'
 };
+// ---- Helpers to classify Conditions for IPS sections ----
+function isAbsentProblemCondition(cond) {
+  const codings = (cond?.code?.coding) || [];
+  return codings.some(c => c.system === 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips' &&
+                           (c.code === 'no-problem-info' || /no information about problems/i.test(c.display || '')));
+}
+function clinicalStatusCode(cond) {
+  return cond?.clinicalStatus?.coding?.[0]?.code || null;
+}
+function hasAbatement(cond) {
+  return !!(cond?.abatementDateTime || cond?.abatementPeriod || cond?.abatementAge || cond?.abatementRange || cond?.abatementString);
+}
+function isActiveProblem(cond) {
+  return ['active','recurrence','relapse'].includes(clinicalStatusCode(cond));
+}
+function isPastIllness(cond) {
+  const cs = clinicalStatusCode(cond);
+  return ['inactive','remission','resolved'].includes(cs) || hasAbatement(cond);
+}
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -1086,6 +1105,45 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
 
   // Si no hay entries válidas, buscar candidatos y enlazarlos
   const candidates = (summaryBundle.entry || []).filter(x => allowedTypes.includes(x.resource?.resourceType));
+
+  // Special routing for Condition by section
+  if (allowedTypes.includes('Condition')) {
+    const isPast = loincCode === LOINC_CODES.PAST_ILLNESS_SECTION;
+    const conds = candidates.filter(x => x.resource?.resourceType === 'Condition');
+
+    if (!isPast) {
+      // Problems (11450-4): prefer active, exclude absent-unknown
+      const active = conds.filter(x => isActiveProblem(x.resource) && !isAbsentProblemCondition(x.resource));
+      if (active.length > 0) {
+        sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
+        const candidate = active[0];
+        ensureIpsProfile(candidate.resource);
+        const alreadyReferenced = sec.entry.some(e => e.reference === candidate.fullUrl);
+        if (!alreadyReferenced) sec.entry.push({ reference: candidate.fullUrl });
+        // dedupe
+        sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
+        return;
+      }
+      // If no active, let placeholder logic run below.
+    } else {
+      // Past Illness (11348-0): include inactive/resolved or with abatement; exclude absent-unknown
+      const past = conds.filter(x => isPastIllness(x.resource) && !isAbsentProblemCondition(x.resource));
+      if (past.length > 0) {
+        sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
+        for (const candidate of past) {
+          ensureIpsProfile(candidate.resource);
+          if (!sec.entry.some(e => e.reference === candidate.fullUrl)) {
+            sec.entry.push({ reference: candidate.fullUrl });
+          }
+        }
+        // dedupe
+        sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
+        return;
+      }
+    }
+  }
+
+  // Generic fallback (non-Condition sections): link first candidate
   if (candidates.length > 0) {
     sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
     // Enlaza SOLO el primer candidato (satisface slice mínimo)
@@ -1093,6 +1151,8 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
     ensureIpsProfile(candidate.resource);
     const alreadyReferenced = sec.entry.some(e => e.reference === candidate.fullUrl);
     if (!alreadyReferenced) sec.entry.push({ reference: candidate.fullUrl });
+    // dedupe
+    sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
     return;
   }
 
@@ -1157,6 +1217,8 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
     summaryBundle.entry.push(placeholder);
     sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
     sec.entry.push({ reference: placeholder.fullUrl });
+    // dedupe entries
+    sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
   }
 }
 
