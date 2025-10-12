@@ -626,13 +626,31 @@ function buildTsClient() {
 }
 
 // ===================== PDQm Utils =====================
+// ===================== URL Encoding Helper =====================
+function robustUrlEncode(value) {
+  if (!value) return '';
+  
+  // Primero, codificación URL estándar
+  let encoded = encodeURIComponent(value);
+  
+  // Luego, codificaciones adicionales para caracteres que pueden causar problemas en queries
+  encoded = encoded.replace(/\*/g, '%2A');  // Asterisco
+  encoded = encoded.replace(/'/g, '%27');   // Comilla simple
+  encoded = encoded.replace(/"/g, '%22');   // Comilla doble
+  encoded = encoded.replace(/\(/g, '%28');  // Paréntesis abierto
+  encoded = encoded.replace(/\)/g, '%29');  // Paréntesis cerrado
+  
+  return encoded;
+}
+
 function pickIdentifierValueForPdqm(identifiers) {
   if (!Array.isArray(identifiers) || identifiers.length === 0) return null;
 
   // 0) Configs relevantes
   const passportTypeCode = (process.env.PDQM_IDENTIFIER_TYPE_CODE_PASSPORT || 'PPN').trim();
   const passportTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_PASSPORT || 'Pasaporte').toLowerCase();
-  const passportOid = (process.env.LAC_PASSPORT_ID_SYSTEM_OID || '').trim(); // e.g. 2.16.840.1.113883.4.330.152
+  const passportOidRaw = (process.env.LAC_PASSPORT_ID_SYSTEM_OID || '').trim(); // ej: 2.16.840.1.113883.4.330.152
+  const passportSystemUrn = toUrnOid(passportOidRaw); // respeta OID_URN_SEPARATOR (":" o ".")
   const fallbackParamNames = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES || 'RUN,RUNP,identifier');
   const defaultSystem = (process.env.PDQM_DEFAULT_IDENTIFIER_SYSTEM || '').trim(); // puede venir como "urn:oid.x"
 
@@ -653,24 +671,25 @@ function pickIdentifierValueForPdqm(identifiers) {
     id.type.coding.some(c => (c.code || '').toUpperCase() === passportTypeCode.toUpperCase())
   );
   if (ppnByCode) {
-    const out = asSystemPipeValue(ppnByCode, passportOid);
+    const out = asSystemPipeValue(ppnByCode, passportOidRaw);
     if (out) return out;
   }
 
   // 2) Alternativa: buscar PASAPORTE por type.text ~ "Pasaporte"
   const ppnByText = identifiers.find(id => (id.type?.text || '').toLowerCase().includes(passportTypeText));
   if (ppnByText) {
-    const out = asSystemPipeValue(ppnByText, passportOid);
+    const out = asSystemPipeValue(ppnByText, passportOidRaw);
     if (out) return out;
   }
 
-  // 3) Otra heurística: system que parezca de pasaporte
+  // 3) Otra heurística: system que parezca de pasaporte o coincida exactamente con el configurado
   const ppnBySystemHint = identifiers.find(id => {
     const sys = (id.system || '').toLowerCase();
-    return sys.includes('passport') || sys.includes('pasaporte');
+    return sys.includes('passport') || sys.includes('pasaporte') || 
+           (passportSystemUrn && id.system === passportSystemUrn);
   });
   if (ppnBySystemHint) {
-    const out = asSystemPipeValue(ppnBySystemHint, passportOid);
+    const out = asSystemPipeValue(ppnBySystemHint, passportOidRaw);
     if (out) return out;
   }
 
@@ -1834,7 +1853,7 @@ async function pdqmFetchBundleByIdentifier(identifierValue) {
 
             // Intentar con el parámetro identifier por defecto
             const base = asFhirBase(PDQM_FHIR_URL);
-            let url = joinUrl(base, '/Patient') + `?identifier=${encodeURIComponent(identifierValue)}`;
+            let url = joinUrl(base, '/Patient') + `?identifier=${robustUrlEncode(identifierValue)}`;
             console.log(`PDQm GET: ${url}`);
 
             let response = await axios.get(url, config);
@@ -1850,7 +1869,7 @@ async function pdqmFetchBundleByIdentifier(identifierValue) {
                 const fallbackParams = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES);
                 
                 for (const param of fallbackParams) {
-                    url = joinUrl(base, '/Patient') + `?${param}=${encodeURIComponent(identifierValue)}`;
+                    url = joinUrl(base, '/Patient') + `?${param}=${robustUrlEncode(identifierValue)}`;
                     console.log(`PDQm fallback GET: ${url}`);
                     
                     response = await axios.get(url, config);
@@ -2188,7 +2207,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const pid = patientEntry.resource.identifier?.[0];
     if (pid?.system && pid?.value) {
       patientTxEntry.request.ifNoneExist =
-        `identifier=${encodeURIComponent(pid.system)}|${encodeURIComponent(pid.value)}`;
+        `identifier=${robustUrlEncode(pid.system)}|${robustUrlEncode(pid.value)}`;
 }
 
     // ---- ProvideBundle (se arma con ramas según BINARY_DELIVERY_MODE)
