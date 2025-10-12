@@ -2062,7 +2062,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
           for (const cand of idCandidates) {
             try {
               console.log(`PDQm: buscando por identifier=${cand}`);
-              logInfo(`PDQm: buscando por identifier=${cand}`);
               const tryBundle = await pdqmFetchBundleByIdentifier(cand);
               const hasHits = !!tryBundle && (
                 (Array.isArray(tryBundle.entry) && tryBundle.entry.length > 0) ||
@@ -2070,13 +2069,13 @@ app.post('/lacpass/_iti65', async (req, res) => {
               );
               if (hasHits) {
                 pdqmBundle = tryBundle;
-                logInfo(`PDQm: resultados encontrados con identifier=${cand}`);
+                  console.log(`PDQm: resultados encontrados con identifier=${cand}`);
                 break;
               } else {
-                logWarn(`PDQm: sin resultados con identifier=${cand}`);
+                  console.log(`PDQm: sin resultados con identifier=${cand}`);
               }
             } catch (e) {
-              logWarn(`PDQm: error buscando identifier=${cand} → ${e?.message || e}`);
+                console.log(`PDQm: error buscando identifier=${cand} → ${e?.message || e}`);
             }
           }
         }
