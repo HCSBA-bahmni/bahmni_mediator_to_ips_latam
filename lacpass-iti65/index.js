@@ -2039,8 +2039,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
         const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
         
         // Nuevo: candidatos ordenados (Pasaporte → Nacional → otros)
-        console.log('PDQm: identifiers del Patient local =>',ids, ids.map(i => `${i.system}|${i.value}`).join(') ,'));
-        
+        console.log('PDQm: identifiers del Patient local =>',localPatient);
+
         let idCandidates = pickIdentifiersOrderedForPdqm(ids);
         console.log('PDQm: candidatos ordenados =>', idCandidates.join(' , '));
 
