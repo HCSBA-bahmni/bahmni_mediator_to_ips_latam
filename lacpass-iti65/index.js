@@ -2056,11 +2056,10 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
         let pdqmBundle = null;
 
-        console.log('PDQm: iniciando búsqueda con',idCandidates, idCandidates.length, 'candidatos');
-
         if (idCandidates.length) {
           for (const cand of idCandidates) {
             try {
+              console.log(`PDQm: buscando por identifier=${cand}`);
               logInfo(`PDQm: buscando por identifier=${cand}`);
               const tryBundle = await pdqmFetchBundleByIdentifier(cand);
               const hasHits = !!tryBundle && (
