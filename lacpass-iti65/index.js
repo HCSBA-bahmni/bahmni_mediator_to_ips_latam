@@ -2036,10 +2036,9 @@ app.post('/lacpass/_iti65', async (req, res) => {
       const localPatient = patientEntry?.resource;
 
       if (localPatient) {
+        // Extraer identifiers y ordenarlos por preferencia
+        // Solo viene el RUN, no trae más identifier
         const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
-        
-        // Nuevo: candidatos ordenados (Pasaporte → Nacional → otros)
-        console.log('PDQm: identifiers del Patient local =>',localPatient);
 
         let idCandidates = pickIdentifiersOrderedForPdqm(ids);
         console.log('PDQm: candidatos ordenados =>', idCandidates.join(' , '));
@@ -2056,7 +2055,9 @@ app.post('/lacpass/_iti65', async (req, res) => {
         idCandidates.sort((a, b) => starScore(a) - starScore(b));
 
         let pdqmBundle = null;
-        
+
+        console.log('PDQm: iniciando búsqueda con',idCandidates, idCandidates.length, 'candidatos');
+
         if (idCandidates.length) {
           for (const cand of idCandidates) {
             try {
