@@ -171,6 +171,29 @@ const LOINC_CODES = {
   PROCEDURES_SECTION: '47519-4',
   RESULTS_SECTION: '30954-2'
 };
+
+// --- SNOMED $lookup (solo consulta, sin usar respuesta) -----------------------
+const SNOMED_SYSTEM = 'http://snomed.info/sct';
+const LOOKUP_SNOMED_ONLY = String(process.env.LOOKUP_SNOMED_ONLY || 'false').toLowerCase() === 'true';
+
+async function fireAndForgetSnomedLookup(ts, system, code, versionUri) {
+  if (!ts || !system || !code) return;
+  try {
+    // SOLO CONSULTA: CodeSystem/$lookup (no usamos la respuesta)
+    await ts.get('/CodeSystem/$lookup', {
+      params: {
+        system,                   // http://snomed.info/sct
+        code,                     // p.ej. 59621000
+        version: versionUri,      // p.ej. http://snomed.info/sct/900000000000207008/version/20240331
+        _format: 'json'
+      }
+    });
+  } catch (e) {
+    // Log no bloqueante (usar WARN para que se vea con TS_DEBUG_LEVEL=warn)
+    tsLog('warn', `SNOMED $lookup fallo: ${system}|${code}|${versionUri} -> ${e?.response?.status || e?.message}`);
+  }
+}
+
 // ---- Helpers to classify Conditions for IPS sections ----
 function isAbsentProblemCondition(cond) {
   const codings = (cond?.code?.coding) || [];
@@ -922,6 +945,37 @@ async function normalizeTerminologyInBundle(bundle) {
     if (!isTrue(FEATURE_TS_ENABLED)) return;
     const ts = buildTsClient();
     if (!ts || !bundle?.entry?.length) return;
+
+  // --- SOLO CONSULTA: ejecutar $lookup para cada código SNOMED sin usar datos ---
+  // Se puede habilitar/forzar con LOOKUP_SNOMED_ONLY=true
+  if (LOOKUP_SNOMED_ONLY) {
+    // Recolectar pares únicos system|code para evitar consultas duplicadas
+    const uniq = new Set();
+    const entries = bundle?.entry || [];
+    const versionDefault = process.env.SNOMED_VERSION_URI
+      || 'http://snomed.info/sct/900000000000207008/version/20240331';
+    for (const ent of entries) {
+      const res = ent.resource;
+      if (!res) continue;
+      // Campos típicos con codificaciones; puedes añadir otros si lo necesitas
+      const codables = [
+        res.code, res.medicationCodeableConcept, res.category, res.clinicalStatus
+      ].filter(Boolean);
+      for (const cc of codables) {
+        const codings = cc.coding || [];
+        for (const c of codings) {
+          if (c?.system === SNOMED_SYSTEM && c?.code) {
+            uniq.add(`${c.system}|${c.code}|${versionDefault}`);
+          }
+        }
+      }
+    }
+    // Disparar todas las consultas en paralelo (respuesta ignorada)
+    await Promise.all([...uniq].map(k => {
+      const [system, code, versionUri] = k.split('|');
+      return fireAndForgetSnomedLookup(ts, system, code, versionUri);
+    }));
+  }
 
   console.log('🔍 Iniciando normalización terminológica con enfoque SNOMED...');
 
