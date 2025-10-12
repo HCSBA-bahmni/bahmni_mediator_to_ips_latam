@@ -31,8 +31,8 @@ const {
     CORS_ORIGIN,
 
     // ===== Features =====
-    FEATURE_PDQ_ENABLED = 'false',
-    FEATURE_TS_ENABLED = 'false',
+    FEATURE_PDQ_ENABLED = 'true',
+    FEATURE_TS_ENABLED = 'true',
 
     // Subfeatures terminológicas
     FEATURE_TS_EXPAND_ENABLED = 'true',
