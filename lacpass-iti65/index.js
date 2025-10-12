@@ -646,75 +646,41 @@ function robustUrlEncode(value) {
 function pickIdentifierValueForPdqm(identifiers) {
   if (!Array.isArray(identifiers) || identifiers.length === 0) return null;
 
-  // 0) Configs relevantes
   const passportTypeCode = (process.env.PDQM_IDENTIFIER_TYPE_CODE_PASSPORT || 'PPN').trim();
   const passportTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_PASSPORT || 'Pasaporte').toLowerCase();
-  const passportOidRaw = (process.env.LAC_PASSPORT_ID_SYSTEM_OID || '').trim(); // ej: 2.16.840.1.113883.4.330.152
-  const passportSystemUrn = toUrnOid(passportOidRaw); // respeta OID_URN_SEPARATOR (":" o ".")
-  const fallbackParamNames = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES || 'RUN,RUNP,identifier');
-  const defaultSystem = (process.env.PDQM_DEFAULT_IDENTIFIER_SYSTEM || '').trim(); // puede venir como "urn:oid.x"
+  const passportOidRaw   = (process.env.LAC_PASSPORT_ID_SYSTEM_OID || '').trim();
+  const passportSystemUrn = toUrnOid(passportOidRaw);
 
-  // Helper para devolver system|value
-  const asSystemPipeValue = (id, preferOid=null) => {
-    const value = id?.value;
-    if (!value) return null;
-    let system = id?.system;
-    if (!system && preferOid) system = toUrnOid(preferOid);
-    if (!system && defaultSystem) system = defaultSystem;
-    if (!system) return value; // último recurso, solo valor (no ideal, pero evita null)
-    return `${system}|${value}`;
+  const isPassportId = (id) => {
+    if (!id || !id.value) return false;
+    const byCode = id.type?.coding?.some(c => (c.code || '').toUpperCase() === passportTypeCode.toUpperCase());
+    const byText = (id.type?.text || '').toLowerCase().includes(passportTypeText);
+    const bySys  = !!id.system && (
+      id.system.toLowerCase().includes('passport') ||
+      id.system.toLowerCase().includes('pasaporte') ||
+      (passportSystemUrn && id.system === passportSystemUrn)
+    );
+    return byCode || byText || bySys;
   };
 
-  // 1) **PRIORIDAD**: buscar PASAPORTE por type.coding.code === 'PPN' (o code configurado)
-  const ppnByCode = identifiers.find(id =>
-    Array.isArray(id.type?.coding) &&
-    id.type.coding.some(c => (c.code || '').toUpperCase() === passportTypeCode.toUpperCase())
-  );
-  if (ppnByCode) {
-    const out = asSystemPipeValue(ppnByCode, passportOidRaw);
-    if (out) return out;
-  }
+  // Evita valores tipo RUN*... y prefiere patrones de pasaporte (p.ej. CLxxxx)
+  const looksLikePassportValue = (v) => {
+    if (!v) return false;
+    if (/^RUN\*/i.test(v)) return false;
+    return /^[A-Z]{2}[A-Z0-9]+$/i.test(v) || /^[A-Z0-9]{5,}$/i.test(v);
+  };
 
-  // 2) Alternativa: buscar PASAPORTE por type.text ~ "Pasaporte"
-  const ppnByText = identifiers.find(id => (id.type?.text || '').toLowerCase().includes(passportTypeText));
-  if (ppnByText) {
-    const out = asSystemPipeValue(ppnByText, passportOidRaw);
-    if (out) return out;
-  }
+  // 1) Prioridad: PPN real con valor válido → devuelve SOLO el value
+  const passportIds = identifiers.filter(isPassportId).filter(id => looksLikePassportValue(id.value));
+  if (passportIds.length) return passportIds[0].value.trim();
 
-  // 3) Otra heurística: system que parezca de pasaporte o coincida exactamente con el configurado
-  const ppnBySystemHint = identifiers.find(id => {
-    const sys = (id.system || '').toLowerCase();
-    return sys.includes('passport') || sys.includes('pasaporte') || 
-           (passportSystemUrn && id.system === passportSystemUrn);
-  });
-  if (ppnBySystemHint) {
-    const out = asSystemPipeValue(ppnBySystemHint, passportOidRaw);
-    if (out) return out;
-  }
+  // 2) Cualquier id cuyo value parezca pasaporte → value
+  const anyPassportish = identifiers.find(id => looksLikePassportValue(id.value));
+  if (anyPassportish) return anyPassportish.value.trim();
 
-  // 4) Si hay un system por defecto configurado y coincide con algún identifier
-  if (defaultSystem) {
-    const byDefaultSystem = identifiers.find(id => id.system === defaultSystem);
-    const out = asSystemPipeValue(byDefaultSystem);
-    if (out) return out;
-  }
-
-  // 5) Fallbacks por nombres/etiquetas configuradas (RUN, RUNP, identifier, etc.)
-  for (const paramName of fallbackParamNames) {
-    const m1 = identifiers.find(id => (id.type?.text || '').toLowerCase().includes(paramName.toLowerCase()));
-    const out = asSystemPipeValue(m1);
-    if (out) return out;
-  }
-  for (const paramName of fallbackParamNames) {
-    const m2 = identifiers.find(id => (id.value || '').toLowerCase().includes(paramName.toLowerCase()));
-    const out = asSystemPipeValue(m2);
-    if (out) return out;
-  }
-
-  // 6) Último recurso: primer identifier con valor (en formato system|value si hay system)
+  // 3) Último recurso: primer value disponible (value-only; sin system)
   const first = identifiers.find(id => !!id.value);
-  return asSystemPipeValue(first);
+  return first ? first.value.trim() : null;
 }
 
 // ===================== Logging helper para terminología =====================
