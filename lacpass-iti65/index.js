@@ -643,15 +643,27 @@ function robustUrlEncode(value) {
   return encoded;
 }
 
+// Antes: pickIdentifierValueForPdqm(...) devolvía un solo value. Ahora usamos lista ordenada.
+
 // Nuevo: devuelve una lista ORDENADA de candidatos (pasaporte -> nacional -> último recurso)
 function pickIdentifiersOrderedForPdqm(identifiers) {
   if (!Array.isArray(identifiers) || identifiers.length === 0) return [];
+
+  const norm = (s) => String(s || '').trim();
+  const looksLikePassportValue = (v) => {
+    if (!v) return false;
+    if (/\*/.test(v)) return false;        // evitar valores con '*'
+    if (/^RUN\*/i.test(v)) return false;   // descartar RUN*...
+    // patrón genérico: 2 letras + ≥5 alfanum (ej. CL12345, BR125845)
+    return /^[A-Z]{2}[A-Z0-9]{5,}$/i.test(v);
+  };
+  const preferCL = (arr) =>
+    arr.sort((a, b) => (/^CL/i.test(norm(b.value)) ? 1 : 0) - (/^CL/i.test(norm(a.value)) ? 1 : 0));
 
   const passportTypeCode = (process.env.PDQM_IDENTIFIER_TYPE_CODE_PASSPORT || 'PPN').trim();
   const passportTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_PASSPORT || 'Pasaporte').toLowerCase();
   const nationalTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_NATIONAL  || 'RUN').toLowerCase();
 
-  const norm = (s) => String(s || '').trim();
   const isPassportId = (id) => {
     const codeHit = (id.type?.coding || []).some(c => norm(c.code).toUpperCase() === passportTypeCode.toUpperCase());
     const textHit = norm(id.type?.text).toLowerCase().includes(passportTypeText) ||
@@ -667,24 +679,12 @@ function pickIdentifiersOrderedForPdqm(identifiers) {
     if (code && /RUN/i.test(code)) return true;           // por code si existiera
     return false;
   };
-  const looksLikePassportValue = (v) => {
-    if (!v) return false;
-    if (/\*/.test(v)) return false;        // valores con * no se usan
-    if (/^RUN\*/i.test(v)) return false;   // descartar RUN*...
-    // patrón genérico "CLxxxxxx" u otros pasaportes: 2 letras + 5+ alfanum.
-    return /^[A-Z]{2}[A-Z0-9]{5,}$/i.test(v);
-  };
-  const preferCL = (arr) =>
-    arr.sort((a, b) => {
-      const av = norm(a.value), bv = norm(b.value);
-      const aCL = /^CL/i.test(av), bCL = /^CL/i.test(bv);
-      return (bCL ? 1 : 0) - (aCL ? 1 : 0);
-    });
 
   // 1) Pasaporte "formal"
   const passportFormal = preferCL(
     identifiers.filter(isPassportId).filter(i => looksLikePassportValue(i.value))
   ).map(i => norm(i.value));
+
   // 2) Pasaporte "por forma" (value parece pasaporte) excluyendo RUN
   const passportShape  = preferCL(
     identifiers.filter(i => !isNationalId(i) && looksLikePassportValue(i.value))
@@ -2029,14 +2029,27 @@ app.post('/lacpass/_iti65', async (req, res) => {
       if (localPatient) {
         const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
         
-        // Nuevo: probar múltiples identificadores en cascada (Pasaporte -> Nacional -> otros)
-        const idCandidates = pickIdentifiersOrderedForPdqm(ids);
+        // Nuevo: candidatos ordenados (Pasaporte → Nacional → otros)
+        let idCandidates = pickIdentifiersOrderedForPdqm(ids);
+        console.log('PDQm: candidatos ordenados =>', idCandidates.join(' , '));
+
+        // Expandir RUN*: probar [RUN*XXXX, XXXX] y evitar duplicados
+        const expandRun = (v) => (typeof v === 'string' && /^RUN\*/i.test(v))
+          ? [v, v.replace(/^RUN\*/i, '')]
+          : [v];
+        idCandidates = idCandidates.flatMap(expandRun)
+          .filter((v, i, a) => a.indexOf(v) === i);
+
+        // Empujar al final cualquier value que contenga '*'
+        const starScore = (v) => (/\*/.test(String(v)) ? 1 : 0);
+        idCandidates.sort((a, b) => starScore(a) - starScore(b));
+
         let pdqmBundle = null;
         
         if (idCandidates.length) {
           for (const cand of idCandidates) {
             try {
-              console.log(`🔍 PDQm: buscando por identifier=${cand}`);
+              logInfo(`PDQm: buscando por identifier=${cand}`);
               const tryBundle = await pdqmFetchBundleByIdentifier(cand);
               const hasHits = !!tryBundle && (
                 (Array.isArray(tryBundle.entry) && tryBundle.entry.length > 0) ||
@@ -2044,13 +2057,13 @@ app.post('/lacpass/_iti65', async (req, res) => {
               );
               if (hasHits) {
                 pdqmBundle = tryBundle;
-                console.log(`✅ PDQm: resultados encontrados con identifier=${cand}`);
+                logInfo(`PDQm: resultados encontrados con identifier=${cand}`);
                 break;
               } else {
-                console.warn(`⚠️ PDQm: sin resultados con identifier=${cand}`);
+                logWarn(`PDQm: sin resultados con identifier=${cand}`);
               }
             } catch (e) {
-              console.warn(`⚠️ PDQm: error buscando identifier=${cand} → ${e?.message || e}`);
+              logWarn(`PDQm: error buscando identifier=${cand} → ${e?.message || e}`);
             }
           }
         }
