@@ -1,18 +1,18 @@
 {
-  "urn": "urn:mediator:fhir-forwarder-immunization",
+  "urn": "urn:mediator:fhir-forwarder-encounter-condition-mediator",
   "version": "1.0.0",
-  "name": "FHIR Event Forwarder Immunization Mediator",
+  "name": "FHIR Event Forwarder Encounter Condition Mediator",
   "description": "Reenvía recursos FHIR desde OpenMRS proxy a un nodo nacional vía OpenHIM",
   "defaultChannelConfig": [
     {
-      "name": "FHIR Forwarder Immunization Event Channel",
-      "urlPattern": "^/forwarderimmunization/_event$",
+      "name": "FHIR Forwarder Encounter Condition Event Channel",
+      "urlPattern": "^/forwardercondition/_event$",
       "routes": [
         {
-          "name": "FHIR Forwarder Immunization Event Route",
+          "name": "FHIR Forwarder Encounter Condition Event Route",
           "host": "10.68.174.209",
-          "port": 8009,
-          "path": "/forwarderimmunization/_event",
+          "port": 8014,
+          "path": "/forwardercondition/_event",
           "primary": true,
           "type": "http",
           "passThroughHeaders": [],
@@ -24,14 +24,14 @@
       "type": "http"
     },
     {
-      "name": "FHIR Forwarder Immunization Health Channel",
-      "urlPattern": "^/forwarderimmunization/_health$",
+      "name": "FHIR Forwarder Encounter Condition Health Channel",
+      "urlPattern": "^/forwardercondition/_health$",
       "routes": [
         {
-          "name": "FHIR Forwarder Immunization Health Route",
+          "name": "FHIR Forwarder Encounter Condition Health Route",
           "host": "10.68.174.209",
-          "port": 8009,
-          "path": "/forwarderimmunization/_health",
+          "port": 8014,
+          "path": "/forwardercondition/_health",
           "primary": true,
           "type": "http",
           "passThroughHeaders": []
@@ -43,9 +43,9 @@
     }
   ],
   "endpoints": [
-    { "name": "event-endpoint",  "path": "/forwarderimmunization/_event",  "method": "post" },
-    { "name": "health-endpoint", "path": "/forwarderimmunization/_health", "method": "get" }
+    { "name": "event-endpoint",  "path": "/forwardercondition/_event",  "method": "post" },
+    { "name": "health-endpoint", "path": "/forwardercondition/_health", "method": "get" }
   ],
-  "heartbeatPath": "/forwarderimmunization/_health",
+  "heartbeatPath": "/forwardercondition/_health",
   "heartbeatInterval": 30000
 }
