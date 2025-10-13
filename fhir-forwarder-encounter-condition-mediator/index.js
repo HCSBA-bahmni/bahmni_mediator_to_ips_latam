@@ -24,7 +24,7 @@ import axios from 'axios'
 import https from 'https'
 import fs from 'fs'
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils'
-import mediatorConfig from './mediatorConfig.json' with { type: 'json' }
+import mediatorConfig from './mediatorConfig.json' assert { type: 'json' }
 
 // =============================
 // OpenHIM & HTTPS
@@ -234,7 +234,8 @@ async function processConditionsByEncounter (enc) {
   const encounterRef = `Encounter/${encId}`
 
   // Cargar Observations del Encounter
-  const bundle = await getFromProxy(`/Observation?encounter=${encodeURIComponent(encId)}&_count=200&_format=application/fhir+json`)
+  const encRef = encodeURIComponent(`Encounter/${encId}`)
+  const bundle = await getFromProxy(`/Observation?encounter=${encRef}&_count=200&_format=application/fhir+json`)
   if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry) || !bundle.entry.length) {
     logStep('ⓘ No hay Observations para el Encounter', encId)
     return 0
