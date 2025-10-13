@@ -173,7 +173,41 @@ async function translateToSNOMED (sourceCoding) {
 // =============================
 // Builder: Condition from Observation
 // =============================
-async function buildConditionFromObservation (obs, patientRef, encounterRef, enc) {
+// Opcional: $lookup en Snowstorm si quieres siempre Display SNOMED
+const USE_LOOKUP_SNOMED = /^true$/i.test(process.env.USE_LOOKUP_SNOMED || 'false')
+async function lookupSnomedDisplay(code) {
+  if (!USE_LOOKUP_SNOMED || !TERMINOLOGY_BASE || !code) return null
+  try {
+    const url = `${TERMINOLOGY_BASE}/CodeSystem/$lookup`
+    const { data } = await axios.get(url, {
+      params: {
+        system: SNOMED,
+        code,
+        // version opcional: version=http://snomed.info/sct/900000000000207008/version/20240331
+      },
+      httpsAgent: axios.defaults.httpsAgent
+    })
+    const p = (data?.parameter || [])
+    const disp = p.find(x => x.name === 'display')?.valueString
+    return disp || null
+  } catch (e) {
+    dbg('lookup error:', e.message)
+    return null
+  }
+}
+
+function buildPatientDisplay(patient) {
+  if (!patient) return undefined
+  const n = (patient.name && patient.name[0]) || {}
+  const given = Array.isArray(n.given) ? n.given.join(' ') : n.given
+  const fam = n.family || ''
+  const nameStr = [given, fam].filter(Boolean).join(' ').trim()
+  const idf = (patient.identifier && patient.identifier[0]) || null
+  const idStr = idf?.value ? ` (ID: ${idf.value})` : ''
+  return (nameStr || idStr) ? `${nameStr}${idStr}` : undefined
+}
+
+async function buildConditionFromObservation (obs, patientRef, encounterRef, enc, patient) {
   // 1) elegir codificación SNOMED nativa (preferida)
   let snomed = pickFirstSNOMED(obs)
 
@@ -196,6 +230,13 @@ async function buildConditionFromObservation (obs, patientRef, encounterRef, enc
   const clinicalStatusCode = process.env.DEFAULT_COND_CLINICAL || 'active' // active | recurrence | relapse | inactive | remission | resolved
   const verificationStatusCode = process.env.DEFAULT_COND_VERIFY || 'confirmed' // unconfirmed | provisional | differential | confirmed | refuted | entered-in-error
 
+  // code.text (prioriza display SNOMED; si no hay, usa Observation.code.text; opcionalmente lookup)
+  let codeText = snomed?.display || obs?.code?.text || undefined
+  if (!codeText && snomed?.code) {
+    const looked = await lookupSnomedDisplay(snomed.code)
+    if (looked) codeText = looked
+  }
+
   const condition = {
     resourceType: 'Condition',
     id: `cond-${obs.id}`, // trazabilidad contra la Observation origen
@@ -212,13 +253,41 @@ async function buildConditionFromObservation (obs, patientRef, encounterRef, enc
     recordedDate: obs.issued || undefined
   }
 
+  // code.text si lo logramos determinar
+  if (codeText) condition.code.text = codeText
+
+  // subject.display (si tenemos Patient)
+  const subjDisp = buildPatientDisplay(patient)
+  if (subjDisp) condition.subject.display = subjDisp
+
   // Asserter (si existe en Encounter: primer Practitioner)
   const prac = (enc?.participant || []).find(p => p.individual?.reference?.startsWith('Practitioner/'))?.individual?.reference
-  if (prac) condition.asserter = { reference: prac }
+  if (prac) {
+    condition.asserter = { reference: prac }
+    // recorder (como en tu ejemplo del Condition previo)
+    condition.recorder = { reference: prac }
+  }
 
   // Severity (opcional): mapear desde Observation.interpretation si viene codificada en SNOMED
   const interSNOMED = (obs.interpretation?.coding || []).find(c => c.system === SNOMED)
   if (interSNOMED) condition.severity = { coding: [interSNOMED] }
+
+  // Narrative text (status=generated) — simple tabla HTML
+  const rows = []
+  rows.push(`<tr><td>Id:</td><td>${condition.id}</td></tr>`)
+  rows.push(`<tr><td>Clinical Status:</td><td> ${clinicalStatusCode} </td></tr>`)
+  if (codeText) rows.push(`<tr><td>Code:</td><td>${codeText}</td></tr>`)
+  if (subjDisp) rows.push(`<tr><td>Subject:</td><td>${subjDisp}</td></tr>`)
+  if (condition.onsetDateTime) rows.push(`<tr><td>Onset:</td><td>${condition.onsetDateTime}</td></tr>`)
+  if (condition.recordedDate) rows.push(`<tr><td>Recorded Date:</td><td>${condition.recordedDate.substring(0,10)}</td></tr>`)
+  if (condition.recorder?.reference) {
+    const recDisp = condition.recorder.display || 'Recorder'
+    rows.push(`<tr><td>Recorder:</td><td>${recDisp}</td></tr>`)
+  }
+  condition.text = {
+    status: 'generated',
+    div: `<div xmlns="http://www.w3.org/1999/xhtml"><table class="hapiPropertyTable"><tbody>${rows.join('')}</tbody></table></div>`
+  }
 
   return condition
 }
@@ -226,7 +295,7 @@ async function buildConditionFromObservation (obs, patientRef, encounterRef, enc
 // =============================
 // Pipeline: process Conditions for an Encounter
 // =============================
-async function processConditionsByEncounter (enc) {
+async function processConditionsByEncounter (enc, patient) {
   if (!enc?.id) return 0
   const encId = enc.id
   const pid = enc.subject?.reference?.split('/')[1]
@@ -248,7 +317,7 @@ async function processConditionsByEncounter (enc) {
 
     // Heurística mínima: solo Observations "diagnósticas" → dependerá del modelado en Bahmni/OpenMRS.
     // Aquí aceptamos cualquiera que traiga algún coding SNOMED (o traducible), lo demás se ignora.
-    const cond = await buildConditionFromObservation(obs, patientRef, encounterRef, enc)
+    const cond = await buildConditionFromObservation(obs, patientRef, encounterRef, enc, patient)
     if (!cond) continue // sin SNOMED → se omite
 
     await putToNode(cond)
@@ -278,16 +347,17 @@ app.post('/forwardercondition/_event', async (req, res) => {
     if (!pid) return res.status(404).json({ error: `Encounter sin patient (uuid=${uuid})` })
 
     // Subir Patient (para garantizar referencias válidas en el nodo)
+    let patient
     try {
       logStep('📤 Subiendo Patient…', pid)
-      const patient = await getFromProxy(`/Patient/${pid}`)
+      patient = await getFromProxy(`/Patient/${pid}`)
       await putToNode(patient)
     } catch (e) {
       logStep('⚠️ No se pudo subir Patient:', e.message)
     }
 
     // Procesar Conditions desde Observations del Encounter
-    const sent = await processConditionsByEncounter(enc)
+    const sent = await processConditionsByEncounter(enc, patient)
 
     logStep('🎉 Done conditions', { uuid, sent })
     return res.json({ status: 'ok', uuid, sent })
