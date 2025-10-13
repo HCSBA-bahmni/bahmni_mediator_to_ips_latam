@@ -24,7 +24,7 @@ import axios from 'axios'
 import https from 'https'
 import fs from 'fs'
 import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils'
-import mediatorConfig from './mediatorConfig.json' assert { type: 'json' }
+import mediatorConfig from './mediatorConfig.json' with { type: 'json' }
 
 // =============================
 // OpenHIM & HTTPS
