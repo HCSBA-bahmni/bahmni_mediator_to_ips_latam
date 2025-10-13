@@ -140,6 +140,9 @@ const {
 } = process.env;
 
 // ===== Constantes de Perfiles y Códigos =====
+// OIDs por defecto (normalizados a urn:oid con separador configurable)
+const DEFAULT_NAT_OID = toUrnOid(LAC_NATIONAL_ID_SYSTEM_OID || '2.16.152');
+const DEFAULT_PPN_OID = toUrnOid(LAC_PASSPORT_ID_SYSTEM_OID || '2.16.840.1.113883.4.330.152');
 
 // Perfiles LAC (racsel) — coinciden con el validador
 const LAC_PROFILES = {
@@ -151,6 +154,8 @@ const LAC_PROFILES = {
 // Perfiles IPS (http)
 const IPS_PROFILES = {
   BUNDLE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Bundle-uv-ips',
+  MEDICATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Medication-uv-ips',
+  MEDICATION_REQUEST: 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationRequest-uv-ips',
   COMPOSITION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Composition-uv-ips',
   PATIENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips',
   ALLERGY_INTOLERANCE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/AllergyIntolerance-uv-ips',
@@ -669,10 +674,13 @@ function pickIdentifiersOrderedForPdqm(identifiers) {
   const nationalTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_NATIONAL  || 'RUN').toLowerCase();
 
   const isPassportId = (id) => {
-    const codeHit = (id.type?.coding || []).some(c => norm(c.code).toUpperCase() === passportTypeCode.toUpperCase());
+    const codings = (id.type?.coding || []);
+    const codeHit = codings.some(c => norm(c.code).toUpperCase() === passportTypeCode.toUpperCase());
+    // soporte explícito al code que nos compartiste para "Pasaporte"
+    const altCodeHit = codings.some(c => norm(c.code) === 'a2551e57-6028-428b-be3c-21816c252e06');
     const textHit = norm(id.type?.text).toLowerCase().includes(passportTypeText) ||
                     /passport|pasaporte/i.test(norm(id.type?.text));
-    return (codeHit || textHit) && !!norm(id.value);
+    return (codeHit || altCodeHit || textHit) && !!norm(id.value);
   };
   const isNationalId = (id) => {
     const txt = norm(id.type?.text);
@@ -1105,6 +1113,36 @@ function sanitizeMedicationResource(med) {
   if (med.code && !med.code.text) med.code.text = 'Medication';
 }
 
+function sanitizeAllergyIntolerance(ai) {
+  if (!ai || ai.resourceType !== 'AllergyIntolerance') return;
+  // code: dejar SNOMED primero y eliminar codings sin system
+  if (Array.isArray(ai.code?.coding)) {
+    ai.code.coding = ai.code.coding
+      // fuera codings sin system y los locales OpenMRS
+      .filter(c => !!c?.system && c.system !== 'http://openmrs.org/concepts')
+      // SNOMED primero
+      .sort((a,b) => (a.system === 'http://snomed.info/sct' ? -1 : 1));
+  }
+  // reaction[].manifestation: idem
+  (ai.reaction || []).forEach(r => {
+    if (Array.isArray(r.manifestation)) {
+      r.manifestation.forEach(m => {
+        if (Array.isArray(m.coding)) {
+          m.coding = m.coding
+            .filter(c => !!c?.system)
+            .sort((a,b) => (a.system === 'http://snomed.info/sct' ? -1 : 1));
+        }
+      });
+    }
+    // NEW: reaction.substance.coding → también limpiar y ordenar
+    if (r.substance?.coding && Array.isArray(r.substance.coding)) {
+      r.substance.coding = r.substance.coding
+        .filter(c => !!c?.system && c.system !== 'http://openmrs.org/concepts')
+        .sort((a,b) => (a.system === 'http://snomed.info/sct' ? -1 : 1));
+    }
+  });
+}
+
 // --- OPCIONAL: Sanitizar Practitioner.identifier.system no estándar (OMRS) ---
 function sanitizePractitionerIdentifiers(prac) {
   if (!prac || prac.resourceType !== 'Practitioner') return;
@@ -1121,74 +1159,68 @@ function sanitizePractitionerIdentifiers(prac) {
   if (prac.identifier.length === 0) delete prac.identifier;
 }
 
-function fixPatientIdentifiers(patient) {
+function fixPatientIdentifiers(bundle) {
+  const patient = (bundle?.entry || [])
+    .map(e => e.resource)
+    .find(r => r?.resourceType === 'Patient');
   if (!patient) return;
 
-  // Usar las constantes OID definidas globalmente (se formatearán como urn:oid.<OID>)
-  const defaultNatOid = toUrnOid(LAC_NATIONAL_ID_SYSTEM_OID); // desde .env
-  const defaultIntOid = toUrnOid(LAC_PASSPORT_ID_SYSTEM_OID); // desde .env
+  patient.identifier = Array.isArray(patient.identifier) ? patient.identifier : [];
 
-  // Forzar reconstrucción completa de identifiers para garantizar cumplimiento LAC
-  const originalIds = [...(patient.identifier || [])];
-  patient.identifier = [];
+  // Systems normalizados (LAC)
+  const defaultNatOid = DEFAULT_NAT_OID;
+  const defaultPpnOid = DEFAULT_PPN_OID; // 2.16.840.1.113883.4.330.152
 
-  // Buscar valores existentes para reutilizar
-  let nationalValue = null;
-  let passportValue = null;
+  for (const id of patient.identifier) {
+    const txt = (id?.type?.text || '').toLowerCase();
+    const cod = id?.type?.coding?.[0]?.code || '';
 
-  for (const id of originalIds) {
-    const hasNationalType = id.type?.coding?.some(c => c.code === 'MR') || 
-                           id.system?.includes('rut') || 
-                           id.system?.includes('cedula') ||
-                           id.use === 'official';
-    const hasPassportType = id.type?.coding?.some(c => c.code === 'PPN') || 
-                           id.system?.includes('passport');
-
-    if (hasNationalType && id.value && !nationalValue) {
-      nationalValue = id.value;
+    // --- Nacional / RUN ---
+    if (/run|nacional|national/.test(txt) || /^RUN\*/i.test(id?.value || '') || /RUN/i.test(cod)) {
+      if (!id.system) id.system = defaultNatOid;                 // urn:oid:2.16.152
+      id.use = 'usual';                                          // MR debe ir como 'usual'
+      continue;
     }
-    if (hasPassportType && id.value && !passportValue) {
-      passportValue = id.value;
-    }
-  }
 
-  // Si no se encontraron valores, usar el ID del paciente o un valor por defecto
-  if (!nationalValue) {
-    nationalValue = patient.id || `ID-${Date.now()}`;
-  }
-
-  // SIEMPRE crear al menos un identifier nacional (requerido por LAC)
-  patient.identifier.push({
-    use: 'official',
-    type: {
-      coding: [{
-        system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
-        code: 'MR'
-      }]
-    },
-    // Emite con separador configurado (por defecto ".")
-    system: defaultNatOid || toUrnOid('2.16.152'),
-    value: nationalValue
-  });
-
-  // Agregar identifier de pasaporte **solo** si hay valor real de pasaporte
-  const looksLikeRealPassport = (v) =>
-    !!v && !/\*/.test(v) && !/^RUN\*/i.test(v) && /^[A-Z]{2}[A-Z0-9]{5,}$/i.test(v);
-  if (passportValue && looksLikeRealPassport(passportValue)) {
-    patient.identifier.push({
-      use: 'official',
-      type: {
-        coding: [{
+    // --- Pasaporte / PPN ---
+    const isPassportByText = /pasaporte|passport/.test(txt);
+    const isPassportByCode = (id?.type?.coding || []).some(c =>
+      String(c?.code || '').toUpperCase() === 'PPN' ||
+      String(c?.code || '') === 'a2551e57-6028-428b-be3c-21816c252e06'   // código que nos envías para distinguir PPN
+    );
+    if (isPassportByText || isPassportByCode) {
+      if (!id.system) id.system = defaultPpnOid;                         // urn:oid:2.16.840.1.113883.4.330.152
+      id.use = 'official';                                               // PPN debe ir como 'official'
+      // Asegurar PPN como tipo (v2-0203)
+      id.type = id.type || {};
+      id.type.coding = Array.isArray(id.type.coding) ? id.type.coding : [];
+      const hasV20203PPN = id.type.coding.some(c => c.system === 'http://terminology.hl7.org/CodeSystem/v2-0203' && c.code === 'PPN');
+      if (!hasV20203PPN) {
+        id.type.coding.push({
           system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
-          code: 'PPN'
-        }]
-      },
-      system: defaultIntOid || toUrnOid('2.16.840.1.113883.4.1'),
-      value: passportValue
-    });
+          code: 'PPN',
+          display: 'Passport number'
+        });
+      }
+      if (!id.type.text) id.type.text = 'Pasaporte';
+    }
   }
 
-  console.log(`🔧 Patient identifiers fixed: ${patient.identifier.length} identifiers with URN OID systems`);
+  // Si hay PPN, aseguramos que quede presente con system correcto (no eliminar)
+  const hasPassport = patient.identifier.some(i =>
+    /pasaporte|passport/i.test(i?.type?.text || '') ||
+    (i?.type?.coding || []).some(c => String(c?.code || '').toUpperCase() === 'PPN')
+  );
+  if (hasPassport) {
+    const ppn = patient.identifier.find(i =>
+      /pasaporte|passport/i.test(i?.type?.text || '') ||
+      (i?.type?.coding || []).some(c => String(c?.code || '').toUpperCase() === 'PPN')
+    );
+    if (ppn) {
+      if (!ppn.system) ppn.system = defaultPpnOid;
+      ppn.use = 'official';
+    }
+  }
 }
 
 function ensureLacPatientProfile(patient) {
@@ -1205,6 +1237,8 @@ function ensureIpsProfile(resource) {
   const profileMap = {
     'AllergyIntolerance': IPS_PROFILES.ALLERGY_INTOLERANCE,
     'MedicationStatement': IPS_PROFILES.MEDICATION_STATEMENT,
+    'MedicationRequest': IPS_PROFILES.MEDICATION_REQUEST,
+    'Medication': IPS_PROFILES.MEDICATION,
     'Condition': IPS_PROFILES.CONDITION,
     'Procedure': IPS_PROFILES.PROCEDURE,
     'Immunization': IPS_PROFILES.IMMUNIZATION,
@@ -1372,7 +1406,8 @@ function fixBundleValidationIssues(summaryBundle) {
     if (['AllergyIntolerance','MedicationStatement','Condition','Immunization'].includes(r.resourceType)) {
       stripNarrativeLinkExtensions(r);
     }
-    // LIMPIEZA NUEVA: Medication y Practitioner
+    // LIMPIEZA NUEVA: AllergyIntolerance, Medication y Practitioner
+    if (r?.resourceType === 'AllergyIntolerance') sanitizeAllergyIntolerance(r);
     if (r.resourceType === 'Medication') {
       sanitizeMedicationResource(r);
     }
@@ -1387,7 +1422,7 @@ function fixBundleValidationIssues(summaryBundle) {
   const patientEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
   if (patientEntry?.resource) {
     // CRÍTICO: Aplicar fixPatientIdentifiers ANTES de cualquier otra validación
-    fixPatientIdentifiers(patientEntry.resource);
+    fixPatientIdentifiers(summaryBundle);
     
     // Validar que el Patient tenga al menos un identifier con URN OID válido
     const hasValidOidIdentifier = patientEntry.resource.identifier?.some(id => 
@@ -1398,7 +1433,7 @@ function fixBundleValidationIssues(summaryBundle) {
       console.warn('⚠️ Patient no tiene identifiers URN OID válidos después de fixPatientIdentifiers');
       // Forzar creación de un identifier básico
       patientEntry.resource.identifier = [{
-        use: 'official',
+        use: 'usual',                                 // MR debe ser 'usual'
         type: {
           coding: [{
             system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
@@ -1467,6 +1502,37 @@ function fixBundleValidationIssues(summaryBundle) {
 
     // Antecedentes (Past Illness Hx): LOINC 11348-0 → Condition
     ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.PAST_ILLNESS_SECTION, ['Condition']);
+  }
+
+  // 2.bis Deduplicar y filtrar entries por tipo permitido en cada sección IPS
+  if (compositionEntry?.resource?.section) {
+    // Mapa loinc -> tipos permitidos
+    const sectionAllowedTypes = {
+      [LOINC_CODES.ALLERGIES_SECTION]: ['AllergyIntolerance'],
+      [LOINC_CODES.MEDICATIONS_SECTION]: ['MedicationStatement','MedicationRequest'],
+      [LOINC_CODES.PROBLEMS_SECTION]: ['Condition'],
+      [LOINC_CODES.PAST_ILLNESS_SECTION]: ['Condition']
+    };
+    compositionEntry.resource.section.forEach(sec => {
+      const loinc = (sec.code?.coding || []).find(c => c.system === 'http://loinc.org')?.code;
+      const allowed = sectionAllowedTypes[loinc] || null;
+      if (!Array.isArray(sec.entry)) return;
+      const seen = new Set();
+      sec.entry = sec.entry.filter(e => {
+        const ref = e?.reference || '';
+        if (!ref) return false;
+        if (seen.has(ref)) return false;     // dedupe
+        // Validar que la referencia resuelva a un recurso permitido
+        const resolved = summaryBundle.entry?.find(x => {
+          const fu = x.fullUrl || (x.resource?.id ? `${x.resource.resourceType}/${x.resource.id}` : '');
+          return fu === ref || fu?.endsWith(`/${ref.split('/').pop()}`);
+        })?.resource;
+        if (!resolved) return false;
+        if (allowed && !allowed.includes(resolved.resourceType)) return false;
+        seen.add(ref);
+        return true;
+      });
+    });
   }
 
   // 2. Perfiles IPS en recursos referenciados por las secciones para que pasen los discriminadores
@@ -1563,7 +1629,16 @@ function fixBundleValidationIssues(summaryBundle) {
   // 6.bis Corregir AllergyIntolerance - absent/unknown 'no-allergy-info'
   summaryBundle.entry?.forEach(entry => {
     const res = entry.resource;
-    if (res?.resourceType === 'AllergyIntolerance' && res.code?.coding?.length) {
+    if (res?.resourceType === 'AllergyIntolerance' && Array.isArray(res.code?.coding)) {
+      // 2.1 Filtrar codings sin system y los locales OpenMRS
+      res.code.coding = res.code.coding.filter(c =>
+        !!c.system && c.system !== 'http://openmrs.org/concepts'
+      );
+      // 2.2 Si quedan codings, ordenar con SNOMED primero
+      if (res.code.coding.length > 0) {
+        res.code.coding = sortCodingsPreferred(res.code.coding);
+      }
+      // 2.3 Refuerzo absent/unknown (mantener)
       res.code.coding.forEach(c => {
         if (c.code === 'no-allergy-info' || c.display === 'No information about allergies') {
           c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
@@ -1646,7 +1721,7 @@ function fixBundleValidationIssues(summaryBundle) {
       
       if (natOid && nationalId) {
         patient.identifier.push({
-          use: 'official',
+          use: 'usual',                                 // MR debe ser 'usual'
           type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MR' }] },
           system: toUrnOid(natOid),
           value: nationalId.value || 'unknown'
@@ -1672,7 +1747,7 @@ function fixBundleValidationIssues(summaryBundle) {
       if (patient.identifier.length === 0 && natOid) {
         const defaultValue = originalIds[0]?.value || `ID-${patient.id || 'unknown'}`;
         patient.identifier.push({
-          use: 'official',
+          use: 'usual',                                 // MR debe ser 'usual'
           type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MR' }] },
           system: toUrnOid(natOid),
           value: defaultValue
