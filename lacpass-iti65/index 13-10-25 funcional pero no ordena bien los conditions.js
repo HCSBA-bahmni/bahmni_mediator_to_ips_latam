@@ -1239,47 +1239,63 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
   const sec = comp.section.find(s => s.code?.coding?.some(c => c.system === 'http://loinc.org' && c.code === loincCode));
   if (!sec) return;
 
-  // Vamos a reconstruir completamente las entradas de la sección cuando sea Condition
-  // para cumplir con sectionProblems (11450-4) y sectionPastIllnessHx (11348-0).
-  if (allowedTypes.includes('Condition')) {
-    const isPastSection = loincCode === LOINC_CODES.PAST_ILLNESS_SECTION; // 11348-0
-    const isProblemsSection = loincCode === LOINC_CODES.PROBLEMS_SECTION;  // 11450-4
+  // ¿ya hay una entry que apunte a un recurso permitido?
+  const existingValidEntries = (sec.entry || []).filter(e => {
+    const ref = e.reference;
+    const targetEntry = (summaryBundle.entry || []).find(x => x.fullUrl === ref);
+    return targetEntry && allowedTypes.includes(targetEntry.resource?.resourceType);
+  });
 
-    // Todas las Conditions en el bundle (y que no sean "absent/unknown")
-    const allConds = (summaryBundle.entry || [])
-      .filter(x => x.resource?.resourceType === 'Condition' && !isAbsentProblemCondition(x.resource));
-
-    // Clasificación (usa helpers existentes)
-    const actives = allConds.filter(x => isActiveProblem(x.resource));
-    const pasts   = allConds.filter(x => isPastIllness(x.resource));
-
-    // Conjunto objetivo según la sección
-    let target = [];
-    if (isProblemsSection) target = actives;
-    if (isPastSection)     target = pasts;
-
-    // Si hay target, lo aplicamos completo; si no, dejamos que el fallback genérico haga placeholder
-    if (target.length > 0) {
-      // Ensamblar referencias sin duplicados
-      const uniq = new Set();
-      sec.entry = [];
-      for (const candidate of target) {
-        ensureIpsProfile(candidate.resource);
-        if (!uniq.has(candidate.fullUrl)) {
-          uniq.add(candidate.fullUrl);
-          sec.entry.push({ reference: candidate.fullUrl });
-        }
+  if (existingValidEntries.length > 0) {
+    // Asegurar que los recursos referenciados tengan perfiles IPS
+    existingValidEntries.forEach(e => {
+      const targetEntry = (summaryBundle.entry || []).find(x => x.fullUrl === e.reference);
+      if (targetEntry?.resource) {
+        ensureIpsProfile(targetEntry.resource);
       }
-      // Salimos porque ya poblamos esta sección correctamente
-      return;
-    }
-    // Si no había ninguna Condition para esta sección, caeremos al fallback más abajo (placeholder)
+    });
+    return;
   }
 
   // Si no hay entries válidas, buscar candidatos y enlazarlos
   const candidates = (summaryBundle.entry || []).filter(x => allowedTypes.includes(x.resource?.resourceType));
 
-  // NOTA: ya manejamos Condition arriba. De aquí en adelante, secciones no-Condition.
+  // Special routing for Condition by section
+  if (allowedTypes.includes('Condition')) {
+    const isPast = loincCode === LOINC_CODES.PAST_ILLNESS_SECTION;
+    const conds = candidates.filter(x => x.resource?.resourceType === 'Condition');
+
+    if (!isPast) {
+      // Problems (11450-4): prefer active, exclude absent-unknown
+      const active = conds.filter(x => isActiveProblem(x.resource) && !isAbsentProblemCondition(x.resource));
+      if (active.length > 0) {
+        sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
+        const candidate = active[0];
+        ensureIpsProfile(candidate.resource);
+        const alreadyReferenced = sec.entry.some(e => e.reference === candidate.fullUrl);
+        if (!alreadyReferenced) sec.entry.push({ reference: candidate.fullUrl });
+        // dedupe
+        sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
+        return;
+      }
+      // If no active, let placeholder logic run below.
+    } else {
+      // Past Illness (11348-0): include inactive/resolved or with abatement; exclude absent-unknown
+      const past = conds.filter(x => isPastIllness(x.resource) && !isAbsentProblemCondition(x.resource));
+      if (past.length > 0) {
+        sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
+        for (const candidate of past) {
+          ensureIpsProfile(candidate.resource);
+          if (!sec.entry.some(e => e.reference === candidate.fullUrl)) {
+            sec.entry.push({ reference: candidate.fullUrl });
+          }
+        }
+        // dedupe
+        sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
+        return;
+      }
+    }
+  }
 
   // Generic fallback (non-Condition sections): link first candidate
   if (candidates.length > 0) {
