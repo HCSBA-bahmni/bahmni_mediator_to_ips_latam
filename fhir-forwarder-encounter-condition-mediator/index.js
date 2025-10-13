@@ -63,6 +63,17 @@ const USE_TRANSLATE = /^true$/i.test(process.env.USE_TRANSLATE_TO_SNOMED || 'fal
 const TERMINOLOGY_BASE = (process.env.TERMINOLOGY_BASE || '').replace(/\/$/, '')
 const TRANSLATE_TARGET = SNOMED
 
+// ====== Códigos Bahmni/OpenMRS para diagnóstico de visita (ajustables por ENV) ======
+// Grupo "Visit Diagnoses" (observation set)
+const DIAG_SET_CODE = (process.env.DIAG_SET_CODE || 'd367d289-5e07-11ef-8f7c-0242ac120002')
+// Miembros dentro del set:
+const DIAG_CODED = (process.env.DIAG_CODED || 'd3686b3c-5e07-11ef-8f7c-0242ac120002')            // "Coded Diagnosis"
+const DIAG_CERTAINTY = (process.env.DIAG_CERTAINTY || 'd368b61c-5e07-11ef-8f7c-0242ac120002')    // "Diagnosis Certainty"
+const DIAG_ORDER = (process.env.DIAG_ORDER || 'd369afd7-5e07-11ef-8f7c-0242ac120002')            // "Diagnosis order"
+
+function isCode(res, code) { return codeList(res).some(c => c.code === code) }
+function indexById(bundle) { const m = new Map(); for (const e of (bundle.entry||[])) { const r=e.resource; if (r?.id) m.set(r.id, r) } return m }
+
 // =============================
 // HTTP helpers to/from OpenMRS proxy and Node FHIR
 // =============================
@@ -207,19 +218,27 @@ function buildPatientDisplay(patient) {
   return (nameStr || idStr) ? `${nameStr}${idStr}` : undefined
 }
 
-async function buildConditionFromObservation (obs, patientRef, encounterRef, enc, patient) {
-  // 1) elegir codificación SNOMED nativa (preferida)
-  let snomed = pickFirstSNOMED(obs)
+async function buildConditionFromDiagnosisGroup (groupObs, byId, patientRef, encounterRef, enc, patient) {
+  // Buscar miembros relevantes del grupo
+  const memberIds = (groupObs.hasMember || []).map(m => m.reference?.replace(/^Observation\//,'')).filter(Boolean)
+  const members = memberIds.map(id => byId.get(id)).filter(Boolean)
+  const coded = members.find(r => isCode(r, DIAG_CODED))
+  const certaintyObs = members.find(r => isCode(r, DIAG_CERTAINTY))
+  const orderObs = members.find(r => isCode(r, DIAG_ORDER))
 
-  // 2) si no hay SNOMED y está activa la traducción → intentar traducir desde el primer coding disponible
+  // 1) Obtener SNOMED desde valueCodeableConcept de "Coded Diagnosis"
+  const valueCodings = coded?.valueCodeableConcept?.coding || []
+  let snomed = valueCodings.find(c => c.system === SNOMED && c.code) || null
+
+  // 2) Si no trae SNOMED, intentar traducir el primer coding disponible
   if (!snomed && USE_TRANSLATE) {
-    const src = codeList(obs).find(c => !!c.system && !!c.code)
-    if (src) snomed = await translateToSNOMED(src)
+    const src = valueCodings.find(c => c.code) || null
+    if (src) snomed = await translateToSNOMED({ system: src.system, code: src.code, display: src.display })
   }
 
   // 3) si sigue sin SNOMED → omitir
   if (!snomed) {
-    dbg('omit observation (no SNOMED):', { id: obs.id, codes: codeList(obs) })
+    dbg('omit diagnosis group (no SNOMED in Coded Diagnosis):', { id: groupObs.id })
     return null
   }
 
@@ -230,8 +249,8 @@ async function buildConditionFromObservation (obs, patientRef, encounterRef, enc
   const clinicalStatusCode = process.env.DEFAULT_COND_CLINICAL || 'active' // active | recurrence | relapse | inactive | remission | resolved
   const verificationStatusCode = process.env.DEFAULT_COND_VERIFY || 'confirmed' // unconfirmed | provisional | differential | confirmed | refuted | entered-in-error
 
-  // code.text (prioriza display SNOMED; si no hay, usa Observation.code.text; opcionalmente lookup)
-  let codeText = snomed?.display || obs?.code?.text || undefined
+  // code.text (prioriza display SNOMED; si no hay, usa valueCodeableConcept.text; opcionalmente lookup)
+  let codeText = snomed?.display || coded?.valueCodeableConcept?.text || undefined
   if (!codeText && snomed?.code) {
     const looked = await lookupSnomedDisplay(snomed.code)
     if (looked) codeText = looked
@@ -239,7 +258,7 @@ async function buildConditionFromObservation (obs, patientRef, encounterRef, enc
 
   const condition = {
     resourceType: 'Condition',
-    id: `cond-${obs.id}`, // trazabilidad contra la Observation origen
+    id: `cond-${groupObs.id}`, // trazabilidad contra el grupo de diagnóstico
     meta: {
       profile: (process.env.CONDITION_PROFILE ? [process.env.CONDITION_PROFILE] : undefined)
     },
@@ -249,8 +268,8 @@ async function buildConditionFromObservation (obs, patientRef, encounterRef, enc
     code: { coding: [snomed] }, // **solo SNOMED**
     subject: { reference: patientRef },
     ...(encounterRef ? { encounter: { reference: encounterRef } } : {}),
-    onsetDateTime: obs.effectiveDateTime || obs.issued || undefined,
-    recordedDate: obs.issued || undefined
+    onsetDateTime: groupObs.effectiveDateTime || groupObs.issued || undefined,
+    recordedDate: groupObs.issued || undefined
   }
 
   // code.text si lo logramos determinar
@@ -260,7 +279,7 @@ async function buildConditionFromObservation (obs, patientRef, encounterRef, enc
   const subjDisp = buildPatientDisplay(patient)
   if (subjDisp) condition.subject.display = subjDisp
 
-  // Asserter (si existe en Encounter: primer Practitioner)
+  // Asserter/recorder (si existe en Encounter: primer Practitioner)
   const prac = (enc?.participant || []).find(p => p.individual?.reference?.startsWith('Practitioner/'))?.individual?.reference
   if (prac) {
     condition.asserter = { reference: prac }
@@ -268,9 +287,14 @@ async function buildConditionFromObservation (obs, patientRef, encounterRef, enc
     condition.recorder = { reference: prac }
   }
 
-  // Severity (opcional): mapear desde Observation.interpretation si viene codificada en SNOMED
-  const interSNOMED = (obs.interpretation?.coding || []).find(c => c.system === SNOMED)
-  if (interSNOMED) condition.severity = { coding: [interSNOMED] }
+  // verificationStatus desde "Diagnosis Certainty"
+  const certainty = certaintyObs?.valueCodeableConcept?.text || certaintyObs?.valueCodeableConcept?.coding?.[0]?.display
+  if (certainty && /confirmed/i.test(certainty)) {
+    condition.verificationStatus = { coding: [{ system: CC_VERIFY, code: 'confirmed' }] }
+  }
+  if (certainty && /provisional|presumed/i.test(certainty)) {
+    condition.verificationStatus = { coding: [{ system: CC_VERIFY, code: 'provisional' }] }
+  }
 
   // Narrative text (status=generated) — simple tabla HTML
   const rows = []
@@ -302,24 +326,24 @@ async function processConditionsByEncounter (enc, patient) {
   const patientRef = pid ? `Patient/${pid}` : undefined
   const encounterRef = `Encounter/${encId}`
 
-  // Cargar Observations del Encounter
-  const encRef = encodeURIComponent(`Encounter/${encId}`)
-  const bundle = await getFromProxy(`/Observation?encounter=${encRef}&_count=200&_format=application/fhir+json`)
+  // Cargar Observations del Encounter (usa referencia tipada)
+  const bundle = await getFromProxy(`/Observation?encounter=${encodeURIComponent('Encounter/'+encId)}&_count=200&_format=application/fhir+json`)
   if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry) || !bundle.entry.length) {
     logStep('ⓘ No hay Observations para el Encounter', encId)
     return 0
   }
 
+  // Index por id y seleccionar SOLO grupos "Visit Diagnoses"
+  const byId = indexById(bundle)
+  const groups = bundle.entry
+    .map(e => e.resource)
+    .filter(r => r?.resourceType === 'Observation')
+    .filter(r => isCode(r, DIAG_SET_CODE) || /Visit Diagnoses/i.test(r?.code?.text || ''))
+
   let sent = 0
-  for (const e of bundle.entry) {
-    const obs = e.resource
-    if (obs?.resourceType !== 'Observation') continue
-
-    // Heurística mínima: solo Observations "diagnósticas" → dependerá del modelado en Bahmni/OpenMRS.
-    // Aquí aceptamos cualquiera que traiga algún coding SNOMED (o traducible), lo demás se ignora.
-    const cond = await buildConditionFromObservation(obs, patientRef, encounterRef, enc, patient)
-    if (!cond) continue // sin SNOMED → se omite
-
+  for (const g of groups) {
+    const cond = await buildConditionFromDiagnosisGroup(g, byId, patientRef, encounterRef, enc, patient)
+    if (!cond) continue
     await putToNode(cond)
     sent++
   }
