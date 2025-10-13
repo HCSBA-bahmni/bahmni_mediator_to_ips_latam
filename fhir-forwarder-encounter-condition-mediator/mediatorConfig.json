@@ -1,0 +1,51 @@
+{
+  "urn": "urn:mediator:fhir-forwarder-immunization",
+  "version": "1.0.0",
+  "name": "FHIR Event Forwarder Immunization Mediator",
+  "description": "Reenvía recursos FHIR desde OpenMRS proxy a un nodo nacional vía OpenHIM",
+  "defaultChannelConfig": [
+    {
+      "name": "FHIR Forwarder Immunization Event Channel",
+      "urlPattern": "^/forwarderimmunization/_event$",
+      "routes": [
+        {
+          "name": "FHIR Forwarder Immunization Event Route",
+          "host": "10.68.174.209",
+          "port": 8009,
+          "path": "/forwarderimmunization/_event",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": [],
+          "matchContentTypes": ["application/fhir+json", "application/json"]
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["POST"],
+      "type": "http"
+    },
+    {
+      "name": "FHIR Forwarder Immunization Health Channel",
+      "urlPattern": "^/forwarderimmunization/_health$",
+      "routes": [
+        {
+          "name": "FHIR Forwarder Immunization Health Route",
+          "host": "10.68.174.209",
+          "port": 8009,
+          "path": "/forwarderimmunization/_health",
+          "primary": true,
+          "type": "http",
+          "passThroughHeaders": []
+        }
+      ],
+      "allow": ["admin"],
+      "methods": ["GET"],
+      "type": "http"
+    }
+  ],
+  "endpoints": [
+    { "name": "event-endpoint",  "path": "/forwarderimmunization/_event",  "method": "post" },
+    { "name": "health-endpoint", "path": "/forwarderimmunization/_health", "method": "get" }
+  ],
+  "heartbeatPath": "/forwarderimmunization/_health",
+  "heartbeatInterval": 30000
+}

@@ -93,6 +93,13 @@ services:
     ports:
       - "8013:8013"
     restart: unless-stopped
+  
+  fhir-forwarder-encounter-condition-mediator:
+    build: ./fhir-forwarder-encounter-condition-mediator
+    env_file: ./.env
+    ports:
+      - "8014:8014"
+    restart: unless-stopped
 
 networks:
   default:
