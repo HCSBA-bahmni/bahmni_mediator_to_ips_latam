@@ -516,23 +516,78 @@ app.post('/icvp/_iti65', async (req, res) => {
   }
 
   try {
-    // ========= Paso opcional 1: PDQm =========
-    if (isTrue(FEATURE_PDQ_ENABLED)) {
-      const patientEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
-      const localPatient = patientEntry?.resource;
-      if (localPatient) {
-        // elegir identifier (si tienes un system preferido, úsalo; si no, el primero)
-        let idValue = null;
-        const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
-        if (PDQM_DEFAULT_IDENTIFIER_SYSTEM) {
-          idValue = ids.find(i => i.system === PDQM_DEFAULT_IDENTIFIER_SYSTEM)?.value || null;
-        }
-        if (!idValue && ids.length > 0) idValue = ids[0].value;
+      // ========= Paso opcional 1: PDQm =========
+      if (isTrue(FEATURE_PDQ_ENABLED)) {
+          const patientEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
+          const localPatient = patientEntry?.resource;
 
-        const pdqmPatient = await pdqmFetchPatientByIdentifier(idValue);
-        if (pdqmPatient) mergePatientDemographics(localPatient, pdqmPatient);
+          if (localPatient) {
+              // Extraer identifiers y ordenarlos por preferencia
+              // Solo viene el RUN, no trae más identifier
+              const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
+
+              let idCandidates = pickIdentifiersOrderedForPdqm(ids);
+              console.log('PDQm: candidatos ordenados =>', idCandidates.join(' , '));
+
+              // Expandir RUN*: probar [RUN*XXXX, XXXX] y evitar duplicados
+              const expandRun = (v) => (typeof v === 'string' && /^RUN\*/i.test(v))
+                  ? [v, v.replace(/^RUN\*/i, '')]
+                  : [v];
+              idCandidates = idCandidates.flatMap(expandRun)
+                  .filter((v, i, a) => a.indexOf(v) === i);
+
+              // Empujar al final cualquier value que contenga '*'
+              const starScore = (v) => (/\*/.test(String(v)) ? 1 : 0);
+              idCandidates.sort((a, b) => starScore(a) - starScore(b));
+
+              let pdqmBundle = null;
+
+              if (idCandidates.length) {
+                  for (const cand of idCandidates) {
+                      try {
+                          console.log(`PDQm: buscando por identifier=${cand}`);
+                          const tryBundle = await pdqmFetchBundleByIdentifier(cand);
+                          const hasHits = !!tryBundle && (
+                              (Array.isArray(tryBundle.entry) && tryBundle.entry.length > 0) ||
+                              (typeof tryBundle.total === 'number' && tryBundle.total > 0)
+                          );
+                          if (hasHits) {
+                              pdqmBundle = tryBundle;
+                              console.log(`PDQm: resultados encontrados con identifier=${cand}`);
+                              break;
+                          } else {
+                              console.log(`PDQm: sin resultados con identifier=${cand}`);
+                          }
+                      } catch (e) {
+                          console.log(`PDQm: error buscando identifier=${cand} → ${e?.message || e}`);
+                      }
+                  }
+              }
+
+              if (pdqmBundle?.resourceType === 'Bundle' && Array.isArray(pdqmBundle.entry) && pdqmBundle.entry.length > 0) {
+                  // Guardar para trazabilidad/debug
+                  try {
+                      const pdqmFile = path.join(debugDir, `pdqmBundle_${Date.now()}.json`);
+                      fs.writeFileSync(pdqmFile, JSON.stringify(pdqmBundle, null, 2));
+                      console.log('DEBUG: saved PDQm bundle (no replace) →', pdqmFile);
+                  } catch (err) {
+                      console.warn('⚠️ No se pudo guardar PDQm bundle en disco:', err.message);
+                  }
+
+                  // Marcar si es un bundle sintético de fallback
+                  if (isPdqmFallbackBundle(pdqmBundle)) {
+                      console.warn('⚠️ PDQm bundle es fallback sintético; se ignora (sin reemplazo)');
+                  }
+
+                  // Dejar disponible para uso posterior (p. ej. adjuntar como Binary/DocumentReference)
+                  req._pdqmBundle = pdqmBundle;
+              } else {
+                  console.warn('ℹ️ PDQm: sin resultados con ningún identificador de los candidatos');
+              }
+          } else {
+              console.warn('ℹ️ PDQm: no se encontró recurso Patient en el summaryBundle');
+          }
       }
-    }
 
     // ========= Paso opcional 2: Terminología por dominio =========
     await normalizeTerminologyInBundle(summaryBundle);
