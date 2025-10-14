@@ -1044,6 +1044,21 @@ function ensureIpsProfile(resource) {
     }
 }
 
+
+function toIso2Country(input) {
+    if (!input) return null;
+    const raw = String(input).trim();
+    // Ya viene ISO-2
+    if (/^[A-Za-z]{2}$/.test(raw)) return raw.toUpperCase();
+    // Viene ISO-3
+    if (/^[A-Za-z]{3}$/.test(raw)) return ISO3_TO_ISO2[raw.toUpperCase()] ?? null;
+    // Viene por nombre
+    const key = normKey(raw);
+    return COUNTRY_MAP.get(key) ?? null;
+}
+
+
+
 // Asegura que exista al menos una entry válida para el slice requerido de la sección:
 // - loincCode: código LOINC de la sección (p.ej. 48765-2 Alergias, 11450-4 Problemas, 11348-0 Antecedentes)
 // - allowedTypes: tipos de recurso aceptados por el slice (p.ej. ['AllergyIntolerance'])
