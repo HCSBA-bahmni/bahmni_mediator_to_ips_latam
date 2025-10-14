@@ -1261,7 +1261,9 @@ function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
     // Reescribir todas las .reference y Attachment.url según urlMap
     updateReferencesInObject(bundle, urlMap);
 }
-
+// ===================== Terminology Pipeline =====================
+const CS_ABSENT = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+const CS_SCT = 'http://snomed.info/sct';
 
 function sortCodingsPreferred(codings) {
     const pref = [CS_SCT]; // primero SNOMED
