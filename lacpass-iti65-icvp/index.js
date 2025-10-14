@@ -1224,6 +1224,18 @@ function asAbsoluteBase(u) {
 }
 
 
+function makeAbsolute(resourceType, id) {
+    const base = asAbsoluteBase(ABSOLUTE_FULLURL_BASE);
+    return `${base}/${resourceType}/${id}`;
+}
+function makeRelative(resourceType, id) {
+    return `${resourceType}/${id}`;
+}
+function makeUrn(id) {
+    return `urn:uuid:${id}`;
+}
+
+
 /**
  * Resuelve una referencia según el modo.
  * @param {'urn'|'absolute'|'relative'} mode
