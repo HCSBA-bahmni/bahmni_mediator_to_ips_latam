@@ -1008,6 +1008,13 @@ function isAbsentProblemCondition(cond) {
         (c.code === 'no-problem-info' || /no information about problems/i.test(c.display || '')));
 }
 
+function clinicalStatusCode(cond) {
+    return cond?.clinicalStatus?.coding?.[0]?.code || null;
+}
+
+function hasAbatement(cond) {
+    return !!(cond?.abatementDateTime || cond?.abatementPeriod || cond?.abatementAge || cond?.abatementRange || cond?.abatementString);
+}
 
 function isActiveProblem(cond) {
     return ['active','recurrence','relapse'].includes(clinicalStatusCode(cond));
