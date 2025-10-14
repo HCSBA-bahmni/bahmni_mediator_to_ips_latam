@@ -419,25 +419,32 @@ function ensureEntrySliceOrder(bundle) {
   const idxPat = bundle.entry.findIndex(e => e.resource?.resourceType === 'Patient');
   if (idxPat > 1 || idxPat === -1) {
     // si no está en la posición 1 y existe, llévalo a [1]
-    const e = idxPat === -1 ? null : bundle.entry.splice(idxPat, 1)[0];
+    const e = idxPat === -1 ?
+      null : bundle.entry.splice(idxPat, 1)[0];
     if (e) bundle.entry.splice(1, 0, e);
   }
 
-  // Asegurar que Composition en [0] tenga perfil LAC
-  if (bundle.entry[0]?.resource?.resourceType === 'Composition') {
-    ensureLacCompositionProfile(bundle.entry[0].resource);
+  // Añadir perfiles LAC requeridos
+  const compEntry = bundle.entry[0];
+  const patEntry  = bundle.entry[1];
+  if (compEntry?.resource?.resourceType === 'Composition') {
+    addProfile(compEntry.resource, 'http://lacpass.racsel.org/StructureDefinition/lac-composition');
+  }
+  if (patEntry?.resource?.resourceType === 'Patient') {
+    addProfile(patEntry.resource, 'http://lacpass.racsel.org/StructureDefinition/lac-patient');
+    addProfile(patEntry.resource, 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips');
+  }
+  // Perfiles en el Bundle
+  bundle.meta = bundle.meta || {};
+  bundle.meta.profile = Array.isArray(bundle.meta.profile) ? bundle.meta.profile : [];
+  if (!bundle.meta.profile.includes('http://lacpass.racsel.org/StructureDefinition/lac-bundle')) {
+    bundle.meta.profile.push('http://lacpass.racsel.org/StructureDefinition/lac-bundle');
   }
 
-  // Asegurar que Patient en [1] tenga perfiles LAC e IPS
-  if (bundle.entry[1]?.resource?.resourceType === 'Patient') {
-    ensureLacPatientProfile(bundle.entry[1].resource);
-    ensureIpsPatientProfile(bundle.entry[1].resource);
-  }
-
-  const comp = bundle.entry[0]?.resource?.resourceType === 'Composition' ? bundle.entry[0].resource : null;
-  const patFullUrl = bundle.entry[1]?.resource?.resourceType === 'Patient' ? bundle.entry[1].fullUrl : null;
-  if (comp && patFullUrl) {
-    comp.subject = { reference: patFullUrl };
+  // Composition.subject.reference debe apuntar al fullUrl del Patient (ya transformado)
+  if (compEntry?.resource && patEntry?.fullUrl) {
+    compEntry.resource.subject = compEntry.resource.subject || {};
+    compEntry.resource.subject.reference = patEntry.fullUrl;
   }
 }
 
@@ -1168,8 +1175,8 @@ function fixPatientIdentifiers(bundle) {
   patient.identifier = Array.isArray(patient.identifier) ? patient.identifier : [];
 
   // Systems normalizados (LAC)
-  const defaultNatOid = DEFAULT_NAT_OID;
-  const defaultPpnOid = DEFAULT_PPN_OID; // 2.16.840.1.113883.4.330.152
+  const defaultNatOid = toUrnOid(DEFAULT_NAT_OID || '2.16.152'); // siempre URN OID con "."
+  const defaultPpnOid = toUrnOid(DEFAULT_PPN_OID || '2.16.840.1.113883.4.330.152');
 
   for (const id of patient.identifier) {
     const txt = (id?.type?.text || '').toLowerCase();
@@ -1177,8 +1184,18 @@ function fixPatientIdentifiers(bundle) {
 
     // --- Nacional / RUN ---
     if (/run|nacional|national/.test(txt) || /^RUN\*/i.test(id?.value || '') || /RUN/i.test(cod)) {
-      if (!id.system) id.system = defaultNatOid;                 // urn:oid:2.16.152
-      id.use = 'usual';                                          // MR debe ir como 'usual'
+      // Slice: national — exigir system & type de la VS nacional
+      id.system = id.system || defaultNatOid;                     // p.ej. urn:oid.2.16.152
+      id.use = 'usual';
+      id.type = id.type || {};
+      id.type.coding = Array.isArray(id.type.coding) ? id.type.coding : [];
+      // reemplazar cualquier coding previo por el coding de la VS nacional (RUN)
+      id.type.coding = [{
+        system: 'http://lacpass.racsel.org/CodeSystem/national-identifier-types',
+        code: 'RUN'
+      }];
+      // la mayoría de perfiles no permiten type.text aquí
+      if (id.type.text) delete id.type.text;
       continue;
     }
 
@@ -1189,37 +1206,30 @@ function fixPatientIdentifiers(bundle) {
       String(c?.code || '') === 'a2551e57-6028-428b-be3c-21816c252e06'   // código que nos envías para distinguir PPN
     );
     if (isPassportByText || isPassportByCode) {
-      if (!id.system) id.system = defaultPpnOid;                         // urn:oid:2.16.840.1.113883.4.330.152
-      id.use = 'official';                                               // PPN debe ir como 'official'
-      // Asegurar PPN como tipo (v2-0203)
+      id.system = id.system || defaultPpnOid;
+      id.use = 'official';
+      // Slice: passport — exactamente 1 coding (v2-0203#PPN) y SIN type.text
       id.type = id.type || {};
-      id.type.coding = Array.isArray(id.type.coding) ? id.type.coding : [];
-      const hasV20203PPN = id.type.coding.some(c => c.system === 'http://terminology.hl7.org/CodeSystem/v2-0203' && c.code === 'PPN');
-      if (!hasV20203PPN) {
-        id.type.coding.push({
-          system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
-          code: 'PPN',
-          display: 'Passport number'
-        });
-      }
-      if (!id.type.text) id.type.text = 'Pasaporte';
+      id.type.coding = [{
+        system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
+        code: 'PPN'
+      }];
+      if (id.type.text) delete id.type.text;
     }
   }
 
-  // Si hay PPN, aseguramos que quede presente con system correcto (no eliminar)
-  const hasPassport = patient.identifier.some(i =>
-    /pasaporte|passport/i.test(i?.type?.text || '') ||
-    (i?.type?.coding || []).some(c => String(c?.code || '').toUpperCase() === 'PPN')
+  // Asegurar que exista al menos un national id si no vino (slice requerido)
+  const hasNational = patient.identifier.some(id =>
+    String(id.system||'') === defaultNatOid ||
+    (id.type?.coding||[]).some(c => c.system === 'http://lacpass.racsel.org/CodeSystem/national-identifier-types' && c.code === 'RUN')
   );
-  if (hasPassport) {
-    const ppn = patient.identifier.find(i =>
-      /pasaporte|passport/i.test(i?.type?.text || '') ||
-      (i?.type?.coding || []).some(c => String(c?.code || '').toUpperCase() === 'PPN')
-    );
-    if (ppn) {
-      if (!ppn.system) ppn.system = defaultPpnOid;
-      ppn.use = 'official';
-    }
+  if (!hasNational) {
+    patient.identifier.unshift({
+      use: 'usual',
+      system: defaultNatOid,                     // urn:oid.2.16.152
+      type: { coding: [{ system: 'http://lacpass.racsel.org/CodeSystem/national-identifier-types', code: 'RUN' }] },
+      value: patient.identifier?.[0]?.value || `RUN*${patient.id || 'UNKNOWN'}`
+    });
   }
 }
 
