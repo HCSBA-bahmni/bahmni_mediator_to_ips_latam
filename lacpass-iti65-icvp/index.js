@@ -634,6 +634,18 @@ app.post('/icvp/_iti65', async (req, res) => {
         return encoded;
     }
 
+
+
+    function asFhirBase(url) {
+        const u = (url || '').replace(/\/+$/, '');
+        return /\/fhir$/i.test(u) ? u : `${u}/fhir`;
+    }
+
+    function joinUrl(base, path) {
+        const b = (base || '').replace(/\/+$/, '');
+        const p = (path || '').replace(/^\/+/, '');
+        return `${b}/${p}`;
+    }
     // ===================== PDQm =====================
     async function pdqmFetchBundleByIdentifier(identifierValue) {
         console.log('🔍 PDQm fetch for identifier:', identifierValue, 'using PDQM_FHIR_URL:', PDQM_FHIR_URL);
