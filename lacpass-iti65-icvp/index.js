@@ -2036,7 +2036,7 @@ app.post('/icvp/_iti65', async (req, res) => {
     summaryBundle.entry.forEach(entry => {
       const res = entry.resource;
       if (res.subject?.reference && urlMap.has(res.subject.reference)) {
-        res.subject.reference = urlMap.get(res.subject.reference);
+        res.subject.reference = urlMap.get(res.patient.reference);
       }
       if (res.patient?.reference && urlMap.has(res.patient.reference)) {
         res.patient.reference = urlMap.get(res.patient.reference);
