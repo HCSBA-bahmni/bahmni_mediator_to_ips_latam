@@ -956,7 +956,7 @@ function addProfile(resource, profileUrl) {
     ensureArray(resource.meta, 'profile');
 
     if (!resource.meta.profile.includes(profileUrl)) {
-        resource.meta.profile.push(profileUrl);
+        resource.meta.profile = profileUrl;
     }
 }
 
