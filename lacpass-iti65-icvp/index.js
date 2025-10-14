@@ -936,6 +936,17 @@ function fixPatientIdentifiers(bundle) {
     }
 }
 /**
+ * Asegura que una propiedad sea un array
+ */
+function ensureArray(obj, property) {
+    if (!obj[property]) {
+        obj[property] = [];
+    } else if (!Array.isArray(obj[property])) {
+        obj[property] = [obj[property]];
+    }
+    return obj[property];
+}
+/**
  * Agrega un perfil a un recurso si no existe
  */
 function addProfile(resource, profileUrl) {
