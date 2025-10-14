@@ -39,6 +39,10 @@ const {
   FEATURE_TS_VALIDATE_CS_ENABLED = 'true',
   FEATURE_TS_TRANSLATE_ENABLED = 'true',
 
+  // ===== OIDs para identificadores de paciente (desde tu .env) =====
+  LAC_NATIONAL_ID_SYSTEM_OID,
+  LAC_PASSPORT_ID_SYSTEM_OID,
+
   // ===== PDQm =====
   PDQM_PORT,
   PDQM_FHIR_URL,
@@ -116,6 +120,54 @@ const {
   VACCINES_TRANSLATE_TARGET_SYSTEM = 'http://hl7.org/fhir/sid/icd-10',
 
 } = process.env;
+
+const OID_URN_SEPARATOR = process.env.OID_URN_SEPARATOR || '.';
+
+const {
+    FULLURL_MODE_PROVIDE = 'urn',
+    FULLURL_MODE_DOCUMENT = 'absolute',
+    ABSOLUTE_FULLURL_BASE,
+    BINARY_DELIVERY_MODE = 'both',
+    ATTACHMENT_URL_MODE = 'absolute',
+} = process.env;
+
+// ===== Constantes de Perfiles y Códigos =====
+// OIDs por defecto (normalizados a urn:oid con separador configurable)
+const DEFAULT_NAT_OID = toUrnOid(LAC_NATIONAL_ID_SYSTEM_OID || '2.16.152');
+const DEFAULT_PPN_OID = toUrnOid(LAC_PASSPORT_ID_SYSTEM_OID || '2.16.840.1.113883.4.330.152');
+
+// Perfiles IPS (http)
+const IPS_PROFILES = {
+    BUNDLE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Bundle-uv-ips',
+    MEDICATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Medication-uv-ips',
+    MEDICATION_REQUEST: 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationRequest-uv-ips',
+    COMPOSITION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Composition-uv-ips',
+    PATIENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips',
+    ALLERGY_INTOLERANCE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/AllergyIntolerance-uv-ips',
+    CONDITION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Condition-uv-ips',
+    MEDICATION_STATEMENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationStatement-uv-ips',
+    PROCEDURE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Procedure-uv-ips',
+    IMMUNIZATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Immunization-uv-ips',
+    OBSERVATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Observation-results-uv-ips'
+};
+
+// Códigos LOINC para secciones IPS
+const LOINC_CODES = {
+    ALLERGIES_SECTION: '48765-2',
+    PROBLEMS_SECTION: '11450-4',
+    MEDICATIONS_SECTION: '10160-0',
+    PAST_ILLNESS_SECTION: '11348-0',
+    IMMUNIZATIONS_SECTION: '11369-6',
+    PROCEDURES_SECTION: '47519-4',
+    RESULTS_SECTION: '30954-2'
+};
+
+// Perfiles LAC (racsel) — coinciden con el validador
+const LAC_PROFILES = {
+    BUNDLE: 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP',
+    COMPOSITION: 'http://smart.who.int/trust-phw/StructureDefinition/Composition-uv-ips-PreQual',
+    PATIENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips'
+};
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -490,6 +542,1164 @@ async function normalizeTerminologyInBundle(bundle) {
   }
 }
 
+function pickIdentifiersOrderedForPdqm(identifiers) {
+    if (!Array.isArray(identifiers) || identifiers.length === 0) return [];
+
+    const norm = (s) => String(s || '').trim();
+    // IMPORTANTE: para "Pasaporte" por texto NO exigimos formato ni system
+    const anyPassportByText = (id) =>
+        /passport|pasaporte/i.test(norm(id?.type?.text)) && !!norm(id?.value);
+
+    // Mantengo un detector opcional de "valor con pinta de pasaporte" para el resto de casos
+    const looksLikePassportValue = (v) => {
+        if (!v) return false;
+        if (/\*/.test(v)) return false;
+        if (/^RUN\*/i.test(v)) return false;
+        return /^[A-Z]{2}[A-Z0-9]{5,}$/i.test(v);
+    };
+    const preferCL = (arr) =>
+        arr.sort((a, b) => (/^CL/i.test(norm(b.value)) ? 1 : 0) - (/^CL/i.test(norm(a.value)) ? 1 : 0));
+
+    const passportTypeCode = (process.env.PDQM_IDENTIFIER_TYPE_CODE_PASSPORT || 'PPN').trim();
+    const passportTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_PASSPORT || 'Pasaporte').toLowerCase();
+    const nationalTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_NATIONAL  || 'RUN').toLowerCase();
+
+    const isPassportId = (id) => {
+        const codings = (id.type?.coding || []);
+        const codeHit = codings.some(c => norm(c.code).toUpperCase() === passportTypeCode.toUpperCase());
+        // soporte explícito al code que nos compartiste para "Pasaporte"
+        const altCodeHit = codings.some(c => norm(c.code) === 'a2551e57-6028-428b-be3c-21816c252e06');
+        const textHit = norm(id.type?.text).toLowerCase().includes(passportTypeText) ||
+            /passport|pasaporte/i.test(norm(id.type?.text));
+        return (codeHit || altCodeHit || textHit) && !!norm(id.value);
+    };
+    const isNationalId = (id) => {
+        const txt = norm(id.type?.text);
+        const code = norm(id.type?.coding?.[0]?.code);
+        const val = norm(id.value);
+        if (/^RUN\*/i.test(val)) return true;                 // RUN*...
+        if (/run|nacional|national/i.test(txt)) return true;  // por texto
+        if (code && /RUN/i.test(code)) return true;           // por code si existiera
+        return false;
+    };
+
+    // 1) Pasaporte por TEXTO (sin exigir system/format)
+    const passportByText = preferCL(
+        identifiers.filter(anyPassportByText)
+    ).map(i => norm(i.value));
+
+    // 2) Pasaporte formal (por coding o texto, pero además con pinta de pasaporte)
+    const passportFormal = preferCL(
+        identifiers.filter(isPassportId).filter(i => looksLikePassportValue(i.value))
+    ).map(i => norm(i.value));
+
+    // 3) Pasaporte "por forma" (value parece pasaporte) excluyendo RUN
+    const passportShape  = preferCL(
+        identifiers.filter(i => !isNationalId(i) && looksLikePassportValue(i.value))
+    ).map(i => norm(i.value));
+    // 4) Nacional (RUN) como fallback
+    const nationals      = identifiers.filter(isNationalId).map(i => norm(i.value));
+    // 5) Último recurso: cualquier value sin * ni RUN*
+    const lastResort     = identifiers
+        .filter(i => !!norm(i.value) && !/\*/.test(norm(i.value)) && !/^RUN\*/i.test(norm(i.value)))
+        .map(i => norm(i.value));
+
+    // Unificar preservando orden y sin duplicados
+    const seen = new Set();
+    const ordered = [...passportByText, ...passportFormal, ...passportShape, ...nationals, ...lastResort]
+        .filter(v => { if (seen.has(v)) return false; seen.add(v); return true; });
+    return ordered;
+}
+
+function generateFallbackBundle(identifierValue) {
+    const fallbackBundle = {
+        resourceType: 'Bundle',
+        id: `pdqm-fallback-${Date.now()}`,
+        type: 'searchset',
+        total: 1,
+        entry: [{
+            fullUrl: `Patient/pdqm-fallback-${identifierValue}`,
+            resource: {
+                resourceType: 'Patient',
+                id: `pdqm-fallback-${identifierValue}`,
+                identifier: [{
+                    system: PDQM_DEFAULT_IDENTIFIER_SYSTEM || toUrnOid('1.2.3.4.5'),
+                    value: identifierValue
+                }],
+                name: [{
+                    text: `Paciente PDQm Fallback ${identifierValue}`
+                }],
+                meta: {
+                    tag: [{
+                        system: 'http://example.org/tag',
+                        code: 'pdqm-fallback',
+                        display: 'PDQm Fallback Bundle'
+                    }]
+                }
+            }
+        }]
+    };
+
+    return fallbackBundle;
+}
+
+// ===================== PDQm Utils =====================
+// ===================== URL Encoding Helper =====================
+function robustUrlEncode(value) {
+    if (!value) return '';
+
+    // Primero, codificación URL estándar
+    let encoded = encodeURIComponent(value);
+
+    // Luego, codificaciones adicionales para caracteres que pueden causar problemas en queries
+    encoded = encoded.replace(/\*/g, '%2A');  // Asterisco
+    encoded = encoded.replace(/'/g, '%27');   // Comilla simple
+    encoded = encoded.replace(/"/g, '%22');   // Comilla doble
+    encoded = encoded.replace(/\(/g, '%28');  // Paréntesis abierto
+    encoded = encoded.replace(/\)/g, '%29');  // Paréntesis cerrado
+
+    return encoded;
+}
+
+
+
+function asFhirBase(url) {
+    const u = (url || '').replace(/\/+$/, '');
+    return /\/fhir$/i.test(u) ? u : `${u}/fhir`;
+}
+
+function joinUrl(base, path) {
+    const b = (base || '').replace(/\/+$/, '');
+    const p = (path || '').replace(/^\/+/, '');
+    return `${b}/${p}`;
+}
+
+// ===================== PDQm =====================
+async function pdqmFetchBundleByIdentifier(identifierValue) {
+    console.log('🔍 PDQm fetch for identifier:', identifierValue, 'using PDQM_FHIR_URL:', PDQM_FHIR_URL);
+    if (!PDQM_FHIR_URL || !identifierValue) return null;
+    console.log('---')
+
+    const maxAttempts = 3;
+    let currentAttempt = 0;
+
+    while (currentAttempt < maxAttempts) {
+        currentAttempt++;
+        console.log(`PDQm attempt ${currentAttempt}/${maxAttempts} for identifier: ${identifierValue}`);
+
+        try {
+            // Construir configuración de solicitud
+            const config = {
+                timeout: parseInt(PDQM_TIMEOUT_MS, 10),
+                httpsAgent: axios.defaults.httpsAgent,
+                validateStatus: (status) => {
+                    // Considerar como válidos los estados esperados
+                    return status < 500 && status !== 429; // No reintentar en errores de servidor o throttling
+                }
+            };
+
+            if (PDQM_FHIR_TOKEN) {
+                config.headers = { 'Authorization': `Bearer ${PDQM_FHIR_TOKEN}` };
+            }
+
+            // Intentar con el parámetro identifier por defecto
+            const base = asFhirBase(PDQM_FHIR_URL);
+            let url = joinUrl(base, '/Patient') + `?identifier=${robustUrlEncode(identifierValue)}`;
+            console.log(`PDQm GET: ${url}`);
+
+            let response = await axios.get(url, config);
+
+            // Si la respuesta es exitosa y contiene datos, retornar
+            if (response.status === 200 && response.data?.resourceType === 'Bundle') {
+                console.log(`✅ PDQm response: ${response.data.total || 0} patients found`);
+                return response.data;
+            }
+
+            // Si no hay resultados y hay parámetros de fallback configurados, intentar con ellos
+            if (response.status === 200 && response.data?.total === 0 && PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES) {
+                const fallbackParams = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES);
+
+                for (const param of fallbackParams) {
+                    url = joinUrl(base, '/Patient') + `?${param}=${robustUrlEncode(identifierValue)}`;
+                    console.log(`PDQm fallback GET: ${url}`);
+
+                    response = await axios.get(url, config);
+
+                    if (response.status === 200 && response.data?.resourceType === 'Bundle' && response.data.total > 0) {
+                        console.log(`✅ PDQm fallback response: ${response.data.total} patients found with param ${param}`);
+                        return response.data;
+                    }
+                }
+            }
+
+            // Manejar códigos de estado específicos
+            if (response.status === 401 || response.status === 403) {
+                if (isTrue(PDQM_ENABLE_FALLBACK_FOR_401_403)) {
+                    console.warn(`PDQm auth error (${response.status}), generating fallback bundle`);
+                    return generateFallbackBundle(identifierValue);
+                } else {
+                    console.error(`PDQm auth error (${response.status}), no fallback enabled`);
+                    return null;
+                }
+            }
+
+            // Verificar si debemos reintentar basado en el estado HTTP
+            const fallbackStatuses = arr(PDQM_FALLBACK_HTTP_STATUSES || '404,400');
+            if (fallbackStatuses.includes(response.status.toString())) {
+                console.warn(`PDQm response status ${response.status}, will retry or fallback`);
+
+                if (currentAttempt >= maxAttempts) {
+                    console.warn(`Max attempts reached, generating fallback bundle`);
+                    return generateFallbackBundle(identifierValue);
+                }
+
+                // Esperar antes del siguiente intento
+                await new Promise(resolve => setTimeout(resolve, 1000 * currentAttempt));
+                continue;
+            }
+
+            // Si llegamos aquí, retornar los datos obtenidos (aunque sean vacíos)
+            return response.data;
+
+        } catch (error) {
+            console.error(`PDQm error (attempt ${currentAttempt}):`, error.message);
+
+            // Decidir si reintentar o generar fallback
+            if (currentAttempt >= maxAttempts) {
+                console.warn('Max attempts reached, generating fallback bundle');
+                return generateFallbackBundle(identifierValue);
+            }
+
+            // Esperar antes del siguiente intento
+            await new Promise(resolve => setTimeout(resolve, 1000 * currentAttempt));
+        }
+    }
+
+    return null;
+}
+
+function isPdqmFallbackBundle(bundle) {
+    return bundle?.entry?.[0]?.resource?.meta?.tag?.some(tag =>
+        tag.code === 'pdqm-fallback'
+    ) === true;
+}
+
+// ===================== Helpers nuevos =====================
+
+function stripNarrativeLinkExtensions(resource) {
+    if (!resource || !Array.isArray(resource.extension)) return;
+    // En perfiles IPS varias resources usan slicing cerrado sobre extension;
+    // narrativeLink NO está permitido ahí => hay que removerla.
+    resource.extension = resource.extension.filter(
+        (e) => e?.url !== 'http://hl7.org/fhir/StructureDefinition/narrativeLink'
+    );
+    if (resource.extension.length === 0) {
+        delete resource.extension;
+    }
+}
+
+
+function sanitizeAllergyIntolerance(ai) {
+    if (!ai || ai.resourceType !== 'AllergyIntolerance') return;
+    // code: dejar SNOMED primero y eliminar codings sin system
+    if (Array.isArray(ai.code?.coding)) {
+        ai.code.coding = ai.code.coding
+            // fuera codings sin system y los locales OpenMRS
+            .filter(c => !!c?.system && c.system !== 'http://openmrs.org/concepts')
+            // SNOMED primero
+            .sort((a,b) => (a.system === 'http://snomed.info/sct' ? -1 : 1));
+    }
+    // reaction[].manifestation: idem
+    (ai.reaction || []).forEach(r => {
+        if (Array.isArray(r.manifestation)) {
+            r.manifestation.forEach(m => {
+                if (Array.isArray(m.coding)) {
+                    m.coding = m.coding
+                        .filter(c => !!c?.system)
+                        .sort((a,b) => (a.system === 'http://snomed.info/sct' ? -1 : 1));
+                }
+            });
+        }
+        // NEW: reaction.substance.coding → también limpiar y ordenar
+        if (r.substance?.coding && Array.isArray(r.substance.coding)) {
+            r.substance.coding = r.substance.coding
+                .filter(c => !!c?.system && c.system !== 'http://openmrs.org/concepts')
+                .sort((a,b) => (a.system === 'http://snomed.info/sct' ? -1 : 1));
+        }
+    });
+}
+
+// --- NUEVO: Sanitizar Medication (quitar ext OMRS y dejar solo SNOMED) ---
+function sanitizeMedicationResource(med) {
+    if (!med || med.resourceType !== 'Medication') return;
+    // 1) quitar extensiones OMRS
+    if (Array.isArray(med.extension)) {
+        med.extension = med.extension.filter(e => !String(e.url).startsWith('http://fhir.openmrs.org/ext/medicine'));
+        if (med.extension.length === 0) delete med.extension;
+    }
+    // 2) code.coding → solo SNOMED, y sin codings sin system
+    if (med.code?.coding) {
+        med.code.coding = med.code.coding
+            .filter(c => c?.system && c.system === 'http://snomed.info/sct');
+        if (med.code.coding.length === 0) delete med.code.coding;
+    }
+    // 3) form.coding → solo SNOMED; si queda vacío, elimina form
+    if (med.form?.coding) {
+        med.form.coding = med.form.coding
+            .filter(c => c?.system && c.system === 'http://snomed.info/sct');
+        if (med.form.coding.length === 0) delete med.form.coding;
+    }
+    if (med.form && !med.form.coding && !med.form.text) delete med.form;
+    // 4) asegurar textos básicos
+    if (med.code && !med.code.text) med.code.text = 'Medication';
+}
+
+// --- OPCIONAL: Sanitizar Practitioner.identifier.system no estándar (OMRS) ---
+function sanitizePractitionerIdentifiers(prac) {
+    if (!prac || prac.resourceType !== 'Practitioner') return;
+    if (!Array.isArray(prac.identifier)) return;
+    prac.identifier.forEach(id => {
+        if (typeof id?.system === 'string' &&
+            id.system.startsWith('http://fhir.openmrs.org/ext/provider/identifier')) {
+            // quita el system no resoluble; deja value/type para que siga siendo usable
+            delete id.system;
+        }
+    });
+    // limpia identifiers vacíos
+    prac.identifier = prac.identifier.filter(id => id.value || id.type || id.system);
+    if (prac.identifier.length === 0) delete prac.identifier;
+}
+function fixPatientIdentifiers(bundle) {
+    const patient = (bundle?.entry || [])
+        .map(e => e.resource)
+        .find(r => r?.resourceType === 'Patient');
+    if (!patient) return;
+
+    patient.identifier = Array.isArray(patient.identifier) ? patient.identifier : [];
+
+    // Systems normalizados (LAC)
+    const defaultNatOid = toUrnOid(DEFAULT_NAT_OID || '2.16.152'); // siempre URN OID con "."
+    const defaultPpnOid = toUrnOid(DEFAULT_PPN_OID || '2.16.840.1.113883.4.330.152');
+
+    for (const id of patient.identifier) {
+        const txt = (id?.type?.text || '').toLowerCase();
+        const cod = id?.type?.coding?.[0]?.code || '';
+
+        // --- Nacional / RUN ---
+        if (/run|nacional|national/.test(txt) || /^RUN\*/i.test(id?.value || '') || /RUN/i.test(cod)) {
+            // Slice: national — exigir system & type de la VS nacional
+            id.system = id.system || defaultNatOid;                     // p.ej. urn:oid.2.16.152
+            id.use = 'usual';
+            id.type = id.type || {};
+            id.type.coding = Array.isArray(id.type.coding) ? id.type.coding : [];
+            // reemplazar cualquier coding previo por el coding de la VS nacional (RUN)
+            id.type.coding = [{
+                system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
+                code: 'NI'
+            }];
+            // la mayoría de perfiles no permiten type.text aquí
+            if (id.type.text) delete id.type.text;
+            continue;
+        }
+
+        // --- Pasaporte / PPN ---
+        const isPassportByText = /pasaporte|passport/.test(txt);
+        const isPassportByCode = (id?.type?.coding || []).some(c =>
+            String(c?.code || '').toUpperCase() === 'PPN' ||
+            String(c?.code || '') === 'a2551e57-6028-428b-be3c-21816c252e06'   // código que nos envías para distinguir PPN
+        );
+        if (isPassportByText || isPassportByCode) {
+            id.system = id.system || defaultPpnOid;
+            id.use = 'official';
+            // Slice: passport — exactamente 1 coding (v2-0203#PPN) y SIN type.text
+            id.type = id.type || {};
+            id.type.coding = [{
+                system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
+                code: 'PPN'
+            }];
+            if (id.type.text) delete id.type.text;
+        }
+    }
+
+    // Asegurar que exista al menos un national id si no vino (slice requerido)
+    const hasNational = patient.identifier.some(id =>
+        String(id.system||'') === defaultNatOid ||
+        (id.type?.coding||[]).some(c => c.system === 'http://lacpass.racsel.org/CodeSystem/national-identifier-types' && c.code === 'RUN')
+    );
+    if (!hasNational) {
+        patient.identifier.unshift({
+            use: 'usual',
+            system: defaultNatOid,                     // urn:oid.2.16.152
+            type: { coding: [{ system: 'http://lacpass.racsel.org/CodeSystem/national-identifier-types', code: 'RUN' }] },
+            value: patient.identifier?.[0]?.value || `RUN*${patient.id || 'UNKNOWN'}`
+        });
+    }
+}
+/**
+ * Agrega un perfil a un recurso si no existe
+ */
+function addProfile(resource, profileUrl) {
+    if (!resource || !profileUrl) return;
+
+    if (!resource.meta) resource.meta = {};
+    ensureArray(resource.meta, 'profile');
+
+    if (!resource.meta.profile.includes(profileUrl)) {
+        resource.meta.profile.push(profileUrl);
+    }
+}
+
+
+function ensureLacPatientProfile(patient) {
+    addProfile(patient, LAC_PROFILES.PATIENT);
+}
+
+function ensureIpsPatientProfile(patient) {
+    addProfile(patient, IPS_PROFILES.PATIENT);
+}
+
+// === Helpers URN OID (admiten ":" y "."; emiten con separador configurable) ===
+function isUrnOid(value) {
+    if (typeof value !== 'string') return false;
+    const v = value.trim();
+    // Aceptar 'urn:oid:1.2.3' o 'urn:oid.1.2.3'
+    return /^urn:oid[.:]\d+(?:\.\d+)+$/.test(v);
+}
+function toUrnOid(value) {
+    if (!value) return null;
+    const v = String(value).trim();
+    // Si ya viene como URN con ":" o ".", normalizar al separador elegido
+    if (/^urn:oid[.:]\d+(?:\.\d+)+$/.test(v)) {
+        // Reemplaza el separador actual por el configurado
+        return v.replace(/^urn:oid[.:]/, `urn:oid${OID_URN_SEPARATOR}`);
+    }
+    // Si viene como OID "crudo" (solo dígitos y puntos), formatear
+    const m = v.match(/(\d+(?:\.\d+)+)/);
+    return m ? `urn:oid${OID_URN_SEPARATOR}${m[1]}` : null;
+}
+
+function ensureLacBundleProfile(bundle) {
+    addProfile(bundle, LAC_PROFILES.BUNDLE);
+}
+
+function ensureLacCompositionProfile(comp) {
+    addProfile(comp, LAC_PROFILES.COMPOSITION);
+}
+function ensureCompositionSubject(comp, patientEntry) {
+    if (!comp || !patientEntry) return;
+    const ref = patientEntry.fullUrl || (patientEntry.resource?.id ? `Patient/${patientEntry.resource.id}` : null);
+    if (ref) comp.subject = { reference: ref };
+}
+// ---- Helpers to classify Conditions for IPS sections ----
+function isAbsentProblemCondition(cond) {
+    const codings = (cond?.code?.coding) || [];
+    return codings.some(c => c.system === 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips' &&
+        (c.code === 'no-problem-info' || /no information about problems/i.test(c.display || '')));
+}
+
+
+function isActiveProblem(cond) {
+    return ['active','recurrence','relapse'].includes(clinicalStatusCode(cond));
+}
+function isPastIllness(cond) {
+    const cs = clinicalStatusCode(cond);
+    return ['inactive','remission','resolved'].includes(cs) || hasAbatement(cond);
+}
+
+function ensureIpsProfile(resource) {
+    if (!resource?.resourceType) return;
+
+    const profileMap = {
+        'AllergyIntolerance': IPS_PROFILES.ALLERGY_INTOLERANCE,
+        'MedicationStatement': IPS_PROFILES.MEDICATION_STATEMENT,
+        'MedicationRequest': IPS_PROFILES.MEDICATION_REQUEST,
+        'Medication': IPS_PROFILES.MEDICATION,
+        'Condition': IPS_PROFILES.CONDITION,
+        'Procedure': IPS_PROFILES.PROCEDURE,
+        'Immunization': IPS_PROFILES.IMMUNIZATION,
+        'Observation': IPS_PROFILES.OBSERVATION
+    };
+
+    const profile = profileMap[resource.resourceType];
+    if (profile) {
+        addProfile(resource, profile);
+    }
+}
+
+// Asegura que exista al menos una entry válida para el slice requerido de la sección:
+// - loincCode: código LOINC de la sección (p.ej. 48765-2 Alergias, 11450-4 Problemas, 11348-0 Antecedentes)
+// - allowedTypes: tipos de recurso aceptados por el slice (p.ej. ['AllergyIntolerance'])
+function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes) {
+    if (!comp?.section) return;
+    const sec = comp.section.find(s => s.code?.coding?.some(c => c.system === 'http://loinc.org' && c.code === loincCode));
+    if (!sec) return;
+
+    // Vamos a reconstruir completamente las entradas de la sección cuando sea Condition
+    // para cumplir con sectionProblems (11450-4) y sectionPastIllnessHx (11348-0).
+    if (allowedTypes.includes('Condition')) {
+        const isPastSection = loincCode === LOINC_CODES.PAST_ILLNESS_SECTION; // 11348-0
+        const isProblemsSection = loincCode === LOINC_CODES.PROBLEMS_SECTION;  // 11450-4
+
+        // Todas las Conditions en el bundle (y que no sean "absent/unknown")
+        const allConds = (summaryBundle.entry || [])
+            .filter(x => x.resource?.resourceType === 'Condition' && !isAbsentProblemCondition(x.resource));
+
+        // Clasificación (usa helpers existentes)
+        const actives = allConds.filter(x => isActiveProblem(x.resource));
+        const pasts   = allConds.filter(x => isPastIllness(x.resource));
+
+        // Conjunto objetivo según la sección
+        let target = [];
+        if (isProblemsSection) target = actives;
+        if (isPastSection)     target = pasts;
+
+        // Si hay target, lo aplicamos completo; si no, dejamos que el fallback genérico haga placeholder
+        if (target.length > 0) {
+            // Ensamblar referencias sin duplicados
+            const uniq = new Set();
+            sec.entry = [];
+            for (const candidate of target) {
+                ensureIpsProfile(candidate.resource);
+                if (!uniq.has(candidate.fullUrl)) {
+                    uniq.add(candidate.fullUrl);
+                    sec.entry.push({ reference: candidate.fullUrl });
+                }
+            }
+            // Salimos porque ya poblamos esta sección correctamente
+            return;
+        }
+        // Si no había ninguna Condition para esta sección, caeremos al fallback más abajo (placeholder)
+    }
+
+    // Si no hay entries válidas, buscar candidatos y enlazarlos
+    const candidates = (summaryBundle.entry || []).filter(x => allowedTypes.includes(x.resource?.resourceType));
+
+    // NOTA: ya manejamos Condition arriba. De aquí en adelante, secciones no-Condition.
+
+    // Generic fallback (non-Condition sections): link first candidate
+    if (candidates.length > 0) {
+        sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
+        // Enlaza SOLO el primer candidato (satisface slice mínimo)
+        const candidate = candidates[0];
+        ensureIpsProfile(candidate.resource);
+        const alreadyReferenced = sec.entry.some(e => e.reference === candidate.fullUrl);
+        if (!alreadyReferenced) sec.entry.push({ reference: candidate.fullUrl });
+        // dedupe
+        sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
+        return;
+    }
+
+    // Si tampoco hay candidatos: inyectar placeholder IPS "no known …"
+    const patientEntry = (summaryBundle.entry || []).find(e => e.resource?.resourceType === 'Patient');
+    const patRef = patientEntry?.fullUrl || (patientEntry?.resource?.id ? `Patient/${patientEntry.resource.id}` : null);
+    const nowIso = new Date().toISOString();
+    let placeholder = null;
+
+    if (allowedTypes.includes('AllergyIntolerance')) {
+        placeholder = {
+            fullUrl: 'urn:uuid:allergy-none',
+            resource: {
+                resourceType: 'AllergyIntolerance',
+                meta: { profile: [IPS_PROFILES.ALLERGY_INTOLERANCE] },
+                clinicalStatus: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical', code: 'active' }] },
+                verificationStatus: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/allergyintolerance-verification', code: 'unconfirmed' }] },
+                code: {
+                    coding: [
+                        { system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-allergies', display: 'No known allergies' },
+                        { system: 'http://snomed.info/sct', code: '716186003', display: 'No known allergy (situation)' }
+                    ],
+                    text: 'No known allergies'
+                },
+                patient: patRef ? { reference: patRef } : undefined
+            }
+        };
+    } else if (allowedTypes.includes('Immunization')) {
+        placeholder = {
+            fullUrl: 'urn:uuid:meds-none',
+            resource: {
+                resourceType: 'Immunization',
+                meta: { profile: [IPS_PROFILES.MEDICATION_STATEMENT] },
+                status: 'active',
+                medicationCodeableConcept: {
+                    coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-immunization', display: 'No known immunization' }],
+                    text: 'No known Immunization'
+                },
+                subject: patRef ? { reference: patRef } : undefined,
+                effectiveDateTime: nowIso
+            }
+        };
+    }  else if (allowedTypes.includes('MedicationStatement')) {
+        placeholder = {
+            fullUrl: 'urn:uuid:meds-none',
+            resource: {
+                resourceType: 'MedicationStatement',
+                meta: { profile: [IPS_PROFILES.MEDICATION_STATEMENT] },
+                status: 'active',
+                medicationCodeableConcept: {
+                    coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-medications', display: 'No known medications' }],
+                    text: 'No known medications'
+                },
+                subject: patRef ? { reference: patRef } : undefined,
+                effectiveDateTime: nowIso
+            }
+        };
+    } else if (allowedTypes.includes('Condition')) {
+        const isPast = loincCode === LOINC_CODES.PAST_ILLNESS_SECTION;
+        placeholder = {
+            fullUrl: isPast ? 'urn:uuid:pasthx-none' : 'urn:uuid:problem-none',
+            resource: {
+                resourceType: 'Condition',
+                meta: { profile: [IPS_PROFILES.CONDITION] },
+                category: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/condition-category', code: 'problem-list-item' }] }],
+                code: {
+                    coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-problems', display: 'No known problems' }],
+                    text: isPast ? 'No known past illnesses' : 'No known problems'
+                },
+                subject: patRef ? { reference: patRef } : undefined
+            }
+        };
+    }
+
+    if (placeholder) {
+        summaryBundle.entry = Array.isArray(summaryBundle.entry) ? summaryBundle.entry : [];
+        summaryBundle.entry.push(placeholder);
+        sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
+        sec.entry.push({ reference: placeholder.fullUrl });
+        // dedupe entries
+        sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
+    }
+}
+
+
+function fixPatientCountry(bundle) {
+    const patient = (bundle.entry ?? [])
+        .map(e => e.resource)
+        .find(r => r?.resourceType === "Patient");
+    if (!patient) return;
+
+    (patient.address ?? []).forEach(addr => {
+        if (!addr.country) return;
+        const iso2 = toIso2Country(addr.country);
+        if (iso2) addr.country = iso2; // e.g., "CL"
+    });
+}
+
+// ===== Helpers de modos de URL =====
+function asAbsoluteBase(u) {
+    const x = (u || '').replace(/\/+$/, '');
+    return /\/fhir$/i.test(x) ? x : `${x}/fhir`;
+}
+
+function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
+    if (!bundle?.entry?.length) return;
+
+    // Mapa de reemplazos: cualquier forma conocida -> forma final (según 'mode')
+    const urlMap = new Map();
+
+    // Detectar bases absolutas *reales* que vengan en el Bundle (no asumir solo ABSOLUTE_FULLURL_BASE)
+    const absoluteBases = new Set();
+    for (const e of bundle.entry) {
+        if (typeof e.fullUrl === 'string' && /^https?:\/\//i.test(e.fullUrl)) {
+            // recorta hasta '/fhir' si existe, o hasta el recurso
+            const m = e.fullUrl.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/[A-Za-z]+\/[A-Za-z0-9\-\.]{1,64}$/);
+            if (m && m[1]) {
+                // siempre considerar la variante con /fhir al final
+                absoluteBases.add(`${m[1]}/fhir`);
+            }
+        }
+    }
+    if (ABSOLUTE_FULLURL_BASE) absoluteBases.add(asAbsoluteBase(ABSOLUTE_FULLURL_BASE));
+
+    for (const e of bundle.entry) {
+        const r = e.resource;
+        if (!r?.resourceType) continue;
+
+        // Resolver ID (preferir el que provenga del fullUrl cuando sea URN)
+        let id = null;
+        if (e.fullUrl?.startsWith('urn:uuid:')) id = e.fullUrl.split(':').pop();
+        else if (r.id) id = r.id;
+        if (!id) continue;
+
+        const finalRef = buildRef(mode, r.resourceType, id);
+
+        // Variantes equivalentes que mapeamos a 'finalRef'
+        const variants = new Set([
+            e.fullUrl,
+            `urn:uuid:${id}`,
+            `${r.resourceType}/${id}`,
+            `./${r.resourceType}/${id}`,
+        ]);
+        // agregar TODAS las bases absolutas detectadas
+        for (const base of absoluteBases) {
+            variants.add(`${base}/${r.resourceType}/${id}`);
+        }
+
+        for (const v of [...variants].filter(Boolean)) urlMap.set(v, finalRef);
+
+        // asignar fullUrl final según el modo
+        e.fullUrl = finalRef;
+    }
+
+    // Reescribir todas las .reference y Attachment.url según urlMap
+    updateReferencesInObject(bundle, urlMap);
+}
+
+// ===================== Función para corregir Bundle - INTEGRADA =====================
+function fixBundleValidationIssues(summaryBundle) {
+    if (!summaryBundle?.entry || !Array.isArray(summaryBundle.entry)) return;
+
+    // 0) QUITAR narrativeLink en recursos IPS con slicing cerrado
+    for (const e of summaryBundle.entry) {
+        const r = e.resource;
+        if (!r) continue;
+        // Aplicamos a tipos que el validador reportó: AllergyIntolerance, MedicationStatement y Condition
+        if (['AllergyIntolerance','MedicationStatement','Condition','Immunization'].includes(r.resourceType)) {
+            stripNarrativeLinkExtensions(r);
+        }
+        // LIMPIEZA NUEVA: AllergyIntolerance, Medication y Practitioner
+        if (r?.resourceType === 'AllergyIntolerance') sanitizeAllergyIntolerance(r);
+        if (r.resourceType === 'Medication') {
+            sanitizeMedicationResource(r);
+        }
+        if (r.resourceType === 'Practitioner') {
+            sanitizePractitionerIdentifiers(r);
+        }
+    }
+
+    // Las URL se normalizan más abajo con applyUrlModeToBundle(), evitando doble canonicalización.
+
+    // === Post-canonicalización: Patient
+    const patientEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
+    if (patientEntry?.resource) {
+        // CRÍTICO: Aplicar fixPatientIdentifiers ANTES de cualquier otra validación
+        fixPatientIdentifiers(summaryBundle);
+
+        // Validar que el Patient tenga al menos un identifier con URN OID válido
+        const hasValidOidIdentifier = patientEntry.resource.identifier?.some(id =>
+            isUrnOid(id.system) && id.value && id.type?.coding?.some(c => c.code === 'MR' || c.code === 'PPN')
+        );
+
+        if (!hasValidOidIdentifier) {
+            console.warn('⚠️ Patient no tiene identifiers URN OID válidos después de fixPatientIdentifiers');
+            // Forzar creación de un identifier básico
+            patientEntry.resource.identifier = [{
+                use: 'usual',                                 // MR debe ser 'usual'
+                type: {
+                    coding: [{
+                        system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
+                        code: 'MR'
+                    }]
+                },
+                system: toUrnOid('2.16.152'), // OID genérico normalizado a urn:oid.<...>
+                value: patientEntry.resource.id || 'unknown'
+            }];
+        }
+
+        ensureLacPatientProfile(patientEntry.resource);
+        ensureIpsPatientProfile(patientEntry.resource);
+        if (Array.isArray(patientEntry.resource.address)) {
+            patientEntry.resource.address.forEach(a => {
+                const v = String(a.country || '').trim().toUpperCase();
+                if (v === 'CHILE' || v === 'CHILE ' || v === 'CL ') a.country = 'CL';
+            });
+        }
+    }
+
+
+    // 1. Corregir Composition - asegurar ID y custodian (LAC Bundle)
+    summaryBundle.type = summaryBundle.type || 'document';
+
+    const compositionEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
+    if (compositionEntry?.resource) {
+        // ID del Composition DEBE empatar con el fullUrl (soporta urn|relative|absolute)
+        const fu = String(compositionEntry.fullUrl || '');
+        let compId = null;
+        if (fu.startsWith('urn:uuid:')) {
+            compId = fu.split(':').pop();
+        } else if (fu) {
+            const parts = fu.split('/').filter(Boolean);
+            compId = parts[parts.length - 1] || null;
+        }
+        if (compId) compositionEntry.resource.id = compId;
+
+        // Asegurar custodian (requerido por el perfil lac-composition)
+        if (!compositionEntry.resource.custodian) {
+            const orgEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Organization');
+            if (orgEntry) {
+                compositionEntry.resource.custodian = {
+                    reference: orgEntry.fullUrl || `Organization/${orgEntry.resource.id}`
+                };
+            }
+        }
+
+        // Perfiles canónicos
+        ensureLacCompositionProfile(compositionEntry.resource);
+        ensureLacBundleProfile(summaryBundle);
+
+        // Sujeto del Composition -> Patient
+        const patEntryForComp = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
+        ensureCompositionSubject(compositionEntry.resource, patEntryForComp);
+
+        // Secciones obligatorias (garantiza al menos una entry válida por slice)
+        // Alergias: LOINC 48765-2 → AllergyIntolerance
+        ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.ALLERGIES_SECTION, ['AllergyIntolerance']);
+
+        // Inmunizaciones: LOINC 11369-6 → Immunization
+        ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.IMMUNIZATIONS_SECTION, ['Immunization']);
+
+        // Problemas activos/lista de problemas: LOINC 11450-4 → Condition
+        ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.PROBLEMS_SECTION, ['Condition']);
+
+        // Medicación: LOINC 10160-0 → MedicationStatement o MedicationRequest
+        ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.MEDICATIONS_SECTION, ['MedicationStatement','MedicationRequest']);
+
+        // Antecedentes (Past Illness Hx): LOINC 11348-0 → Condition
+        ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.PAST_ILLNESS_SECTION, ['Condition']);
+    }
+
+    // 2.bis Deduplicar y filtrar entries por tipo permitido en cada sección IPS
+    if (compositionEntry?.resource?.section) {
+        // Mapa loinc -> tipos permitidos
+        const sectionAllowedTypes = {
+            [LOINC_CODES.ALLERGIES_SECTION]: ['AllergyIntolerance'],
+            [LOINC_CODES.IMMUNIZATIONS_SECTION]: ['Immunization'],
+            [LOINC_CODES.MEDICATIONS_SECTION]: ['MedicationStatement','MedicationRequest'],
+            [LOINC_CODES.PROBLEMS_SECTION]: ['Condition'],
+            [LOINC_CODES.PAST_ILLNESS_SECTION]: ['Condition']
+        };
+        compositionEntry.resource.section.forEach(sec => {
+            const loinc = (sec.code?.coding || []).find(c => c.system === 'http://loinc.org')?.code;
+            const allowed = sectionAllowedTypes[loinc] || null;
+            if (!Array.isArray(sec.entry)) return;
+            const seen = new Set();
+            sec.entry = sec.entry.filter(e => {
+                const ref = e?.reference || '';
+                if (!ref) return false;
+                if (seen.has(ref)) return false;     // dedupe
+                // Validar que la referencia resuelva a un recurso permitido
+                const resolved = summaryBundle.entry?.find(x => {
+                    const fu = x.fullUrl || (x.resource?.id ? `${x.resource.resourceType}/${x.resource.id}` : '');
+                    return fu === ref || fu?.endsWith(`/${ref.split('/').pop()}`);
+                })?.resource;
+                if (!resolved) return false;
+                if (allowed && !allowed.includes(resolved.resourceType)) return false;
+                seen.add(ref);
+                return true;
+            });
+        });
+    }
+
+    // 2. Perfiles IPS en recursos referenciados por las secciones para que pasen los discriminadores
+    for (const e of summaryBundle.entry) {
+        const r = e.resource;
+        if (!r) continue;
+
+        // Alergias, Medicación, Problemas (activos/pasados)…
+        if (['AllergyIntolerance','Immunization','MedicationStatement','MedicationRequest','Condition','Organization']
+            .includes(r.resourceType)) {
+            ensureIpsProfile(r);
+        }
+    }
+
+    // 3. Corregir sección "Historial de Enfermedades Pasadas"
+    if (compositionEntry?.resource?.section) {
+        const pastIllnessSection = compositionEntry.resource.section.find(s =>
+            s.code?.coding?.some(c => c.code === '11348-0')
+        );
+
+        if (pastIllnessSection) {
+            // Agregar div requerido al text.div
+            if (pastIllnessSection.text && !pastIllnessSection.text.div) {
+                pastIllnessSection.text.div = '<div xmlns="http://www.w3.org/1999/xhtml"><h5>Historial de Enfermedades Pasadas</h5><p>Condiciones médicas previas del paciente.</p></div>';
+            }
+
+            // Corregir display del código LOINC
+            const loincCoding = pastIllnessSection.code.coding.find(c => c.system === 'http://loinc.org' && c.code === '11348-0');
+            if (loincCoding && loincCoding.display === 'History of Past illness Narrative') {
+                loincCoding.display = 'History of Past illness note';
+            }
+        }
+    }
+
+    // 3. Continuar con patientEntry ya procesado en sección 1)
+
+    // 4. Corregir address.country del Patient para cumplir ISO 3166
+    if (patientEntry?.resource?.address) {
+        patientEntry.resource.address.forEach(addr => {
+            if (addr.country === 'Chile') {
+                addr.country = 'CL'; // Código ISO 3166-1 alpha-2
+            }
+        });
+    }
+
+    // 5. Corregir Conditions - filtrar OpenMRS y codings sin system
+    summaryBundle.entry?.forEach(entry => {
+        if (entry.resource?.resourceType === 'Condition' && entry.resource.code?.coding) {
+            // Filtrar codings sin system y OpenMRS (problemático para validación IPS/LAC)
+            entry.resource.code.coding = entry.resource.code.coding
+                .filter(c => !!c.system && c.system !== 'http://openmrs.org/concepts');
+
+            // Si quedan codings, ordenar con SNOMED primero
+            if (entry.resource.code.coding.length > 0) {
+                entry.resource.code.coding = sortCodingsPreferred(entry.resource.code.coding);
+            }
+        }
+    });
+
+    // 6. Corregir MedicationStatement - agregar system y effective[x]
+    summaryBundle.entry?.forEach(entry => {
+        if (entry.resource?.resourceType === 'MedicationStatement') {
+            // Agregar system a medicationCodeableConcept.coding
+            if (entry.resource.medicationCodeableConcept?.coding) {
+                entry.resource.medicationCodeableConcept.coding.forEach(coding => {
+                    if (!coding.system) {
+                        coding.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+                    }
+                    // Refuerzo específico para no-medication-info
+                    if ((coding.code === 'no-medication-info') || (coding.display === 'No information about medications')) {
+                        coding.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+                        coding.code = 'no-medication-info';
+                        if (!coding.display) coding.display = 'No information about medications';
+                    }
+                });
+            }
+
+            // Agregar effective[x] requerido por el perfil IPS
+            if (!entry.resource.effectiveDateTime && !entry.resource.effectivePeriod) {
+                entry.resource.effectiveDateTime = new Date().toISOString();
+            }
+        }
+
+        // Refuerzo: filtrar OpenMRS y ordenar codings de Condition
+        if (entry.resource?.resourceType === 'Condition' && Array.isArray(entry.resource.code?.coding)) {
+            entry.resource.code.coding = entry.resource.code.coding
+                .filter(c => !!c.system && c.system !== 'http://openmrs.org/concepts');
+            if (entry.resource.code.coding.length > 0) {
+                entry.resource.code.coding = sortCodingsPreferred(entry.resource.code.coding);
+            }
+        }
+    });
+
+    // 6.bis Corregir AllergyIntolerance - absent/unknown 'no-allergy-info'
+    summaryBundle.entry?.forEach(entry => {
+        const res = entry.resource;
+        if (res?.resourceType === 'AllergyIntolerance' && Array.isArray(res.code?.coding)) {
+            // 2.1 Filtrar codings sin system y los locales OpenMRS
+            res.code.coding = res.code.coding.filter(c =>
+                !!c.system && c.system !== 'http://openmrs.org/concepts'
+            );
+            // 2.2 Si quedan codings, ordenar con SNOMED primero
+            if (res.code.coding.length > 0) {
+                res.code.coding = sortCodingsPreferred(res.code.coding);
+            }
+            // 2.3 Refuerzo absent/unknown (mantener)
+            res.code.coding.forEach(c => {
+                if (c.code === 'no-allergy-info' || c.display === 'No information about allergies') {
+                    c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+                    c.code = 'no-allergy-info';
+                    if (!c.display) c.display = 'No information about allergies';
+                }
+            });
+        }
+    });
+
+    // 6.ter - Corregir Immunization - absent/unknown 'no-immunization-info'
+    summaryBundle.entry?.forEach(entry => {
+        const res = entry.resource;
+        if (res?.resourceType === 'Immunization' && res.vaccineCode?.coding?.length) {
+            res.vaccineCode.coding.forEach(c => {
+                if (!c.system) {
+                    c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+                }
+                if (c.code === 'no-immunization-info' || c.display === 'No information about immunizations') {
+                    c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+                    c.code = 'no-immunization-info';
+                    if (!c.display) c.display = 'No information about immunizations';
+                }
+            });
+        }
+    });
+
+    // 7. Asegurar que todas las referencias internas estén en el Bundle
+    const allFullUrls = new Set(summaryBundle.entry?.map(e => e.fullUrl) || []);
+
+    summaryBundle.entry?.forEach(entry => {
+        // Revisar todas las referencias en el recurso
+        checkAndFixReferences(entry.resource, allFullUrls, summaryBundle);
+    });
+
+    // 7.bis. Sanear meta.source que empiecen con '#' (problemático para validación)
+    for (const e of summaryBundle.entry || []) {
+        const r = e.resource;
+        if (r?.meta?.source && typeof r.meta.source === 'string' && r.meta.source.startsWith('#')) {
+            // Opción A: borrar
+            delete r.meta.source;
+
+            // O si prefieres Opción B: convertir a una URI canónica del sistema
+            // r.meta.source = asFhirBase(process.env.ABSOLUTE_FULLURL_BASE || process.env.FHIR_NODE_URL || 'urn:uuid:' + r.id);
+        }
+    }
+
+    // 8) Refuerzo: Composition.meta.profile debe contener lac-composition (racsel)
+    const LAC_COMPOSITION = LAC_PROFILES.COMPOSITION;
+    if (compositionEntry?.resource) {
+        compositionEntry.resource.meta = compositionEntry.resource.meta || {};
+        compositionEntry.resource.meta.profile = Array.isArray(compositionEntry.resource.meta.profile)
+            ? compositionEntry.resource.meta.profile
+            : [];
+        if (!compositionEntry.resource.meta.profile.includes(LAC_COMPOSITION)) {
+            compositionEntry.resource.meta.profile.push(LAC_COMPOSITION);
+        }
+    }
+
+    // 9) NUEVAS MEJORAS LAC: Patient identifiers con URN OIDs (solo si NO hay identifiers)
+    const natOid = LAC_NATIONAL_ID_SYSTEM_OID;   // p.ej. 1.2.36.146.595.217.0.1
+    const ppnOid = LAC_PASSPORT_ID_SYSTEM_OID;   // p.ej. 2.16.840.1.113883.4.1
+    // Reutilizar patientEntry ya definido anteriormente
+    if (patientEntry?.resource && (natOid || ppnOid)) {
+        const patient = patientEntry.resource;
+        // Si ya hay identifiers (y fixPatientIdentifiers ya corrió), no rehacerlos
+        if (Array.isArray(patient.identifier) && patient.identifier.length > 0) {
+            // no-op: ya normalizados por fixPatientIdentifiers
+        } else {
+            // Preservar identifiers originales (si los hubiera) y construir por defecto
+            const originalIds = [...(patient.identifier || [])];
+            patient.identifier = [];
+
+            // Buscar identifier nacional (MR) existente
+            const nationalId = originalIds.find(id =>
+                id.type?.coding?.some(c => c.code === 'MR') ||
+                id.use === 'official' ||
+                id.system?.includes('rut') || id.system?.includes('cedula')
+            );
+
+            if (natOid && nationalId) {
+                patient.identifier.push({
+                    use: 'usual',                                 // MR debe ser 'usual'
+                    type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MR' }] },
+                    system: toUrnOid(natOid),
+                    value: nationalId.value || 'unknown'
+                });
+            }
+
+            // Buscar identifier de pasaporte (PPN) existente
+            const passportId = originalIds.find(id =>
+                id.type?.coding?.some(c => c.code === 'PPN') ||
+                id.system?.includes('passport') || id.system?.includes('pasaporte')
+            );
+
+            if (ppnOid && passportId) {
+                patient.identifier.push({
+                    use: 'official',
+                    type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'PPN' }] },
+                    system: toUrnOid(ppnOid),
+                    value: passportId.value || 'unknown'
+                });
+            }
+
+            // Si no encontramos identifiers apropiados, crear con valores por defecto
+            if (patient.identifier.length === 0 && natOid) {
+                const defaultValue = originalIds[0]?.value || `ID-${patient.id || 'unknown'}`;
+                patient.identifier.push({
+                    use: 'usual',                                 // MR debe ser 'usual'
+                    type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MR' }] },
+                    system: toUrnOid(natOid),
+                    value: defaultValue
+                });
+            }
+        }
+    }
+
+    // 10) Corregir país a códigos ISO2
+    fixPatientCountry(summaryBundle);
+
+    // 11) Asegurar MedicationStatement.effectiveDateTime
+    summaryBundle.entry?.forEach(entry => {
+        const res = entry.resource;
+        if (res?.resourceType === 'MedicationStatement') {
+            if (!res.effectiveDateTime && !res.effectivePeriod) {
+                res.effectiveDateTime = new Date().toISOString();
+            }
+        }
+    });
+
+    // 12) VALIDACIÓN FINAL: Verificar que los slices críticos estén correctamente configurados
+    const finalValidation = () => {
+        // Verificar Bundle.entry[0] = Composition con perfil LAC
+        const comp = summaryBundle.entry?.[0];
+        if (comp?.resource?.resourceType !== 'Composition') {
+            console.error('❌ Bundle.entry[0] debe ser Composition');
+            return false;
+        }
+        if (!comp.resource.meta?.profile?.includes('http://lacpass.racsel.org/StructureDefinition/lac-composition')) {
+            console.error('❌ Composition no tiene perfil lac-composition');
+            return false;
+        }
+
+        // Verificar Bundle.entry[1] = Patient con perfiles LAC e IPS y URN OID
+        const pat = summaryBundle.entry?.[1];
+        if (pat?.resource?.resourceType !== 'Patient') {
+            console.error('❌ Bundle.entry[1] debe ser Patient');
+            return false;
+        }
+        if (!pat.resource.meta?.profile?.includes('http://lacpass.racsel.org/StructureDefinition/lac-patient')) {
+            console.error('❌ Patient no tiene perfil lac-patient');
+            return false;
+        }
+        const hasValidIdentifier = pat.resource.identifier?.some(id => isUrnOid(id.system));
+        if (!hasValidIdentifier) {
+            console.error('❌ Patient no tiene identifiers con URN OID válidos');
+            console.error('Identifiers:', pat.resource.identifier);
+            return false;
+        }
+
+        return true;
+    };
+
+    const isValid = finalValidation();
+    if (isValid) {
+        console.log('✅ Bundle LAC validation passed');
+    } else {
+        console.error('❌ Bundle LAC validation failed - check console for details');
+    }
+}
+
+// ===================== Helper: actualiza todas las referencias recursivamente =====================
+function updateReferencesInObject(obj, urlMap) {
+    if (!obj || typeof obj !== 'object') return;
+
+    if (Array.isArray(obj)) {
+        obj.forEach(item => updateReferencesInObject(item, urlMap));
+        return;
+    }
+
+    if (obj.reference && typeof obj.reference === 'string') {
+        const mapped = urlMap.get(obj.reference);
+        if (mapped) {
+            obj.reference = mapped;
+        }
+    }
+
+    // Si es un Attachment (tiene contentType/data/size/hash) y trae url, también mapearla
+    if (obj.url && typeof obj.url === 'string' &&
+        (Object.prototype.hasOwnProperty.call(obj, 'contentType') ||
+            Object.prototype.hasOwnProperty.call(obj, 'data') ||
+            Object.prototype.hasOwnProperty.call(obj, 'size') ||
+            Object.prototype.hasOwnProperty.call(obj, 'hash'))) {
+        const mappedUrl = urlMap.get(obj.url);
+        if (mappedUrl) {
+            obj.url = mappedUrl;
+        }
+    }
+
+    for (const key in obj) {
+        if (obj.hasOwnProperty(key) && key !== 'reference') {
+            updateReferencesInObject(obj[key], urlMap);
+        }
+    }
+}
+
+
 // ===================== Route ITI-65 =====================
 app.post('/icvp/_iti65', async (req, res) => {
   let summaryBundle;
@@ -515,249 +1725,51 @@ app.post('/icvp/_iti65', async (req, res) => {
     return res.status(400).json({ error: 'Invalid Bundle or missing uuid' });
   }
 
-    function pickIdentifiersOrderedForPdqm(identifiers) {
-        if (!Array.isArray(identifiers) || identifiers.length === 0) return [];
-
-        const norm = (s) => String(s || '').trim();
-        // IMPORTANTE: para "Pasaporte" por texto NO exigimos formato ni system
-        const anyPassportByText = (id) =>
-            /passport|pasaporte/i.test(norm(id?.type?.text)) && !!norm(id?.value);
-
-        // Mantengo un detector opcional de "valor con pinta de pasaporte" para el resto de casos
-        const looksLikePassportValue = (v) => {
-            if (!v) return false;
-            if (/\*/.test(v)) return false;
-            if (/^RUN\*/i.test(v)) return false;
-            return /^[A-Z]{2}[A-Z0-9]{5,}$/i.test(v);
-        };
-        const preferCL = (arr) =>
-            arr.sort((a, b) => (/^CL/i.test(norm(b.value)) ? 1 : 0) - (/^CL/i.test(norm(a.value)) ? 1 : 0));
-
-        const passportTypeCode = (process.env.PDQM_IDENTIFIER_TYPE_CODE_PASSPORT || 'PPN').trim();
-        const passportTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_PASSPORT || 'Pasaporte').toLowerCase();
-        const nationalTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_NATIONAL  || 'RUN').toLowerCase();
-
-        const isPassportId = (id) => {
-            const codings = (id.type?.coding || []);
-            const codeHit = codings.some(c => norm(c.code).toUpperCase() === passportTypeCode.toUpperCase());
-            // soporte explícito al code que nos compartiste para "Pasaporte"
-            const altCodeHit = codings.some(c => norm(c.code) === 'a2551e57-6028-428b-be3c-21816c252e06');
-            const textHit = norm(id.type?.text).toLowerCase().includes(passportTypeText) ||
-                /passport|pasaporte/i.test(norm(id.type?.text));
-            return (codeHit || altCodeHit || textHit) && !!norm(id.value);
-        };
-        const isNationalId = (id) => {
-            const txt = norm(id.type?.text);
-            const code = norm(id.type?.coding?.[0]?.code);
-            const val = norm(id.value);
-            if (/^RUN\*/i.test(val)) return true;                 // RUN*...
-            if (/run|nacional|national/i.test(txt)) return true;  // por texto
-            if (code && /RUN/i.test(code)) return true;           // por code si existiera
-            return false;
-        };
-
-        // 1) Pasaporte por TEXTO (sin exigir system/format)
-        const passportByText = preferCL(
-            identifiers.filter(anyPassportByText)
-        ).map(i => norm(i.value));
-
-        // 2) Pasaporte formal (por coding o texto, pero además con pinta de pasaporte)
-        const passportFormal = preferCL(
-            identifiers.filter(isPassportId).filter(i => looksLikePassportValue(i.value))
-        ).map(i => norm(i.value));
-
-        // 3) Pasaporte "por forma" (value parece pasaporte) excluyendo RUN
-        const passportShape  = preferCL(
-            identifiers.filter(i => !isNationalId(i) && looksLikePassportValue(i.value))
-        ).map(i => norm(i.value));
-        // 4) Nacional (RUN) como fallback
-        const nationals      = identifiers.filter(isNationalId).map(i => norm(i.value));
-        // 5) Último recurso: cualquier value sin * ni RUN*
-        const lastResort     = identifiers
-            .filter(i => !!norm(i.value) && !/\*/.test(norm(i.value)) && !/^RUN\*/i.test(norm(i.value)))
-            .map(i => norm(i.value));
-
-        // Unificar preservando orden y sin duplicados
-        const seen = new Set();
-        const ordered = [...passportByText, ...passportFormal, ...passportShape, ...nationals, ...lastResort]
-            .filter(v => { if (seen.has(v)) return false; seen.add(v); return true; });
-        return ordered;
-    }
-
-    function generateFallbackBundle(identifierValue) {
-        const fallbackBundle = {
-            resourceType: 'Bundle',
-            id: `pdqm-fallback-${Date.now()}`,
-            type: 'searchset',
-            total: 1,
-            entry: [{
-                fullUrl: `Patient/pdqm-fallback-${identifierValue}`,
-                resource: {
-                    resourceType: 'Patient',
-                    id: `pdqm-fallback-${identifierValue}`,
-                    identifier: [{
-                        system: PDQM_DEFAULT_IDENTIFIER_SYSTEM || toUrnOid('1.2.3.4.5'),
-                        value: identifierValue
-                    }],
-                    name: [{
-                        text: `Paciente PDQm Fallback ${identifierValue}`
-                    }],
-                    meta: {
-                        tag: [{
-                            system: 'http://example.org/tag',
-                            code: 'pdqm-fallback',
-                            display: 'PDQm Fallback Bundle'
-                        }]
-                    }
-                }
-            }]
-        };
-
-        return fallbackBundle;
-    }
-
-// ===================== PDQm Utils =====================
-// ===================== URL Encoding Helper =====================
-    function robustUrlEncode(value) {
-        if (!value) return '';
-
-        // Primero, codificación URL estándar
-        let encoded = encodeURIComponent(value);
-
-        // Luego, codificaciones adicionales para caracteres que pueden causar problemas en queries
-        encoded = encoded.replace(/\*/g, '%2A');  // Asterisco
-        encoded = encoded.replace(/'/g, '%27');   // Comilla simple
-        encoded = encoded.replace(/"/g, '%22');   // Comilla doble
-        encoded = encoded.replace(/\(/g, '%28');  // Paréntesis abierto
-        encoded = encoded.replace(/\)/g, '%29');  // Paréntesis cerrado
-
-        return encoded;
-    }
-
-
-
-    function asFhirBase(url) {
-        const u = (url || '').replace(/\/+$/, '');
-        return /\/fhir$/i.test(u) ? u : `${u}/fhir`;
-    }
-
-    function joinUrl(base, path) {
-        const b = (base || '').replace(/\/+$/, '');
-        const p = (path || '').replace(/^\/+/, '');
-        return `${b}/${p}`;
-    }
-    // ===================== PDQm =====================
-    async function pdqmFetchBundleByIdentifier(identifierValue) {
-        console.log('🔍 PDQm fetch for identifier:', identifierValue, 'using PDQM_FHIR_URL:', PDQM_FHIR_URL);
-        if (!PDQM_FHIR_URL || !identifierValue) return null;
-        console.log('---')
-
-        const maxAttempts = 3;
-        let currentAttempt = 0;
-
-        while (currentAttempt < maxAttempts) {
-            currentAttempt++;
-            console.log(`PDQm attempt ${currentAttempt}/${maxAttempts} for identifier: ${identifierValue}`);
-
-            try {
-                // Construir configuración de solicitud
-                const config = {
-                    timeout: parseInt(PDQM_TIMEOUT_MS, 10),
-                    httpsAgent: axios.defaults.httpsAgent,
-                    validateStatus: (status) => {
-                        // Considerar como válidos los estados esperados
-                        return status < 500 && status !== 429; // No reintentar en errores de servidor o throttling
-                    }
-                };
-
-                if (PDQM_FHIR_TOKEN) {
-                    config.headers = { 'Authorization': `Bearer ${PDQM_FHIR_TOKEN}` };
-                }
-
-                // Intentar con el parámetro identifier por defecto
-                const base = asFhirBase(PDQM_FHIR_URL);
-                let url = joinUrl(base, '/Patient') + `?identifier=${robustUrlEncode(identifierValue)}`;
-                console.log(`PDQm GET: ${url}`);
-
-                let response = await axios.get(url, config);
-
-                // Si la respuesta es exitosa y contiene datos, retornar
-                if (response.status === 200 && response.data?.resourceType === 'Bundle') {
-                    console.log(`✅ PDQm response: ${response.data.total || 0} patients found`);
-                    return response.data;
-                }
-
-                // Si no hay resultados y hay parámetros de fallback configurados, intentar con ellos
-                if (response.status === 200 && response.data?.total === 0 && PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES) {
-                    const fallbackParams = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES);
-
-                    for (const param of fallbackParams) {
-                        url = joinUrl(base, '/Patient') + `?${param}=${robustUrlEncode(identifierValue)}`;
-                        console.log(`PDQm fallback GET: ${url}`);
-
-                        response = await axios.get(url, config);
-
-                        if (response.status === 200 && response.data?.resourceType === 'Bundle' && response.data.total > 0) {
-                            console.log(`✅ PDQm fallback response: ${response.data.total} patients found with param ${param}`);
-                            return response.data;
-                        }
-                    }
-                }
-
-                // Manejar códigos de estado específicos
-                if (response.status === 401 || response.status === 403) {
-                    if (isTrue(PDQM_ENABLE_FALLBACK_FOR_401_403)) {
-                        console.warn(`PDQm auth error (${response.status}), generating fallback bundle`);
-                        return generateFallbackBundle(identifierValue);
-                    } else {
-                        console.error(`PDQm auth error (${response.status}), no fallback enabled`);
-                        return null;
-                    }
-                }
-
-                // Verificar si debemos reintentar basado en el estado HTTP
-                const fallbackStatuses = arr(PDQM_FALLBACK_HTTP_STATUSES || '404,400');
-                if (fallbackStatuses.includes(response.status.toString())) {
-                    console.warn(`PDQm response status ${response.status}, will retry or fallback`);
-
-                    if (currentAttempt >= maxAttempts) {
-                        console.warn(`Max attempts reached, generating fallback bundle`);
-                        return generateFallbackBundle(identifierValue);
-                    }
-
-                    // Esperar antes del siguiente intento
-                    await new Promise(resolve => setTimeout(resolve, 1000 * currentAttempt));
-                    continue;
-                }
-
-                // Si llegamos aquí, retornar los datos obtenidos (aunque sean vacíos)
-                return response.data;
-
-            } catch (error) {
-                console.error(`PDQm error (attempt ${currentAttempt}):`, error.message);
-
-                // Decidir si reintentar o generar fallback
-                if (currentAttempt >= maxAttempts) {
-                    console.warn('Max attempts reached, generating fallback bundle');
-                    return generateFallbackBundle(identifierValue);
-                }
-
-                // Esperar antes del siguiente intento
-                await new Promise(resolve => setTimeout(resolve, 1000 * currentAttempt));
-            }
-        }
-
-        return null;
-    }
-
-    function isPdqmFallbackBundle(bundle) {
-        return bundle?.entry?.[0]?.resource?.meta?.tag?.some(tag =>
-            tag.code === 'pdqm-fallback'
-        ) === true;
-    }
 
 
     try {
+
+        // ========= NUEVO: Corregir problemas de validación ANTES de PDQm =========
+        fixBundleValidationIssues(summaryBundle);
+
+        // ===== Asegurar perfil LAC Bundle desde el inicio =====
+        ensureLacBundleProfile(summaryBundle);
+
+        // ===== Algunos nodos piden sí o sí Composition primero y Bundle.type = "document" =====
+        summaryBundle.type = "document";
+
+        // ===== Aplicar modo URL al document bundle =====
+        applyUrlModeToBundle(summaryBundle, FULLURL_MODE_DOCUMENT, updateReferencesInObject);
+        // ===== Forzar orden de slices (Composition, Patient) y sujeto coherente =====
+        //ensureEntrySliceOrder(summaryBundle);
+        if (summaryBundle.entry && summaryBundle.entry.length > 0) {
+            // Alinear Composition.id con el ID del fullUrl final (urn|relative|absolute)
+            const firstEntry = summaryBundle.entry[0];
+            if (firstEntry?.resource?.resourceType === 'Composition') {
+                const fu = String(firstEntry.fullUrl || '');
+                const expectedId = fu.startsWith('urn:uuid:')
+                    ? fu.split(':').pop()
+                    : fu.split('/').filter(Boolean).pop();
+                if (expectedId && firstEntry.resource.id !== expectedId) {
+                    firstEntry.resource.id = expectedId;
+                }
+            }
+        }
+
+        // ===== Guard rails: asegurar recursos clave presentes =====
+        const hasPatient = Array.isArray(summaryBundle.entry) && summaryBundle.entry.some(e => e.resource?.resourceType === 'Patient');
+        const hasComposition = Array.isArray(summaryBundle.entry) && summaryBundle.entry.some(e => e.resource?.resourceType === 'Composition');
+        if (!hasPatient || !hasComposition) {
+            return res.status(400).json({
+                error: 'Bundle must include Patient and Composition resources',
+                details: {
+                    hasPatient, hasComposition
+                }
+            });
+        }
+
+
+
       // ========= Paso opcional 1: PDQm =========
       if (isTrue(FEATURE_PDQ_ENABLED)) {
           const patientEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
@@ -889,7 +1901,21 @@ app.post('/icvp/_iti65', async (req, res) => {
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
 
     if (compositionEntry) {
+      //add event
+        if (!Array.isArray(compositionEntry.resource.event)) compositionEntry.resource.event = [];
+        compositionEntry.resource.event.push({
+            code: [{
+                coding: [{
+                    system: 'http://terminology.hl7.org/CodeSystem/v3-ActClass',
+                    code: 'PCPR',
+                    display: 'care provision'
+                }],
+                text: 'Resumen clínico generado por ICVP'
+            }],
+            period: { start: now, end: now}
+        });
       compositionEntry.resource.subject.reference = urlMap.get(`Patient/${patientEntry.resource.id}`);
+
       compositionEntry.resource.section?.forEach(section => {
         section.entry?.forEach(item => {
           if (urlMap.has(item.reference)) item.reference = urlMap.get(item.reference);
