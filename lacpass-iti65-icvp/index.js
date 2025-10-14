@@ -515,7 +515,237 @@ app.post('/icvp/_iti65', async (req, res) => {
     return res.status(400).json({ error: 'Invalid Bundle or missing uuid' });
   }
 
-  try {
+    function pickIdentifiersOrderedForPdqm(identifiers) {
+        if (!Array.isArray(identifiers) || identifiers.length === 0) return [];
+
+        const norm = (s) => String(s || '').trim();
+        // IMPORTANTE: para "Pasaporte" por texto NO exigimos formato ni system
+        const anyPassportByText = (id) =>
+            /passport|pasaporte/i.test(norm(id?.type?.text)) && !!norm(id?.value);
+
+        // Mantengo un detector opcional de "valor con pinta de pasaporte" para el resto de casos
+        const looksLikePassportValue = (v) => {
+            if (!v) return false;
+            if (/\*/.test(v)) return false;
+            if (/^RUN\*/i.test(v)) return false;
+            return /^[A-Z]{2}[A-Z0-9]{5,}$/i.test(v);
+        };
+        const preferCL = (arr) =>
+            arr.sort((a, b) => (/^CL/i.test(norm(b.value)) ? 1 : 0) - (/^CL/i.test(norm(a.value)) ? 1 : 0));
+
+        const passportTypeCode = (process.env.PDQM_IDENTIFIER_TYPE_CODE_PASSPORT || 'PPN').trim();
+        const passportTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_PASSPORT || 'Pasaporte').toLowerCase();
+        const nationalTypeText = (process.env.PDQM_IDENTIFIER_TYPE_TEXT_NATIONAL  || 'RUN').toLowerCase();
+
+        const isPassportId = (id) => {
+            const codings = (id.type?.coding || []);
+            const codeHit = codings.some(c => norm(c.code).toUpperCase() === passportTypeCode.toUpperCase());
+            // soporte explícito al code que nos compartiste para "Pasaporte"
+            const altCodeHit = codings.some(c => norm(c.code) === 'a2551e57-6028-428b-be3c-21816c252e06');
+            const textHit = norm(id.type?.text).toLowerCase().includes(passportTypeText) ||
+                /passport|pasaporte/i.test(norm(id.type?.text));
+            return (codeHit || altCodeHit || textHit) && !!norm(id.value);
+        };
+        const isNationalId = (id) => {
+            const txt = norm(id.type?.text);
+            const code = norm(id.type?.coding?.[0]?.code);
+            const val = norm(id.value);
+            if (/^RUN\*/i.test(val)) return true;                 // RUN*...
+            if (/run|nacional|national/i.test(txt)) return true;  // por texto
+            if (code && /RUN/i.test(code)) return true;           // por code si existiera
+            return false;
+        };
+
+        // 1) Pasaporte por TEXTO (sin exigir system/format)
+        const passportByText = preferCL(
+            identifiers.filter(anyPassportByText)
+        ).map(i => norm(i.value));
+
+        // 2) Pasaporte formal (por coding o texto, pero además con pinta de pasaporte)
+        const passportFormal = preferCL(
+            identifiers.filter(isPassportId).filter(i => looksLikePassportValue(i.value))
+        ).map(i => norm(i.value));
+
+        // 3) Pasaporte "por forma" (value parece pasaporte) excluyendo RUN
+        const passportShape  = preferCL(
+            identifiers.filter(i => !isNationalId(i) && looksLikePassportValue(i.value))
+        ).map(i => norm(i.value));
+        // 4) Nacional (RUN) como fallback
+        const nationals      = identifiers.filter(isNationalId).map(i => norm(i.value));
+        // 5) Último recurso: cualquier value sin * ni RUN*
+        const lastResort     = identifiers
+            .filter(i => !!norm(i.value) && !/\*/.test(norm(i.value)) && !/^RUN\*/i.test(norm(i.value)))
+            .map(i => norm(i.value));
+
+        // Unificar preservando orden y sin duplicados
+        const seen = new Set();
+        const ordered = [...passportByText, ...passportFormal, ...passportShape, ...nationals, ...lastResort]
+            .filter(v => { if (seen.has(v)) return false; seen.add(v); return true; });
+        return ordered;
+    }
+
+    function generateFallbackBundle(identifierValue) {
+        const fallbackBundle = {
+            resourceType: 'Bundle',
+            id: `pdqm-fallback-${Date.now()}`,
+            type: 'searchset',
+            total: 1,
+            entry: [{
+                fullUrl: `Patient/pdqm-fallback-${identifierValue}`,
+                resource: {
+                    resourceType: 'Patient',
+                    id: `pdqm-fallback-${identifierValue}`,
+                    identifier: [{
+                        system: PDQM_DEFAULT_IDENTIFIER_SYSTEM || toUrnOid('1.2.3.4.5'),
+                        value: identifierValue
+                    }],
+                    name: [{
+                        text: `Paciente PDQm Fallback ${identifierValue}`
+                    }],
+                    meta: {
+                        tag: [{
+                            system: 'http://example.org/tag',
+                            code: 'pdqm-fallback',
+                            display: 'PDQm Fallback Bundle'
+                        }]
+                    }
+                }
+            }]
+        };
+
+        return fallbackBundle;
+    }
+
+// ===================== PDQm Utils =====================
+// ===================== URL Encoding Helper =====================
+    function robustUrlEncode(value) {
+        if (!value) return '';
+
+        // Primero, codificación URL estándar
+        let encoded = encodeURIComponent(value);
+
+        // Luego, codificaciones adicionales para caracteres que pueden causar problemas en queries
+        encoded = encoded.replace(/\*/g, '%2A');  // Asterisco
+        encoded = encoded.replace(/'/g, '%27');   // Comilla simple
+        encoded = encoded.replace(/"/g, '%22');   // Comilla doble
+        encoded = encoded.replace(/\(/g, '%28');  // Paréntesis abierto
+        encoded = encoded.replace(/\)/g, '%29');  // Paréntesis cerrado
+
+        return encoded;
+    }
+
+    // ===================== PDQm =====================
+    async function pdqmFetchBundleByIdentifier(identifierValue) {
+        console.log('🔍 PDQm fetch for identifier:', identifierValue, 'using PDQM_FHIR_URL:', PDQM_FHIR_URL);
+        if (!PDQM_FHIR_URL || !identifierValue) return null;
+        console.log('---')
+
+        const maxAttempts = 3;
+        let currentAttempt = 0;
+
+        while (currentAttempt < maxAttempts) {
+            currentAttempt++;
+            console.log(`PDQm attempt ${currentAttempt}/${maxAttempts} for identifier: ${identifierValue}`);
+
+            try {
+                // Construir configuración de solicitud
+                const config = {
+                    timeout: parseInt(PDQM_TIMEOUT_MS, 10),
+                    httpsAgent: axios.defaults.httpsAgent,
+                    validateStatus: (status) => {
+                        // Considerar como válidos los estados esperados
+                        return status < 500 && status !== 429; // No reintentar en errores de servidor o throttling
+                    }
+                };
+
+                if (PDQM_FHIR_TOKEN) {
+                    config.headers = { 'Authorization': `Bearer ${PDQM_FHIR_TOKEN}` };
+                }
+
+                // Intentar con el parámetro identifier por defecto
+                const base = asFhirBase(PDQM_FHIR_URL);
+                let url = joinUrl(base, '/Patient') + `?identifier=${robustUrlEncode(identifierValue)}`;
+                console.log(`PDQm GET: ${url}`);
+
+                let response = await axios.get(url, config);
+
+                // Si la respuesta es exitosa y contiene datos, retornar
+                if (response.status === 200 && response.data?.resourceType === 'Bundle') {
+                    console.log(`✅ PDQm response: ${response.data.total || 0} patients found`);
+                    return response.data;
+                }
+
+                // Si no hay resultados y hay parámetros de fallback configurados, intentar con ellos
+                if (response.status === 200 && response.data?.total === 0 && PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES) {
+                    const fallbackParams = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES);
+
+                    for (const param of fallbackParams) {
+                        url = joinUrl(base, '/Patient') + `?${param}=${robustUrlEncode(identifierValue)}`;
+                        console.log(`PDQm fallback GET: ${url}`);
+
+                        response = await axios.get(url, config);
+
+                        if (response.status === 200 && response.data?.resourceType === 'Bundle' && response.data.total > 0) {
+                            console.log(`✅ PDQm fallback response: ${response.data.total} patients found with param ${param}`);
+                            return response.data;
+                        }
+                    }
+                }
+
+                // Manejar códigos de estado específicos
+                if (response.status === 401 || response.status === 403) {
+                    if (isTrue(PDQM_ENABLE_FALLBACK_FOR_401_403)) {
+                        console.warn(`PDQm auth error (${response.status}), generating fallback bundle`);
+                        return generateFallbackBundle(identifierValue);
+                    } else {
+                        console.error(`PDQm auth error (${response.status}), no fallback enabled`);
+                        return null;
+                    }
+                }
+
+                // Verificar si debemos reintentar basado en el estado HTTP
+                const fallbackStatuses = arr(PDQM_FALLBACK_HTTP_STATUSES || '404,400');
+                if (fallbackStatuses.includes(response.status.toString())) {
+                    console.warn(`PDQm response status ${response.status}, will retry or fallback`);
+
+                    if (currentAttempt >= maxAttempts) {
+                        console.warn(`Max attempts reached, generating fallback bundle`);
+                        return generateFallbackBundle(identifierValue);
+                    }
+
+                    // Esperar antes del siguiente intento
+                    await new Promise(resolve => setTimeout(resolve, 1000 * currentAttempt));
+                    continue;
+                }
+
+                // Si llegamos aquí, retornar los datos obtenidos (aunque sean vacíos)
+                return response.data;
+
+            } catch (error) {
+                console.error(`PDQm error (attempt ${currentAttempt}):`, error.message);
+
+                // Decidir si reintentar o generar fallback
+                if (currentAttempt >= maxAttempts) {
+                    console.warn('Max attempts reached, generating fallback bundle');
+                    return generateFallbackBundle(identifierValue);
+                }
+
+                // Esperar antes del siguiente intento
+                await new Promise(resolve => setTimeout(resolve, 1000 * currentAttempt));
+            }
+        }
+
+        return null;
+    }
+
+    function isPdqmFallbackBundle(bundle) {
+        return bundle?.entry?.[0]?.resource?.meta?.tag?.some(tag =>
+            tag.code === 'pdqm-fallback'
+        ) === true;
+    }
+
+
+    try {
       // ========= Paso opcional 1: PDQm =========
       if (isTrue(FEATURE_PDQ_ENABLED)) {
           const patientEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
