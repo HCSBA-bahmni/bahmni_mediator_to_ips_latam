@@ -1273,7 +1273,41 @@ function sortCodingsPreferred(codings) {
         return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
     });
 }
+// Función auxiliar para verificar y corregir referencias
+function checkAndFixReferences(obj, availableUrls, bundle) {
+    if (!obj || typeof obj !== 'object') return;
 
+    if (Array.isArray(obj)) {
+        obj.forEach(item => checkAndFixReferences(item, availableUrls, bundle));
+        return;
+    }
+
+    // Si tiene propiedad 'reference', verificar que existe
+    if (obj.reference && typeof obj.reference === 'string') {
+        if (!availableUrls.has(obj.reference)) {
+            // Si la referencia no existe, intentar encontrar el recurso por ID
+            const parts = obj.reference.split('/');
+            const resourceType = parts[parts.length - 2];
+            const resourceId = parts[parts.length - 1];
+
+            const foundEntry = bundle.entry?.find(e =>
+                e.resource?.resourceType === resourceType &&
+                e.resource?.id === resourceId
+            );
+
+            if (foundEntry) {
+                obj.reference = foundEntry.fullUrl;
+            }
+        }
+    }
+
+    // Recursivamente procesar todas las propiedades
+    for (const key in obj) {
+        if (obj.hasOwnProperty(key) && key !== 'reference') {
+            checkAndFixReferences(obj[key], availableUrls, bundle);
+        }
+    }
+}
 
 // ===================== Función para corregir Bundle - INTEGRADA =====================
 function fixBundleValidationIssues(summaryBundle) {
