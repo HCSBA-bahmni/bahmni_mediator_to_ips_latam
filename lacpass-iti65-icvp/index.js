@@ -1223,6 +1223,25 @@ function asAbsoluteBase(u) {
     return /\/fhir$/i.test(x) ? x : `${x}/fhir`;
 }
 
+
+/**
+ * Resuelve una referencia según el modo.
+ * @param {'urn'|'absolute'|'relative'} mode
+ * @param {string} resourceType
+ * @param {string} id
+ * @returns {string}
+ */
+function buildRef(mode, resourceType, id) {
+    switch ((mode || '').toLowerCase()) {
+        case 'absolute':
+            return makeAbsolute(resourceType, id);
+        case 'relative':
+            return makeRelative(resourceType, id);
+        default:
+            return makeUrn(id);
+    }
+}
+
 function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
     if (!bundle?.entry?.length) return;
 
@@ -1711,7 +1730,7 @@ function fixBundleValidationIssues(summaryBundle) {
             console.error('❌ Bundle.entry[0] debe ser Composition');
             return false;
         }
-        if (!comp.resource.meta?.profile?.includes('http://lacpass.racsel.org/StructureDefinition/lac-composition')) {
+        if (!comp.resource.meta?.profile?.includes('http://smart.who.int/trust-phw/StructureDefinition/Composition-uv-ips-PreQual')) {
             console.error('❌ Composition no tiene perfil lac-composition');
             return false;
         }
@@ -1722,7 +1741,7 @@ function fixBundleValidationIssues(summaryBundle) {
             console.error('❌ Bundle.entry[1] debe ser Patient');
             return false;
         }
-        if (!pat.resource.meta?.profile?.includes('http://lacpass.racsel.org/StructureDefinition/lac-patient')) {
+        if (!pat.resource.meta?.profile?.includes('http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips')) {
             console.error('❌ Patient no tiene perfil lac-patient');
             return false;
         }
