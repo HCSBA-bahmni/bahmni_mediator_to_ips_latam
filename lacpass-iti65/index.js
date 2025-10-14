@@ -1191,8 +1191,8 @@ function fixPatientIdentifiers(bundle) {
       id.type.coding = Array.isArray(id.type.coding) ? id.type.coding : [];
       // reemplazar cualquier coding previo por el coding de la VS nacional (RUN)
       id.type.coding = [{
-        system: 'http://lacpass.racsel.org/CodeSystem/national-identifier-types',
-        code: 'RUN'
+        system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
+        code: 'NI'
       }];
       // la mayoría de perfiles no permiten type.text aquí
       if (id.type.text) delete id.type.text;
