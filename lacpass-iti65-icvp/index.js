@@ -1262,6 +1262,17 @@ function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
     updateReferencesInObject(bundle, urlMap);
 }
 
+
+function sortCodingsPreferred(codings) {
+    const pref = [CS_SCT]; // primero SNOMED
+    return [...codings].sort((a, b) => {
+        const ia = pref.indexOf(a.system);
+        const ib = pref.indexOf(b.system);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    });
+}
+
+
 // ===================== Función para corregir Bundle - INTEGRADA =====================
 function fixBundleValidationIssues(summaryBundle) {
     if (!summaryBundle?.entry || !Array.isArray(summaryBundle.entry)) return;
