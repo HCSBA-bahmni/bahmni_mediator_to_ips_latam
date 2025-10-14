@@ -147,7 +147,7 @@ const IPS_PROFILES = {
     CONDITION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Condition-uv-ips',
     MEDICATION_STATEMENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationStatement-uv-ips',
     PROCEDURE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Procedure-uv-ips',
-    IMMUNIZATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Immunization-uv-ips',
+    IMMUNIZATION: 'http://smart.who.int/trust-phw/StructureDefinition/Immunization-uv-ips-PreQual',
     OBSERVATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Observation-results-uv-ips'
 };
 
