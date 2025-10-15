@@ -2180,9 +2180,12 @@ app.post('/lacpass/_iti65', async (req, res) => {
     summaryBundle.type = "document";
     
     // ===== Aplicar modo URL al document bundle =====
+      console.log('🔍 Applying FULLURL_MODE_DOCUMENT to Bundle...');
     applyUrlModeToBundle(summaryBundle, FULLURL_MODE_DOCUMENT, updateReferencesInObject);
     // ===== Forzar orden de slices (Composition, Patient) y sujeto coherente =====
+      console.log('🔍 Ensuring entry order and Composition.id coherence...');
     ensureEntrySliceOrder(summaryBundle);
+    console.log('🔍 Ensuring Composition.id matches fullUrl...');
     if (summaryBundle.entry && summaryBundle.entry.length > 0) {
       // Alinear Composition.id con el ID del fullUrl final (urn|relative|absolute)
       const firstEntry = summaryBundle.entry[0];
@@ -2198,8 +2201,10 @@ app.post('/lacpass/_iti65', async (req, res) => {
     }
 
     // ===== Guard rails: asegurar recursos clave presentes =====
+      console.log('🔍 Validating presence of Patient and Composition in Bundle...');
     const hasPatient = Array.isArray(summaryBundle.entry) && summaryBundle.entry.some(e => e.resource?.resourceType === 'Patient');
     const hasComposition = Array.isArray(summaryBundle.entry) && summaryBundle.entry.some(e => e.resource?.resourceType === 'Composition');
+    console.log('🔍 Bundle contains Patient:', hasPatient, 'Composition:', hasComposition);
     if (!hasPatient || !hasComposition) {
       return res.status(400).json({
         error: 'Bundle must include Patient and Composition resources',
