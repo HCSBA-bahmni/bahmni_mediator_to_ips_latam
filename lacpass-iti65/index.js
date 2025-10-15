@@ -1061,6 +1061,11 @@ async function normalizeTerminologyInBundle(bundle) {
       continue;
     }
 
+    if (res.resourceType === 'Composition') {
+
+      res.custodian = res.author[0];
+    }
+
     // Determinar dominio
     const domain = resourceToDomain(res);
     const domainCfg = DOMAIN_CONFIG[domain] || DOMAIN_CONFIG[TS_DEFAULT_DOMAIN] || {};
@@ -2321,6 +2326,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       if (!org) continue;
       normalizeOrganizationResource(org);
   }
+
 
 
     const patientRef = patientEntry.fullUrl; // ya canonicalizado a urn:uuid:...
