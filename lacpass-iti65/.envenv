@@ -32,7 +32,8 @@ OPENHIM_SUMMARY_ENDPOINT=https://10.68.174.206:5000/lacpass/_iti65
 
 # FHIR servers nodo nacional
 SUMMARY_PROFILE=http://lacpass.racsel.org/StructureDefinition/lac-composition
-FHIR_NODO_NACIONAL_SERVER=http://10.68.174.221:8080/fhir      # donde recibe el ProvideBundle
+FHIR_NODO_NACIONAL_SERVER=https://gazelle.racsel.org:11016/fhir/1/fhir      # donde recibe el ProvideBundle
+#FHIR_NODO_NACIONAL_SERVER=http://10.68.174.221:8080/fhir      # donde recibe el ProvideBundle
 
 # Puerto donde corre tu mediador ITI‑65
 LACPASS_ITI65_PORT=8005
@@ -79,7 +80,8 @@ FORWARDER_IMMUNIZATION_PORT=8009
 PORT_TERMINO=8010
 
 # Terminology Server (Snowstorm FHIR o HAPI TS, del nodo Nacional)
-TERMINO_SERVER_URL=http://15.228.12.79:8180/fhir
+TERMINO_SERVER_URL=https://hcsba-api.hcsba.cl/terminologico/1/fhir
+#TERMINO_SERVER_URL=http://15.228.12.79:8180/fhir
 TERMINO_PORT=8010           # (o conserva PORT_TERMINO=8010)
 TERMINO_TIMEOUT=20000
 
