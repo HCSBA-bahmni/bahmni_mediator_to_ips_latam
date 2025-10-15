@@ -1911,7 +1911,7 @@ function normalizeOrganizationResource(orga) {
                 "Estoril 450"
             ],
             "city": "Región Metropolitana",
-            "country": "CHL"
+            "country": "CL"
         }
     ];
 
