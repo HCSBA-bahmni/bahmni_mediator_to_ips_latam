@@ -2097,6 +2097,7 @@ function normalizePractitionerResource(prac) {
 function normalizeOrganizationResource(orga) {
     if (!orga || orga.resourceType !== 'Organization') return;
 
+
     const identifiers = [
         {
             "use": "official",
@@ -2317,9 +2318,12 @@ app.post('/lacpass/_iti65', async (req, res) => {
     if (!organizationEntry) {
       console.warn('⚠️ No Organization found in the Bundle.');
     }
+    if(organizationEntry?.resource?.id === compositionEntry.resource.author[0].reference.replace('Organization/','')){
+        console.log('La organización del Composition coincide con la Organization del Bundle.');
+        //me esta actualizando el de la vacuna, no el ultimo
+        normalizeOrganizationResource(organizationEntry?.resource);
+    }
 
-    //me esta actualizando el de la vacuna, no el ultimo
-    normalizeOrganizationResource(organizationEntry?.resource);
 
     const patientRef = patientEntry.fullUrl; // ya canonicalizado a urn:uuid:...
     const docType = compositionEntry?.resource?.type ?? {
