@@ -2315,10 +2315,13 @@ app.post('/lacpass/_iti65', async (req, res) => {
     normalizePractitionerResource(practitionerEntry?.resource);
     //modificamos la Organizacion
    const orgEntries = (summaryBundle.entry || []).filter(e => e.resource?.resourceType === 'Organization');
-   const compAuthorRef = compositionEntry?.resource?.author?.[0]?.reference; // e.g. "Organization/ORGID" o fullUrl
+   const compAuthorRef = compositionEntry?.resource?.author?.[0]?.reference;
+   console.log('Composition author reference:', compAuthorRef);
+   console.log('Organizations:', orgEntries);
   if (compAuthorRef) {
       // extraer id si es relativo "Organization/ID"
       const authorOrgId = compAuthorRef.includes('/') ? compAuthorRef.split('/').pop() : null;
+      console.log('Author:', authorOrgId);
 
       for (const orgEntry of orgEntries) {
           const org = orgEntry.resource;
