@@ -2319,20 +2319,9 @@ app.post('/lacpass/_iti65', async (req, res) => {
    console.log('Composition author reference:', compAuthorRef);
    console.log('Organizations:', orgEntries);
   if (compAuthorRef) {
-      // extraer id si es relativo "Organization/ID"
-      const authorOrgId = compAuthorRef.includes('/') ? compAuthorRef.split('/').pop() : null;
-      console.log('Author:', authorOrgId);
-
       for (const orgEntry of orgEntries) {
           const org = orgEntry.resource;
           if (!org) continue;
-
-          // comparar por id o por fullUrl según lo que tengas en el Bundle
-          if (authorOrgId && org.id === authorOrgId) {
-              normalizeOrganizationResource(org);
-              break;
-          }
-
           // si el composition tiene fullUrl del org (ej: urn:uuid:...), comparar también
           if (orgEntry.fullUrl && orgEntry.fullUrl === compAuthorRef) {
               normalizeOrganizationResource(org);
