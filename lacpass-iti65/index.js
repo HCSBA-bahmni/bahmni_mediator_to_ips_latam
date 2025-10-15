@@ -2314,15 +2314,29 @@ app.post('/lacpass/_iti65', async (req, res) => {
     }
     normalizePractitionerResource(practitionerEntry?.resource);
     //modificamos la Organizacion
-    const organizationEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Organization');
-    if (!organizationEntry) {
-      console.warn('⚠️ No Organization found in the Bundle.');
-    }
-    if(organizationEntry?.resource?.id === compositionEntry.resource.author[0].reference.replace('Organization/','')){
-        console.log('La organización del Composition coincide con la Organization del Bundle.');
-        //me esta actualizando el de la vacuna, no el ultimo
-        normalizeOrganizationResource(organizationEntry?.resource);
-    }
+   const orgEntries = (summaryBundle.entry || []).filter(e => e.resource?.resourceType === 'Organization');
+   const compAuthorRef = compositionEntry?.resource?.author?.[0]?.reference; // e.g. "Organization/ORGID" o fullUrl
+  if (compAuthorRef) {
+      // extraer id si es relativo "Organization/ID"
+      const authorOrgId = compAuthorRef.includes('/') ? compAuthorRef.split('/').pop() : null;
+
+      for (const orgEntry of orgEntries) {
+          const org = orgEntry.resource;
+          if (!org) continue;
+
+          // comparar por id o por fullUrl según lo que tengas en el Bundle
+          if (authorOrgId && org.id === authorOrgId) {
+              normalizeOrganizationResource(org);
+              break;
+          }
+
+          // si el composition tiene fullUrl del org (ej: urn:uuid:...), comparar también
+          if (orgEntry.fullUrl && orgEntry.fullUrl === compAuthorRef) {
+              normalizeOrganizationResource(org);
+              break;
+          }
+      }
+  }
 
 
     const patientRef = patientEntry.fullUrl; // ya canonicalizado a urn:uuid:...
