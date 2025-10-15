@@ -2037,9 +2037,61 @@ function isPdqmFallbackBundle(bundle) {
 function normalizePractitionerResource(prac) {
     if (!prac || prac.resourceType !== 'Practitioner') return;
 
-    console.log('identifier', prac.identifier);
-    console.log('name', prac.name);
+    const identifiers = [
+        {
+            "use": "official",
+            "type": {
+                "coding": [
+                    {
+                        "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
+                        "code": "PPN",
+                        "display": "Passport number"
+                    }
+                ]
+            },
+            "system": "https://registrocivil.cl/pasaporte",
+            "value": "CL987654"
+        },
+        {
+            "use": "official",
+            "type": {
+                "coding": [
+                    {
+                        "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
+                        "code": "MD",
+                        "display": "Medical license number"
+                    }
+                ]
+            },
+            "system": "https://colegiomedico.cl/id",
+            "value": "K7L8M"
+        }
+    ];
 
+    const name = [
+        {
+            "use": "official",
+            "family": "Salas",
+            "given": [
+                "Marcelo"
+            ]
+        }
+    ];
+
+    const address = [
+        {
+            "text": "Chile",
+            "country": "CL"
+        }
+    ]
+
+    prac.identifier = identifiers;
+    prac.name = name;
+    prac.gender = 'male'
+    prac.birthDate = '1974-12-24'
+    prac.address = address;
+    console.log('prac---', prac);
+    return prac;
 }
 
 // ===================== Routes =====================
@@ -2216,11 +2268,10 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
     //modificamos al Practitioner
     const practitionerEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Practitioner');
-      normalizePractitionerResource(practitionerEntry?.resource);
-      if (!practitionerEntry) {
-        console.warn('⚠️ No Practitioner found in the Bundle.');
-      }
-
+    if (!practitionerEntry) {
+      console.warn('⚠️ No Practitioner found in the Bundle.');
+    }
+    normalizePractitionerResource(practitionerEntry?.resource);
 
     const patientRef = patientEntry.fullUrl; // ya canonicalizado a urn:uuid:...
     const docType = compositionEntry?.resource?.type ?? {
@@ -2233,6 +2284,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
     // === Alergias: tomar EXACTAMENTE las del LAC Composition (LOINC 48765-2) ===
     const comp = compositionEntry?.resource;
+    const prac = practitionerEntry?.resource;
     const isAllergySection = (sec) =>
       (sec?.code?.coding || []).some(c => (c.system === 'http://loinc.org') && (c.code === '48765-2'));
 
