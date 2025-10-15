@@ -1467,13 +1467,6 @@ function fixBundleValidationIssues(summaryBundle) {
     }
   }
 
-  //modificamos al Practitioner
-    const practitionerEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Practitioner');
-    if (practitionerEntry?.resource) {
-        console.log('Sanitizing Practitioner identifiers...',practitionerEntry.resource);
-    }
-
-
   // 1. Corregir Composition - asegurar ID y custodian (LAC Bundle)
   summaryBundle.type = summaryBundle.type || 'document';
 
@@ -2213,6 +2206,12 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const bundleUrn = `urn:uuid:${originalBundleId}`;
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
+    //modificamos al Practitioner
+    const practitionerEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Practitioner');
+    console.log('🧑‍⚕️ Practitioner found:', practitionerEntry );
+
+
+
     const patientRef = patientEntry.fullUrl; // ya canonicalizado a urn:uuid:...
     const docType = compositionEntry?.resource?.type ?? {
       coding: [{ system: 'http://loinc.org', code: '60591-5', display: 'Patient Summary Document' }]
