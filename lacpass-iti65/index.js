@@ -1563,7 +1563,9 @@ function fixBundleValidationIssues(summaryBundle) {
     const pastIllnessSection = compositionEntry.resource.section.find(s => 
       s.code?.coding?.some(c => c.code === '11348-0')
     );
-    
+
+    console.log('🔧 Corrigiendo sección de Historial de Enfermedades Pasadas...',pastIllnessSection);
+
     if (pastIllnessSection) {
       // Agregar div requerido al text.div
         pastIllnessSection.text.div = '<div xmlns="http://www.w3.org/1999/xhtml"><h5>Historial de Enfermedades Pasadas</h5><p>Condiciones médicas previas del paciente.</p></div>';
