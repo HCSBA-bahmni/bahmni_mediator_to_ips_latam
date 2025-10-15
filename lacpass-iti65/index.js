@@ -1566,9 +1566,7 @@ function fixBundleValidationIssues(summaryBundle) {
     
     if (pastIllnessSection) {
       // Agregar div requerido al text.div
-      if (pastIllnessSection.text && !pastIllnessSection.text.div) {
         pastIllnessSection.text.div = '<div xmlns="http://www.w3.org/1999/xhtml"><h5>Historial de Enfermedades Pasadas</h5><p>Condiciones médicas previas del paciente.</p></div>';
-      }
       
       // Corregir display del código LOINC
       const loincCoding = pastIllnessSection.code.coding.find(c => c.system === 'http://loinc.org' && c.code === '11348-0');
