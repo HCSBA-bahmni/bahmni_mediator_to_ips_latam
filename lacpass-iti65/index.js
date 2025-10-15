@@ -1413,71 +1413,97 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
 
 // ===================== Función para corregir Bundle - INTEGRADA =====================
 function fixBundleValidationIssues(summaryBundle) {
-  if (!summaryBundle?.entry || !Array.isArray(summaryBundle.entry)) return;
+  console.log('🔧 [INICIO] fixBundleValidationIssues');
+
+  if (!summaryBundle?.entry || !Array.isArray(summaryBundle.entry)) {
+    console.warn('⚠️ Bundle vacío o sin entries');
+    return;
+  }
+
+  console.log(`📦 Bundle con ${summaryBundle.entry.length} entries`);
 
   // 0) QUITAR narrativeLink en recursos IPS con slicing cerrado
+  console.log('🧹 [ETAPA 0] Eliminando narrativeLink extensions...');
   for (const e of summaryBundle.entry) {
     const r = e.resource;
     if (!r) continue;
-    // Aplicamos a tipos que el validador reportó: AllergyIntolerance, MedicationStatement y Condition
+
     if (['AllergyIntolerance','MedicationStatement','Condition','Immunization'].includes(r.resourceType)) {
+      console.log(`  - Procesando ${r.resourceType}/${r.id || 'sin-id'}`);
       stripNarrativeLinkExtensions(r);
     }
-    // LIMPIEZA NUEVA: AllergyIntolerance, Medication y Practitioner
-    if (r?.resourceType === 'AllergyIntolerance') sanitizeAllergyIntolerance(r);
+
+    if (r?.resourceType === 'AllergyIntolerance') {
+      console.log(`  - Sanitizando AllergyIntolerance/${r.id || 'sin-id'}`);
+      sanitizeAllergyIntolerance(r);
+    }
     if (r.resourceType === 'Medication') {
+      console.log(`  - Sanitizando Medication/${r.id || 'sin-id'}`);
       sanitizeMedicationResource(r);
     }
     if (r.resourceType === 'Practitioner') {
+      console.log(`  - Sanitizando Practitioner/${r.id || 'sin-id'}`);
       sanitizePractitionerIdentifiers(r);
     }
   }
 
-  // Las URL se normalizan más abajo con applyUrlModeToBundle(), evitando doble canonicalización.
-
   // === Post-canonicalización: Patient
+  console.log('👤 [ETAPA 1] Procesando Patient...');
   const patientEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
+
   if (patientEntry?.resource) {
-    // CRÍTICO: Aplicar fixPatientIdentifiers ANTES de cualquier otra validación
+    console.log(`  - Patient encontrado: ${patientEntry.resource.id || 'sin-id'}`);
+    console.log('  - Aplicando fixPatientIdentifiers...');
     fixPatientIdentifiers(summaryBundle);
-    
-    // Validar que el Patient tenga al menos un identifier con URN OID válido
-    const hasValidOidIdentifier = patientEntry.resource.identifier?.some(id => 
+
+    const hasValidOidIdentifier = patientEntry.resource.identifier?.some(id =>
       isUrnOid(id.system) && id.value && id.type?.coding?.some(c => c.code === 'MR' || c.code === 'PPN')
     );
-    
+
+    console.log(`  - Identifiers válidos con URN OID: ${hasValidOidIdentifier}`);
+
     if (!hasValidOidIdentifier) {
       console.warn('⚠️ Patient no tiene identifiers URN OID válidos después de fixPatientIdentifiers');
-      // Forzar creación de un identifier básico
+      console.log('  - Forzando creación de identifier básico...');
       patientEntry.resource.identifier = [{
-        use: 'usual',                                 // MR debe ser 'usual'
+        use: 'usual',
         type: {
           coding: [{
             system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
             code: 'MR'
           }]
         },
-        system: toUrnOid('2.16.152'), // OID genérico normalizado a urn:oid.<...>
+        system: toUrnOid('2.16.152'),
         value: patientEntry.resource.id || 'unknown'
       }];
+      console.log(`  - Identifier creado: ${JSON.stringify(patientEntry.resource.identifier[0])}`);
     }
 
+    console.log('  - Agregando perfiles LAC e IPS...');
     ensureLacPatientProfile(patientEntry.resource);
     ensureIpsPatientProfile(patientEntry.resource);
+
     if (Array.isArray(patientEntry.resource.address)) {
+      console.log(`  - Normalizando ${patientEntry.resource.address.length} direcciones...`);
       patientEntry.resource.address.forEach(a => {
         const v = String(a.country || '').trim().toUpperCase();
         if (v === 'CHILE' || v === 'CHILE ' || v === 'CL ') a.country = 'CL';
       });
     }
+  } else {
+    console.warn('⚠️ No se encontró Patient en el Bundle');
   }
 
-  // 1. Corregir Composition - asegurar ID y custodian (LAC Bundle)
+  // 1. Corregir Composition
+  console.log('📄 [ETAPA 2] Procesando Composition...');
   summaryBundle.type = summaryBundle.type || 'document';
+  console.log(`  - Bundle.type: ${summaryBundle.type}`);
 
   const compositionEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
+
   if (compositionEntry?.resource) {
-    // ID del Composition DEBE empatar con el fullUrl (soporta urn|relative|absolute)
+    console.log(`  - Composition encontrado: ${compositionEntry.resource.id || 'sin-id'}`);
+
     const fu = String(compositionEntry.fullUrl || '');
     let compId = null;
     if (fu.startsWith('urn:uuid:')) {
@@ -1486,154 +1512,185 @@ function fixBundleValidationIssues(summaryBundle) {
       const parts = fu.split('/').filter(Boolean);
       compId = parts[parts.length - 1] || null;
     }
-    if (compId) compositionEntry.resource.id = compId;
 
-    // Asegurar custodian (requerido por el perfil lac-composition)
+    if (compId) {
+      console.log(`  - Ajustando Composition.id a: ${compId}`);
+      compositionEntry.resource.id = compId;
+    }
+
     if (!compositionEntry.resource.custodian) {
+      console.log('  - Composition sin custodian, buscando Organization...');
       const orgEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Organization');
       if (orgEntry) {
-        compositionEntry.resource.custodian = {
-          reference: orgEntry.fullUrl || `Organization/${orgEntry.resource.id}`
-        };
+        const custodianRef = orgEntry.fullUrl || `Organization/${orgEntry.resource.id}`;
+        console.log(`  - Asignando custodian: ${custodianRef}`);
+        compositionEntry.resource.custodian = { reference: custodianRef };
+      } else {
+        console.warn('⚠️ No se encontró Organization para custodian');
       }
     }
 
-    // Perfiles canónicos
+    console.log('  - Agregando perfiles LAC...');
     ensureLacCompositionProfile(compositionEntry.resource);
     ensureLacBundleProfile(summaryBundle);
 
-    // Sujeto del Composition -> Patient
     const patEntryForComp = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
+    console.log('  - Asegurando Composition.subject...');
     ensureCompositionSubject(compositionEntry.resource, patEntryForComp);
 
-    // Secciones obligatorias (garantiza al menos una entry válida por slice)
-    // Alergias: LOINC 48765-2 → AllergyIntolerance
+    console.log('  - Verificando secciones obligatorias...');
+    console.log('    • Alergias (48765-2)...');
     ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.ALLERGIES_SECTION, ['AllergyIntolerance']);
 
-    // Problemas activos/lista de problemas: LOINC 11450-4 → Condition
+    console.log('    • Problemas (11450-4)...');
     ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.PROBLEMS_SECTION, ['Condition']);
 
-    // Medicación: LOINC 10160-0 → MedicationStatement o MedicationRequest
+    console.log('    • Medicación (10160-0)...');
     ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.MEDICATIONS_SECTION, ['MedicationStatement','MedicationRequest']);
 
-    // Antecedentes (Past Illness Hx): LOINC 11348-0 → Condition
+    console.log('    • Antecedentes (11348-0)...');
     ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.PAST_ILLNESS_SECTION, ['Condition']);
+  } else {
+    console.error('❌ No se encontró Composition en el Bundle');
   }
 
-  // 2.bis Deduplicar y filtrar entries por tipo permitido en cada sección IPS
+  // 2.bis Deduplicar y filtrar entries
+  console.log('🔍 [ETAPA 3] Deduplicando entries en secciones...');
   if (compositionEntry?.resource?.section) {
-    // Mapa loinc -> tipos permitidos
     const sectionAllowedTypes = {
       [LOINC_CODES.ALLERGIES_SECTION]: ['AllergyIntolerance'],
       [LOINC_CODES.MEDICATIONS_SECTION]: ['MedicationStatement','MedicationRequest'],
       [LOINC_CODES.PROBLEMS_SECTION]: ['Condition'],
       [LOINC_CODES.PAST_ILLNESS_SECTION]: ['Condition']
     };
-    compositionEntry.resource.section.forEach(sec => {
+
+    compositionEntry.resource.section.forEach((sec, idx) => {
       const loinc = (sec.code?.coding || []).find(c => c.system === 'http://loinc.org')?.code;
       const allowed = sectionAllowedTypes[loinc] || null;
+      console.log(`  - Sección ${idx}: LOINC ${loinc}, tipos permitidos: ${allowed?.join(', ') || 'cualquiera'}`);
+
       if (!Array.isArray(sec.entry)) return;
+
+      const originalCount = sec.entry.length;
       const seen = new Set();
+
       sec.entry = sec.entry.filter(e => {
         const ref = e?.reference || '';
         if (!ref) return false;
-        if (seen.has(ref)) return false;     // dedupe
-        // Validar que la referencia resuelva a un recurso permitido
+        if (seen.has(ref)) return false;
+
         const resolved = summaryBundle.entry?.find(x => {
           const fu = x.fullUrl || (x.resource?.id ? `${x.resource.resourceType}/${x.resource.id}` : '');
           return fu === ref || fu?.endsWith(`/${ref.split('/').pop()}`);
         })?.resource;
+
         if (!resolved) return false;
         if (allowed && !allowed.includes(resolved.resourceType)) return false;
+
         seen.add(ref);
         return true;
       });
+
+      console.log(`    Filtradas: ${originalCount} → ${sec.entry.length} entries`);
     });
   }
 
-  // 2. Perfiles IPS en recursos referenciados por las secciones para que pasen los discriminadores
+  // 2. Perfiles IPS
+  console.log('🏷️ [ETAPA 4] Agregando perfiles IPS...');
+  let ipsProfileCount = 0;
   for (const e of summaryBundle.entry) {
     const r = e.resource;
     if (!r) continue;
 
-    // Alergias, Medicación, Problemas (activos/pasados)…
     if (['AllergyIntolerance','MedicationStatement','MedicationRequest','Condition','Organization']
         .includes(r.resourceType)) {
       ensureIpsProfile(r);
+      ipsProfileCount++;
+    }
+  }
+  console.log(`  - Perfiles IPS agregados: ${ipsProfileCount} recursos`);
+
+  console.log('✅ Bundle post-processing completed');
+
+  // 3. Corregir sección "Historial de Enfermedades Pasadas"
+  console.log('📋 [ETAPA 5] Corrigiendo sección Past Illness...');
+  if (compositionEntry?.resource?.section) {
+    const pastIllnessSection = compositionEntry.resource.section.find(s =>
+      s.code?.coding?.some(c => c.code === '11348-0')
+    );
+
+    if (pastIllnessSection) {
+      console.log('  - Sección encontrada, agregando div y corrigiendo display...');
+      pastIllnessSection.text.div = '<div xmlns="http://www.w3.org/1999/xhtml"><h5>Historial de Enfermedades Pasadas</h5><p>Condiciones médicas previas del paciente.</p></div>';
+
+      const loincCoding = pastIllnessSection.code.coding.find(c => c.system === 'http://loinc.org' && c.code === '11348-0');
+      if (loincCoding && loincCoding.display === 'History of Past illness Narrative') {
+        loincCoding.display = 'History of Past illness note';
+        console.log('  - Display corregido');
+      }
     }
   }
 
-
-  console.log('✅ Bundle post-processing completed',compositionEntry?.resource?.section);
-
-    // 3. Corregir sección "Historial de Enfermedades Pasadas"
-    if (compositionEntry?.resource?.section) {
-        const pastIllnessSection = compositionEntry.resource.section.find(s =>
-            s.code?.coding?.some(c => c.code === '11348-0')
-        );
-
-        if (pastIllnessSection) {
-            // Agregar div requerido al text.div
-            pastIllnessSection.text.div = '<div xmlns="http://www.w3.org/1999/xhtml"><h5>Historial de Enfermedades Pasadas</h5><p>Condiciones médicas previas del paciente.</p></div>';
-
-            // Corregir display del código LOINC
-            const loincCoding = pastIllnessSection.code.coding.find(c => c.system === 'http://loinc.org' && c.code === '11348-0');
-            if (loincCoding && loincCoding.display === 'History of Past illness Narrative') {
-                loincCoding.display = 'History of Past illness note';
-            }
-        }
-    }
-
-  // 3. Continuar con patientEntry ya procesado en sección 1)
-
-  // 4. Corregir address.country del Patient para cumplir ISO 3166
+  // 4. Corregir address.country
+  console.log('🌍 [ETAPA 6] Corrigiendo códigos de país...');
   if (patientEntry?.resource?.address) {
-    patientEntry.resource.address.forEach(addr => {
+    patientEntry.resource.address.forEach((addr, idx) => {
       if (addr.country === 'Chile') {
-        addr.country = 'CL'; // Código ISO 3166-1 alpha-2
+        console.log(`  - Dirección ${idx}: Chile → CL`);
+        addr.country = 'CL';
       }
     });
   }
 
-  // 5. Corregir Conditions - filtrar OpenMRS y codings sin system
+  // 5. Corregir Conditions
+  console.log('🩺 [ETAPA 7] Procesando Conditions...');
+  let conditionsProcessed = 0;
   summaryBundle.entry?.forEach(entry => {
     if (entry.resource?.resourceType === 'Condition' && entry.resource.code?.coding) {
-      // Filtrar codings sin system y OpenMRS (problemático para validación IPS/LAC)
+      const originalCount = entry.resource.code.coding.length;
       entry.resource.code.coding = entry.resource.code.coding
         .filter(c => !!c.system && c.system !== 'http://openmrs.org/concepts');
-      
-      // Si quedan codings, ordenar con SNOMED primero
+
+      console.log(`  - Condition/${entry.resource.id || 'sin-id'}: ${originalCount} → ${entry.resource.code.coding.length} codings`);
+
       if (entry.resource.code.coding.length > 0) {
         entry.resource.code.coding = sortCodingsPreferred(entry.resource.code.coding);
       }
+      conditionsProcessed++;
     }
   });
+  console.log(`  - Total Conditions procesados: ${conditionsProcessed}`);
 
-  // 6. Corregir MedicationStatement - agregar system y effective[x]
+  // 6. Corregir MedicationStatement
+  console.log('💊 [ETAPA 8] Procesando MedicationStatements...');
+  let medStatementsProcessed = 0;
   summaryBundle.entry?.forEach(entry => {
     if (entry.resource?.resourceType === 'MedicationStatement') {
-      // Agregar system a medicationCodeableConcept.coding
+      console.log(`  - MedicationStatement/${entry.resource.id || 'sin-id'}`);
+
       if (entry.resource.medicationCodeableConcept?.coding) {
         entry.resource.medicationCodeableConcept.coding.forEach(coding => {
           if (!coding.system) {
+            console.log('    • Agregando system absent-unknown');
             coding.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
           }
-          // Refuerzo específico para no-medication-info
+
           if ((coding.code === 'no-medication-info') || (coding.display === 'No information about medications')) {
+            console.log('    • Normalizando no-medication-info');
             coding.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
             coding.code = 'no-medication-info';
             if (!coding.display) coding.display = 'No information about medications';
           }
         });
       }
-      
-      // Agregar effective[x] requerido por el perfil IPS
+
       if (!entry.resource.effectiveDateTime && !entry.resource.effectivePeriod) {
+        console.log('    • Agregando effectiveDateTime');
         entry.resource.effectiveDateTime = new Date().toISOString();
       }
+      medStatementsProcessed++;
     }
 
-    // Refuerzo: filtrar OpenMRS y ordenar codings de Condition
     if (entry.resource?.resourceType === 'Condition' && Array.isArray(entry.resource.code?.coding)) {
       entry.resource.code.coding = entry.resource.code.coding
         .filter(c => !!c.system && c.system !== 'http://openmrs.org/concepts');
@@ -1642,116 +1699,141 @@ function fixBundleValidationIssues(summaryBundle) {
       }
     }
   });
+  console.log(`  - Total MedicationStatements procesados: ${medStatementsProcessed}`);
 
-  // 6.bis Corregir AllergyIntolerance - absent/unknown 'no-allergy-info'
+  // 6.bis AllergyIntolerance
+  console.log('🤧 [ETAPA 9] Procesando AllergyIntolerances...');
+  let allergiesProcessed = 0;
   summaryBundle.entry?.forEach(entry => {
     const res = entry.resource;
     if (res?.resourceType === 'AllergyIntolerance' && Array.isArray(res.code?.coding)) {
-      // 2.1 Filtrar codings sin system y los locales OpenMRS
+      console.log(`  - AllergyIntolerance/${res.id || 'sin-id'}`);
+
+      const originalCount = res.code.coding.length;
       res.code.coding = res.code.coding.filter(c =>
         !!c.system && c.system !== 'http://openmrs.org/concepts'
       );
-      // 2.2 Si quedan codings, ordenar con SNOMED primero
+      console.log(`    • Codings: ${originalCount} → ${res.code.coding.length}`);
+
       if (res.code.coding.length > 0) {
         res.code.coding = sortCodingsPreferred(res.code.coding);
       }
-      // 2.3 Refuerzo absent/unknown (mantener)
+
       res.code.coding.forEach(c => {
         if (c.code === 'no-allergy-info' || c.display === 'No information about allergies') {
+          console.log('    • Normalizando no-allergy-info');
           c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
           c.code = 'no-allergy-info';
           if (!c.display) c.display = 'No information about allergies';
         }
       });
+      allergiesProcessed++;
     }
   });
+  console.log(`  - Total AllergyIntolerances procesados: ${allergiesProcessed}`);
 
-  // 6.ter - Corregir Immunization - absent/unknown 'no-immunization-info'
+  // 6.ter Immunization
+  console.log('💉 [ETAPA 10] Procesando Immunizations...');
+  let immunizationsProcessed = 0;
   summaryBundle.entry?.forEach(entry => {
     const res = entry.resource;
     if (res?.resourceType === 'Immunization' && res.vaccineCode?.coding?.length) {
+      console.log(`  - Immunization/${res.id || 'sin-id'}`);
+
       res.vaccineCode.coding.forEach(c => {
         if (!c.system) {
+          console.log('    • Agregando system absent-unknown');
           c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
         }
         if (c.code === 'no-immunization-info' || c.display === 'No information about immunizations') {
+          console.log('    • Normalizando no-immunization-info');
           c.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
           c.code = 'no-immunization-info';
           if (!c.display) c.display = 'No information about immunizations';
         }
       });
+      immunizationsProcessed++;
     }
   });
+  console.log(`  - Total Immunizations procesados: ${immunizationsProcessed}`);
 
-  // 7. Asegurar que todas las referencias internas estén en el Bundle
+  // 7. Referencias internas
+  console.log('🔗 [ETAPA 11] Verificando referencias internas...');
   const allFullUrls = new Set(summaryBundle.entry?.map(e => e.fullUrl) || []);
-  
+  console.log(`  - Total fullUrls en Bundle: ${allFullUrls.size}`);
+
   summaryBundle.entry?.forEach(entry => {
-    // Revisar todas las referencias en el recurso
     checkAndFixReferences(entry.resource, allFullUrls, summaryBundle);
   });
 
-  // 7.bis. Sanear meta.source que empiecen con '#' (problemático para validación)
+  // 7.bis meta.source
+  console.log('🧹 [ETAPA 12] Limpiando meta.source problemáticos...');
+  let metaSourceCleaned = 0;
   for (const e of summaryBundle.entry || []) {
     const r = e.resource;
     if (r?.meta?.source && typeof r.meta.source === 'string' && r.meta.source.startsWith('#')) {
-      // Opción A: borrar
+      console.log(`  - Eliminando meta.source de ${r.resourceType}/${r.id || 'sin-id'}: ${r.meta.source}`);
       delete r.meta.source;
-
-      // O si prefieres Opción B: convertir a una URI canónica del sistema
-      // r.meta.source = asFhirBase(process.env.ABSOLUTE_FULLURL_BASE || process.env.FHIR_NODE_URL || 'urn:uuid:' + r.id);
+      metaSourceCleaned++;
     }
   }
+  console.log(`  - Total meta.source eliminados: ${metaSourceCleaned}`);
 
-  // 8) Refuerzo: Composition.meta.profile debe contener lac-composition (racsel)
+  // 8) Perfil lac-composition
+  console.log('📌 [ETAPA 13] Asegurando perfil lac-composition...');
   const LAC_COMPOSITION = LAC_PROFILES.COMPOSITION;
   if (compositionEntry?.resource) {
     compositionEntry.resource.meta = compositionEntry.resource.meta || {};
     compositionEntry.resource.meta.profile = Array.isArray(compositionEntry.resource.meta.profile)
       ? compositionEntry.resource.meta.profile
       : [];
+
     if (!compositionEntry.resource.meta.profile.includes(LAC_COMPOSITION)) {
+      console.log(`  - Agregando perfil: ${LAC_COMPOSITION}`);
       compositionEntry.resource.meta.profile.push(LAC_COMPOSITION);
+    } else {
+      console.log('  - Perfil ya existe');
     }
   }
 
-  // 9) NUEVAS MEJORAS LAC: Patient identifiers con URN OIDs (solo si NO hay identifiers)
-  const natOid = LAC_NATIONAL_ID_SYSTEM_OID;   // p.ej. 1.2.36.146.595.217.0.1
-  const ppnOid = LAC_PASSPORT_ID_SYSTEM_OID;   // p.ej. 2.16.840.1.113883.4.1
-  // Reutilizar patientEntry ya definido anteriormente
+  // 9) Patient identifiers URN OID
+  console.log('🆔 [ETAPA 14] Verificando Patient identifiers URN OID...');
+  const natOid = LAC_NATIONAL_ID_SYSTEM_OID;
+  const ppnOid = LAC_PASSPORT_ID_SYSTEM_OID;
+
   if (patientEntry?.resource && (natOid || ppnOid)) {
     const patient = patientEntry.resource;
-    // Si ya hay identifiers (y fixPatientIdentifiers ya corrió), no rehacerlos
+
     if (Array.isArray(patient.identifier) && patient.identifier.length > 0) {
-      // no-op: ya normalizados por fixPatientIdentifiers
+      console.log(`  - Patient ya tiene ${patient.identifier.length} identifiers`);
     } else {
-      // Preservar identifiers originales (si los hubiera) y construir por defecto
+      console.log('  - Creando identifiers desde cero...');
       const originalIds = [...(patient.identifier || [])];
       patient.identifier = [];
-      
-      // Buscar identifier nacional (MR) existente
-      const nationalId = originalIds.find(id => 
-        id.type?.coding?.some(c => c.code === 'MR') || 
+
+      const nationalId = originalIds.find(id =>
+        id.type?.coding?.some(c => c.code === 'MR') ||
         id.use === 'official' ||
         id.system?.includes('rut') || id.system?.includes('cedula')
       );
-      
+
       if (natOid && nationalId) {
+        console.log(`  - Agregando national ID: ${nationalId.value}`);
         patient.identifier.push({
-          use: 'usual',                                 // MR debe ser 'usual'
+          use: 'usual',
           type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MR' }] },
           system: toUrnOid(natOid),
           value: nationalId.value || 'unknown'
         });
       }
-      
-      // Buscar identifier de pasaporte (PPN) existente
-      const passportId = originalIds.find(id => 
-        id.type?.coding?.some(c => c.code === 'PPN') || 
+
+      const passportId = originalIds.find(id =>
+        id.type?.coding?.some(c => c.code === 'PPN') ||
         id.system?.includes('passport') || id.system?.includes('pasaporte')
       );
-      
+
       if (ppnOid && passportId) {
+        console.log(`  - Agregando passport ID: ${passportId.value}`);
         patient.identifier.push({
           use: 'official',
           type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'PPN' }] },
@@ -1759,12 +1841,12 @@ function fixBundleValidationIssues(summaryBundle) {
           value: passportId.value || 'unknown'
         });
       }
-      
-      // Si no encontramos identifiers apropiados, crear con valores por defecto
+
       if (patient.identifier.length === 0 && natOid) {
         const defaultValue = originalIds[0]?.value || `ID-${patient.id || 'unknown'}`;
+        console.log(`  - Creando identifier por defecto: ${defaultValue}`);
         patient.identifier.push({
-          use: 'usual',                                 // MR debe ser 'usual'
+          use: 'usual',
           type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'MR' }] },
           system: toUrnOid(natOid),
           value: defaultValue
@@ -1773,22 +1855,28 @@ function fixBundleValidationIssues(summaryBundle) {
     }
   }
 
-  // 10) Corregir país a códigos ISO2
+  // 10) País ISO2
+  console.log('🌎 [ETAPA 15] Aplicando fixPatientCountry...');
   fixPatientCountry(summaryBundle);
 
-  // 11) Asegurar MedicationStatement.effectiveDateTime
+  // 11) MedicationStatement.effectiveDateTime
+  console.log('⏰ [ETAPA 16] Verificando MedicationStatement.effectiveDateTime...');
+  let effectiveDatetimeAdded = 0;
   summaryBundle.entry?.forEach(entry => {
     const res = entry.resource;
     if (res?.resourceType === 'MedicationStatement') {
       if (!res.effectiveDateTime && !res.effectivePeriod) {
+        console.log(`  - Agregando effectiveDateTime a ${res.id || 'sin-id'}`);
         res.effectiveDateTime = new Date().toISOString();
+        effectiveDatetimeAdded++;
       }
     }
   });
+  console.log(`  - Total effectiveDateTime agregados: ${effectiveDatetimeAdded}`);
 
-  // 12) VALIDACIÓN FINAL: Verificar que los slices críticos estén correctamente configurados
+  // 12) VALIDACIÓN FINAL
+  console.log('✅ [ETAPA 17] Validación final...');
   const finalValidation = () => {
-    // Verificar Bundle.entry[0] = Composition con perfil LAC
     const comp = summaryBundle.entry?.[0];
     if (comp?.resource?.resourceType !== 'Composition') {
       console.error('❌ Bundle.entry[0] debe ser Composition');
@@ -1796,10 +1884,11 @@ function fixBundleValidationIssues(summaryBundle) {
     }
     if (!comp.resource.meta?.profile?.includes('http://lacpass.racsel.org/StructureDefinition/lac-composition')) {
       console.error('❌ Composition no tiene perfil lac-composition');
+      console.error(`   Perfiles actuales: ${comp.resource.meta?.profile?.join(', ') || 'ninguno'}`);
       return false;
     }
+    console.log('✓ Composition en entry[0] con perfil LAC correcto');
 
-    // Verificar Bundle.entry[1] = Patient con perfiles LAC e IPS y URN OID
     const pat = summaryBundle.entry?.[1];
     if (pat?.resource?.resourceType !== 'Patient') {
       console.error('❌ Bundle.entry[1] debe ser Patient');
@@ -1807,27 +1896,32 @@ function fixBundleValidationIssues(summaryBundle) {
     }
     if (!pat.resource.meta?.profile?.includes('http://lacpass.racsel.org/StructureDefinition/lac-patient')) {
       console.error('❌ Patient no tiene perfil lac-patient');
+      console.error(`   Perfiles actuales: ${pat.resource.meta?.profile?.join(', ') || 'ninguno'}`);
       return false;
     }
+    console.log('✓ Patient en entry[1] con perfil LAC correcto');
+
     const hasValidIdentifier = pat.resource.identifier?.some(id => isUrnOid(id.system));
     if (!hasValidIdentifier) {
       console.error('❌ Patient no tiene identifiers con URN OID válidos');
-      console.error('Identifiers:', pat.resource.identifier);
+      console.error('   Identifiers:', JSON.stringify(pat.resource.identifier, null, 2));
       return false;
     }
+    console.log(`✓ Patient tiene ${pat.resource.identifier.length} identifier(s) con URN OID válido`);
 
-
-    console.log('🔍 Validando slices obligatorios en Composition...',summaryBundle);
-
+    console.log('🔍 Validando slices obligatorios en Composition...');
     return true;
   };
 
   const isValid = finalValidation();
+
   if (isValid) {
-    console.log('✅ Bundle LAC validation passed');
+    console.log('✅ [FIN] Bundle LAC validation passed');
   } else {
-    console.error('❌ Bundle LAC validation failed - check console for details');
+    console.error('❌ [FIN] Bundle LAC validation failed - check console for details');
   }
+
+  console.log('═'.repeat(80));
 }
 
 // Función auxiliar para verificar y corregir referencias
