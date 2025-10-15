@@ -2034,6 +2034,14 @@ function isPdqmFallbackBundle(bundle) {
     ) === true;
 }
 
+function normalizePractitionerResource(prac) {
+    if (!prac || prac.resourceType !== 'Practitioner') return;
+
+    console.log('identifier', prac.identifier);
+    console.log('name', prac.name);
+
+}
+
 // ===================== Routes =====================
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
@@ -2208,8 +2216,10 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
     //modificamos al Practitioner
     const practitionerEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Practitioner');
-    console.log('🧑‍⚕️ Practitioner found:', practitionerEntry );
-
+      normalizePractitionerResource(practitionerEntry?.resource);
+      if (!practitionerEntry) {
+        console.warn('⚠️ No Practitioner found in the Bundle.');
+      }
 
 
     const patientRef = patientEntry.fullUrl; // ya canonicalizado a urn:uuid:...
