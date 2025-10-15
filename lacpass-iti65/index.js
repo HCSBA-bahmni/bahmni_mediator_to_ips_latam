@@ -2124,6 +2124,9 @@ function normalizeOrganizationResource(orga) {
         }
     ];
 
+    orga.meta = {
+        "profile": [ "http://lacpass.racsel.org/StructureDefinition/lac-organization" ]
+    };
     orga.identifier = identifiers;
     orga.name = 'Clínica Las Condes';
     orga.address = address;
@@ -2314,6 +2317,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
     if (!organizationEntry) {
       console.warn('⚠️ No Organization found in the Bundle.');
     }
+    console.log('organizationEntry---->', organizationEntry, organizationEntry.length)
+
     normalizeOrganizationResource(organizationEntry?.resource);
 
     const patientRef = patientEntry.fullUrl; // ya canonicalizado a urn:uuid:...
