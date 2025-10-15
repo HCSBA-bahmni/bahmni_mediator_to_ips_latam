@@ -2336,6 +2336,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
     const comp = compositionEntry?.resource;
     const isAllergySection = (sec) =>
       (sec?.code?.coding || []).some(c => (c.system === 'http://loinc.org') && (c.code === '48765-2'));
+    const isHistroySection = (sec) =>
+      (sec?.code?.coding || []).some(c => (c.system === 'http://loinc.org') && (c.code === '11348-0'));
 
     const byRef = (ref) => {
       // admite absolute, relative y urn:uuid
@@ -2368,6 +2370,13 @@ app.post('/lacpass/_iti65', async (req, res) => {
         if (ai && ai.resourceType === 'AllergyIntolerance') lacAllergies.push(ai);
       }
     }
+
+    const HistorySections = (comp?.section || []).filter(isHistroySection);
+    console.log('Secciones de historia encontradas:', HistorySections);
+      for (const sec of HistorySections) {
+          sec.text.div = `<div xmlns="http://www.w3.org/1999/xhtml">Sección de historia clínica</div>`;
+      }
+
     // dedupe por id
     const seenAI = new Set();
     lacAllergies = lacAllergies.filter(ai => {
