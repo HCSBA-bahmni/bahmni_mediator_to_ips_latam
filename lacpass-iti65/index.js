@@ -2170,9 +2170,11 @@ app.post('/lacpass/_iti65', async (req, res) => {
   }
 
   try {
+      console.log('🔍 Starting Bundle post-processing...');
     // ========= NUEVO: Corregir problemas de validación ANTES de PDQm =========
     fixBundleValidationIssues(summaryBundle);
 
+    console.log('🔍 Bundle after initial fixes:');
     // ===== Asegurar perfil LAC Bundle desde el inicio =====
     ensureLacBundleProfile(summaryBundle);
     
