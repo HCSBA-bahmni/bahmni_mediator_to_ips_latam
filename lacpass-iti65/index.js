@@ -2209,6 +2209,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
       });
     }
 
+    console.log('🔍 Starting optional PDQm and terminology normalization steps...');
+
     // ========= Paso opcional 1: PDQm =========
     if (isTrue(FEATURE_PDQ_ENABLED)) {
       const patientEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
