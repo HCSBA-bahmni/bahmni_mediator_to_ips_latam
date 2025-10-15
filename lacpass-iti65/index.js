@@ -2315,19 +2315,10 @@ app.post('/lacpass/_iti65', async (req, res) => {
     normalizePractitionerResource(practitionerEntry?.resource);
     //modificamos la Organizacion
    const orgEntries = (summaryBundle.entry || []).filter(e => e.resource?.resourceType === 'Organization');
-   const compAuthorRef = compositionEntry?.resource?.author?.[0]?.reference;
-   console.log('Composition author reference:', compAuthorRef);
-   console.log('Organizations:', orgEntries);
-  if (compAuthorRef) {
-      for (const orgEntry of orgEntries) {
-          const org = orgEntry.resource;
-          if (!org) continue;
-          // si el composition tiene fullUrl del org (ej: urn:uuid:...), comparar también
-          if (orgEntry.fullUrl && orgEntry.fullUrl === compAuthorRef) {
-              normalizeOrganizationResource(org);
-              break;
-          }
-      }
+  for (const orgEntry of orgEntries) {
+      const org = orgEntry.resource;
+      if (!org) continue;
+      normalizeOrganizationResource(org);
   }
 
 

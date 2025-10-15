@@ -1811,6 +1811,120 @@ function updateReferencesInObject(obj, urlMap) {
 }
 
 
+function normalizePractitionerResource(prac) {
+    if (!prac || prac.resourceType !== 'Practitioner') return;
+
+    const identifiers = [
+        {
+            "use": "official",
+            "type": {
+                "coding": [
+                    {
+                        "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
+                        "code": "PPN",
+                        "display": "Passport number"
+                    }
+                ]
+            },
+            "system": "https://registrocivil.cl/pasaporte",
+            "value": "P34567890"
+        },
+        {
+            "use": "official",
+            "type": {
+                "coding": [
+                    {
+                        "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
+                        "code": "PRN",
+                        "display": "Provider number"
+                    }
+                ]
+            },
+            "system": "https://funcionarios.cl/id",
+            "value": "P2Q3R"
+        }
+    ];
+
+    const name = [
+        {
+            "use": "official",
+            "family": "Barrios",
+            "given": [
+                "Gracia"
+            ]
+        }
+    ];
+
+    const address = [
+        {
+            "text": "Chile",
+            "country": "CL"
+        }
+    ]
+
+    const qualifications = [
+        {
+            "code": {
+                "coding": [
+                    {
+                        "system": "http://terminology.hl7.org/CodeSystem/v2-0360/2.7",
+                        "code": "RN",
+                        "display": "Registered Nurse"
+                    }
+                ]
+            }
+        }
+    ]
+
+    prac.identifier = identifiers;
+    prac.name = name;
+    prac.gender = 'female';
+    prac.birthDate = '1927-06-27';
+    prac.qualification = qualifications;
+    return prac;
+}
+function normalizeOrganizationResource(orga) {
+    if (!orga || orga.resourceType !== 'Organization') return;
+
+
+    const identifiers = [
+        {
+            "use": "official",
+            "system": "https://registroorganizaciones.cl/id",
+            "value": "G7H8"
+        }
+    ];
+
+    const name = [
+        {
+            "use": "official",
+            "family": "Salas",
+            "given": [
+                "Marcelo"
+            ]
+        }
+    ];
+
+    const address = [
+        {
+            "line": [
+                "Estoril 450"
+            ],
+            "city": "Región Metropolitana",
+            "country": "CHL"
+        }
+    ];
+
+    orga.meta = {
+        "profile": [ "http://lacpass.racsel.org/StructureDefinition/lac-organization" ]
+    };
+    orga.identifier = identifiers;
+    orga.name = 'Clínica Las Condes';
+    orga.address = address;
+    return orga;
+}
+
+
 // ===================== Route ITI-65 =====================
 app.post('/icvp/_iti65', async (req, res) => {
   let summaryBundle;
@@ -2011,6 +2125,20 @@ app.post('/icvp/_iti65', async (req, res) => {
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
 
+        //modificamos al Practitioner
+        const practitionerEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Practitioner');
+        if (!practitionerEntry) {
+            console.warn('⚠️ No Practitioner found in the Bundle.');
+        }
+        normalizePractitionerResource(practitionerEntry?.resource);
+        //modificamos la Organizacion
+        const orgEntries = (summaryBundle.entry || []).filter(e => e.resource?.resourceType === 'Organization');
+        for (const orgEntry of orgEntries) {
+            const org = orgEntry.resource;
+            if (!org) continue;
+            normalizeOrganizationResource(org);
+        }
+
     if (compositionEntry) {
       //add event
         if (!Array.isArray(compositionEntry.resource.event)) compositionEntry.resource.event = [];
@@ -2033,6 +2161,11 @@ app.post('/icvp/_iti65', async (req, res) => {
         });
       });
     }
+
+
+
+
+
     summaryBundle.entry.forEach(entry => {
       const res = entry.resource;
       if (res.subject?.reference && urlMap.has(res.subject.reference)) {
