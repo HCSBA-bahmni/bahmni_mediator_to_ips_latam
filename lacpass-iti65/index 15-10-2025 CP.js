@@ -1152,8 +1152,6 @@ function sanitizeAllergyIntolerance(ai) {
 
 // --- OPCIONAL: Sanitizar Practitioner.identifier.system no estándar (OMRS) ---
 function sanitizePractitionerIdentifiers(prac) {
-    consolole.log('Sanitizing Practitioner identifiers...',prac);
-
   if (!prac || prac.resourceType !== 'Practitioner') return;
   if (!Array.isArray(prac.identifier)) return;
   prac.identifier.forEach(id => {
