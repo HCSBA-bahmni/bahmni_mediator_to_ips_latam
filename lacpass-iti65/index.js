@@ -1558,6 +1558,9 @@ function fixBundleValidationIssues(summaryBundle) {
     }
   }
 
+
+  console.log('✅ Bundle post-processing completed',compositionEntry?.resource?.section);
+
     // 3. Corregir sección "Historial de Enfermedades Pasadas"
     if (compositionEntry?.resource?.section) {
         const pastIllnessSection = compositionEntry.resource.section.find(s =>
