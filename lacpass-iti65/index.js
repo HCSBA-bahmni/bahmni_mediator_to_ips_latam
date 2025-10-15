@@ -1467,6 +1467,12 @@ function fixBundleValidationIssues(summaryBundle) {
     }
   }
 
+  //modificamos al Practitioner
+    const practitionerEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Practitioner');
+    if (practitionerEntry?.resource) {
+        console.log('Sanitizing Practitioner identifiers...',practitionerEntry.resource);
+    }
+
 
   // 1. Corregir Composition - asegurar ID y custodian (LAC Bundle)
   summaryBundle.type = summaryBundle.type || 'document';
