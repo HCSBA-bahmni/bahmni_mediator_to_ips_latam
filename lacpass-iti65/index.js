@@ -1810,6 +1810,9 @@ function fixBundleValidationIssues(summaryBundle) {
       return false;
     }
 
+
+    console.log('🔍 Validando slices obligatorios en Composition...',summaryBundle);
+
     return true;
   };
 
@@ -2089,8 +2092,6 @@ function normalizePractitionerResource(prac) {
     prac.name = name;
     prac.gender = 'male'
     prac.birthDate = '1974-12-24'
-    prac.address = address;
-    console.log('prac---', prac);
     return prac;
 }
 function normalizeOrganizationResource(orga) {
@@ -2130,7 +2131,6 @@ function normalizeOrganizationResource(orga) {
     orga.identifier = identifiers;
     orga.name = 'Clínica Las Condes';
     orga.address = address;
-    console.log('organization---', orga);
     return orga;
 }
 
@@ -2317,8 +2317,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
     if (!organizationEntry) {
       console.warn('⚠️ No Organization found in the Bundle.');
     }
-    console.log('organizationEntry---->', organizationEntry, organizationEntry.length)
 
+    //me esta actualizando el de la vacuna, no el ultimo
     normalizeOrganizationResource(organizationEntry?.resource);
 
     const patientRef = patientEntry.fullUrl; // ya canonicalizado a urn:uuid:...
@@ -2332,7 +2332,6 @@ app.post('/lacpass/_iti65', async (req, res) => {
 
     // === Alergias: tomar EXACTAMENTE las del LAC Composition (LOINC 48765-2) ===
     const comp = compositionEntry?.resource;
-    const prac = practitionerEntry?.resource;
     const isAllergySection = (sec) =>
       (sec?.code?.coding || []).some(c => (c.system === 'http://loinc.org') && (c.code === '48765-2'));
 
