@@ -2093,6 +2093,43 @@ function normalizePractitionerResource(prac) {
     console.log('prac---', prac);
     return prac;
 }
+function normalizeOrganizationResource(orga) {
+    if (!orga || orga.resourceType !== 'Organization') return;
+
+    const identifiers = [
+        {
+            "use": "official",
+            "system": "https://registroorganizaciones.cl/id",
+            "value": "G7H8"
+        }
+    ];
+
+    const name = [
+        {
+            "use": "official",
+            "family": "Salas",
+            "given": [
+                "Marcelo"
+            ]
+        }
+    ];
+
+    const address = [
+        {
+            "line": [
+                "Estoril 450"
+            ],
+            "city": "Región Metropolitana",
+            "country": "CHL"
+        }
+    ];
+
+    orga.identifier = identifiers;
+    orga.name = 'Clínica Las Condes';
+    orga.address = address;
+    console.log('organization---', orga);
+    return orga;
+}
 
 // ===================== Routes =====================
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
@@ -2272,6 +2309,12 @@ app.post('/lacpass/_iti65', async (req, res) => {
       console.warn('⚠️ No Practitioner found in the Bundle.');
     }
     normalizePractitionerResource(practitionerEntry?.resource);
+    //modificamos la Organizacion
+    const organizationEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Organization');
+    if (!organizationEntry) {
+      console.warn('⚠️ No Organization found in the Bundle.');
+    }
+    normalizeOrganizationResource(organizationEntry?.resource);
 
     const patientRef = patientEntry.fullUrl; // ya canonicalizado a urn:uuid:...
     const docType = compositionEntry?.resource?.type ?? {
