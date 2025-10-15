@@ -1558,25 +1558,23 @@ function fixBundleValidationIssues(summaryBundle) {
     }
   }
 
-  // 3. Corregir sección "Historial de Enfermedades Pasadas" 
-  if (compositionEntry?.resource?.section) {
-    const pastIllnessSection = compositionEntry.resource.section.find(s => 
-      s.code?.coding?.some(c => c.code === '11348-0')
-    );
+    // 3. Corregir sección "Historial de Enfermedades Pasadas"
+    if (compositionEntry?.resource?.section) {
+        const pastIllnessSection = compositionEntry.resource.section.find(s =>
+            s.code?.coding?.some(c => c.code === '11348-0')
+        );
 
-    console.log('🔧 Corrigiendo sección de Historial de Enfermedades Pasadas...',pastIllnessSection);
+        if (pastIllnessSection) {
+            // Agregar div requerido al text.div
+            pastIllnessSection.text.div = '<div xmlns="http://www.w3.org/1999/xhtml"><h5>Historial de Enfermedades Pasadas</h5><p>Condiciones médicas previas del paciente.</p></div>';
 
-    if (pastIllnessSection) {
-      // Agregar div requerido al text.div
-        pastIllnessSection.text.div = '<div xmlns="http://www.w3.org/1999/xhtml"><h5>Historial de Enfermedades Pasadas</h5><p>Condiciones médicas previas del paciente.</p></div>';
-      
-      // Corregir display del código LOINC
-      const loincCoding = pastIllnessSection.code.coding.find(c => c.system === 'http://loinc.org' && c.code === '11348-0');
-      if (loincCoding && loincCoding.display === 'History of Past illness Narrative') {
-        loincCoding.display = 'History of Past illness note';
-      }
+            // Corregir display del código LOINC
+            const loincCoding = pastIllnessSection.code.coding.find(c => c.system === 'http://loinc.org' && c.code === '11348-0');
+            if (loincCoding && loincCoding.display === 'History of Past illness Narrative') {
+                loincCoding.display = 'History of Past illness note';
+            }
+        }
     }
-  }
 
   // 3. Continuar con patientEntry ya procesado en sección 1)
 
