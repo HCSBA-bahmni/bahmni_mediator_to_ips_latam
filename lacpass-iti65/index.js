@@ -2588,6 +2588,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
       // Construir request para patientTxEntry: si tiene id -> PUT a Patient/{id}, si tiene identifier -> POST con ifNoneExist, si no -> POST simple
       const pid = patientEntry.resource.identifier?.[0];
 
+      let patientTxEntry = undefined;
+
       if (patientEntry.resource.id) {
           // Actualizar recurso existente (id conocido)
           patientTxEntry.request = { method: 'PUT', url: `Patient/${patientEntry.resource.id}` };
