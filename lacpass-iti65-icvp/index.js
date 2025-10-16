@@ -2059,7 +2059,8 @@ function ensureIcvpForImmunization(im) {
             display: firstCode?.display || im.vaccineCode?.text || 'ICVP vaccine'
         };
         // Prepend para que el validador vea primero el coding ICVP
-        im.vaccineCode.coding = [newCoding, ...(im.vaccineCode.coding || [])];
+        //im.vaccineCode.coding = [newCoding, ...(im.vaccineCode.coding || [])];
+        im.vaccineCode.coding = [newCoding];
     }
 }
 
