@@ -2138,7 +2138,7 @@ app.post('/icvp/_iti65', async (req, res) => {
             // Añadir entry al bundle (usar referencia tipo "Practitioner/{id}" para que urlMap lo detecte)
             const pracFullRefKey = `Practitioner/${practitioner.id}`;
             summaryBundle.entry.push({
-                fullUrl: urlMap.get(pracFullRefKey) ,
+                fullUrl: `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/fhir/Practitioner/${practitioner.id}`,
                 resource: practitioner
             });
 
