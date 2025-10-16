@@ -2073,7 +2073,7 @@ app.post('/icvp/_iti65', async (req, res) => {
   if (req.body.uuid) {
     try {
       const resp = await axios.get(
-        `${FHIR_NODE_URL}/Patient/${req.body.uuid}/$summary`,
+        `${FHIR_NODE_URL}/fhir/Patient/${req.body.uuid}/$summary`,
         { params: { profile: SUMMARY_ICVP_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
       );
       summaryBundle = resp.data;
