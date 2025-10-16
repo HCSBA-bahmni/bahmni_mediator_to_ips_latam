@@ -2038,13 +2038,13 @@ function ensureIcvpForImmunization(im) {
     if (!hasIcvpExt) {
         const productValue = im.vaccineCode?.coding?.[0]?.code || im.id || `${im.performer?.[0]?.actor?.reference || 'unknown'}`;
         im.extension = im.extension || [];
-        im.extension.unshift({
+        /*im.extension.unshift({
             url: icvpExtUrl,
             valueIdentifier: {
                 system: 'https://extranet.who.int/prequal/vaccines', // heurístico; reemplazar por el sistema ICVP real si lo tienes
                 value: productValue
             }
-        });
+        });*/
     }
 
     // 2) Garantizar vaccineCode con coding del catálogo ICVP
