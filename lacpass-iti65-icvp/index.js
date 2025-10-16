@@ -1354,6 +1354,105 @@ function checkAndFixReferences(obj, availableUrls, bundle) {
         }
     }
 }
+const ICVP_DOSE_EXT = 'http://smart.who.int/icvp/StructureDefinition/doseNumberCodeableConcept';
+const ICVP_VACCINE_CODE_HINT = 'icvp'; // simple heurístico, ajustar según tu sistema real
+
+function ensureCompositionFirst(summaryBundle) {
+    if (!summaryBundle?.entry) return;
+    const idx = summaryBundle.entry.findIndex(e => e.resource?.resourceType === 'Composition');
+    if (idx > 0) {
+        const comp = summaryBundle.entry.splice(idx, 1)[0];
+        summaryBundle.entry.unshift(comp);
+    }
+    // Asegurar que la Composition tenga fullUrl/id coherente
+    const first = summaryBundle.entry[0];
+    if (first && first.resource?.resourceType === 'Composition') {
+        if (!first.fullUrl && first.resource.id) first.fullUrl = `urn:uuid:${first.resource.id}`;
+        if (!first.resource.id && first.fullUrl?.startsWith('urn:uuid:')) {
+            first.resource.id = first.fullUrl.split(':').pop();
+        }
+        // asegurar perfil ICVP/LAC si hace falta
+        addProfile(first.resource, LAC_PROFILES.COMPOSITION);
+    }
+}
+
+function removeUnknownDoseExtension(summaryBundle) {
+    if (!summaryBundle?.entry) return;
+    for (const e of summaryBundle.entry) {
+        const r = e.resource;
+        if (!r) continue;
+        if (r.resourceType === 'Immunization' && Array.isArray(r.protocolApplied)) {
+            for (const p of r.protocolApplied) {
+                if (Array.isArray(p.extension)) {
+                    p.extension = p.extension.filter(ext => ext.url !== ICVP_DOSE_EXT);
+                    if (p.extension.length === 0) delete p.extension;
+                }
+            }
+        }
+    }
+}
+
+function warnIfNonIcvpVaccine(summaryBundle) {
+    if (!summaryBundle?.entry) return;
+    for (const e of summaryBundle.entry) {
+        const r = e.resource;
+        if (!r) continue;
+        if (r.resourceType === 'Immunization') {
+            const codings = r.vaccineCode?.coding || [];
+            const hasIcvp = codings.some(c => (c.system || '').toLowerCase().includes(ICVP_VACCINE_CODE_HINT));
+            if (!hasIcvp) {
+                console.warn('⚠️ Immunization sin código ICVP detectado. El validador ICVP puede fallar. Añade coding del catálogo ICVP o referencia a InventoryItem.', { id: r.id });
+            }
+        }
+    }
+}
+
+function buildUrlMapUsingBase(summaryBundle) {
+    const urlMap = new Map();
+    const base = asAbsoluteBase(FHIR_NODO_NACIONAL_SERVER || '');
+    for (const e of summaryBundle.entry || []) {
+        const r = e.resource;
+        if (!r?.resourceType) continue;
+        const id = e.fullUrl?.startsWith('urn:uuid:') ? e.fullUrl.split(':').pop() : (r.id || null);
+        if (!id) continue;
+        const abs = `${base}/${r.resourceType}/${id}`;
+        urlMap.set(`${r.resourceType}/${id}`, abs);
+        // también mapear variantes comunes
+        urlMap.set(`urn:uuid:${id}`, abs);
+        urlMap.set(`${abs}`, abs);
+    }
+    return urlMap;
+}
+
+// Uso recomendado: justo antes de validar el bundle
+function preValidateIcvpBundle(summaryBundle) {
+    // 1) composition first
+    ensureCompositionFirst(summaryBundle);
+
+    // 2) quitar extensiones no permitidas en immunizations
+    removeUnknownDoseExtension(summaryBundle);
+
+    // 3) advertencias sobre vaccineCode
+    warnIfNonIcvpVaccine(summaryBundle);
+
+    // 4) reconstruir urlMap usando asAbsoluteBase para evitar '/fhir/fhir'
+    const urlMap = buildUrlMapUsingBase(summaryBundle);
+
+    // 5) aplicar map a referencias internas (puedes reutilizar updateReferencesInObject)
+    updateReferencesInObject(summaryBundle, urlMap);
+
+    // 6) asegurar Composition.subject referencia a Patient existente
+    const compEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
+    const patEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
+    if (compEntry?.resource && patEntry) {
+        const patFull = patEntry.fullUrl || (patEntry.resource?.id ? `${patEntry.resource.resourceType}/${patEntry.resource.id}` : null);
+        if (patFull) {
+            // si existe map, usar su valor absoluto
+            const mapped = urlMap.get(patFull) || patFull;
+            compEntry.resource.subject = { reference: mapped };
+        }
+    }
+}
 
 // ===================== Función para corregir Bundle - INTEGRADA =====================
 function fixBundleValidationIssues(summaryBundle) {
@@ -1953,6 +2052,7 @@ app.post('/icvp/_iti65', async (req, res) => {
     try {
 
         // ========= NUEVO: Corregir problemas de validación ANTES de PDQm =========
+        preValidateIcvpBundle(summaryBundle);
         fixBundleValidationIssues(summaryBundle);
 
         // ===== Asegurar perfil LAC Bundle desde el inicio =====
