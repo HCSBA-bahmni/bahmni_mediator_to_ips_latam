@@ -2628,20 +2628,20 @@ app.post('/lacpass/_iti65', async (req, res) => {
     };
 
     // Agregar las alergias del LAC al transaction bundle
-    for (const ai of lacAllergies) {
+    /*for (const ai of lacAllergies) {
       provideBundle.entry.push({
         fullUrl: buildRef('urn', 'AllergyIntolerance', ai.id || uuidv4()),
         resource: ai,
         request: { method: 'POST', url: 'AllergyIntolerance' }
       });
-    }
+    }*/
 
     // ➕ "comportamiento anterior": incluir el Bundle si no hay Binary
     if (BINARY_DELIVERY_MODE === 'nobinary') {
       provideBundle.entry.push({
         fullUrl: buildRef(ATTACHMENT_URL_MODE, 'Bundle', originalBundleId),
         resource: summaryBundle,
-        request: { method: 'PUT', url: `Bundle/${originalBundleId}` }
+        request: { method: 'POST', url: `Bundle/${originalBundleId}` }
       });
     }
 
