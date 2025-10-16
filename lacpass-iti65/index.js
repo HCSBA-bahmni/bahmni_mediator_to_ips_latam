@@ -55,6 +55,8 @@ const {
     PDQM_FALLBACK_HTTP_STATUSES,
     PDQM_ENABLE_FALLBACK_FOR_401_403 = 'false',
     PDQM_ENABLE_ALIASES = 'true',
+    // Debug PDQm
+    PDQM_DEBUG_LEVEL = 'info', // 'off' | 'info' | 'debug'
 
     // ===== Terminology =====
     // Acepta alias TERMINOLOGY_BASE_URL o TERMINO_SERVER_URL
@@ -130,6 +132,29 @@ const {
 
 // ====== NUEVO: separador configurable para URN OID (por defecto ".")
 const OID_URN_SEPARATOR = process.env.OID_URN_SEPARATOR || '.';
+
+// ============== Utils de log PDQm ==============
+function pdqmShouldLog(level='info') {
+  const order = { off: 0, info: 1, debug: 2 };
+  const cur = String(PDQM_DEBUG_LEVEL || 'info').toLowerCase();
+  return (order[level] || 0) <= (order[cur] || 1);
+}
+function pdqmLog(level, ...args) {
+  if (pdqmShouldLog(level)) {
+    const prefix = level === 'debug' ? '🔍 PDQm[debug]' : 'ℹ️ PDQm';
+    console.log(prefix, ...args);
+  }
+}
+function summarizeIdentifiers(ids=[]) {
+  const norm = (s) => String(s||'').trim();
+  return ids.map((id, idx) => ({
+    idx,
+    typeText: norm(id?.type?.text),
+    typeCode: norm(id?.type?.coding?.[0]?.code),
+    system: norm(id?.system),
+    value: norm(id?.value)
+  }));
+}
 
 const {
   FULLURL_MODE_PROVIDE = 'urn',
@@ -2031,7 +2056,7 @@ async function pdqmFetchBundleByIdentifier(identifierValue) {
 
             // Si la respuesta es exitosa y contiene datos, retornar
             if (response.status === 200 && response.data?.resourceType === 'Bundle') {
-                console.log(`✅ PDQm response: ${response.data.total || 0} patients found`);
+                console.log(`✅ PDQm response: status=${response.status}, total=${response.data.total || 0}`);
                 return response.data;
             }
 
@@ -2317,49 +2342,51 @@ app.post('/lacpass/_iti65', async (req, res) => {
       const localPatient = patientEntry?.resource;
 
       if (localPatient) {
-        // Extraer identifiers y ordenarlos por preferencia
-        // Solo viene el RUN, no trae más identifier
+        // ------- Diagnóstico PDQm inicial -------
+        pdqmLog('info', 'Paso PDQm habilitado. Base:', PDQM_FHIR_URL || '(vacía)');
+        pdqmLog('debug', 'Flags:', {
+          PDQM_ALLOWED_SEARCH_PARAMS,
+          PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES,
+          PDQM_DEFAULT_IDENTIFIER_SYSTEM,
+          PDQM_FALLBACK_HTTP_STATUSES,
+          PDQM_ENABLE_FALLBACK_FOR_401_403
+        });
+
+        // Extraer identifiers y ordenarlos por preferencia (PPN > RUN > otros)
+        // Nota: en algunos flujos solo viene RUN.
         const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
+        pdqmLog('info', 'Patient.identifier (resumen):', summarizeIdentifiers(ids));
 
         let idCandidates = pickIdentifiersOrderedForPdqm(ids);
-        console.log('PDQm: candidatos ordenados =>', idCandidates.join(' , '));
+        pdqmLog('info', 'Candidatos ordenados =>', idCandidates.join(' , '));
 
         // Expandir RUN*: probar [RUN*XXXX, XXXX] y evitar duplicados
-        const expandRun = (v) => (typeof v === 'string' && /^RUN\*/i.test(v))
-          ? [v, v.replace(/^RUN\*/i, '')]
-          : [v];
-        idCandidates = idCandidates.flatMap(expandRun)
-          .filter((v, i, a) => a.indexOf(v) === i);
-
-        // Empujar al final cualquier value que contenga '*'
-        const starScore = (v) => (/\*/.test(String(v)) ? 1 : 0);
-        idCandidates.sort((a, b) => starScore(a) - starScore(b));
+        const expanded = [];
+        const seen = new Set();
+        for (const v of idCandidates) {
+          if (/^RUN\*/i.test(v)) {
+            const raw = v.replace(/^RUN\*/i, '').trim();
+            if (raw && !seen.has(raw)) { expanded.push(raw); seen.add(raw); }
+          }
+          if (!seen.has(v)) { expanded.push(v); seen.add(v); }
+        }
+        idCandidates = expanded;
+        pdqmLog('info', 'Candidatos finales (tras expandir RUN*) =>', idCandidates.join(' , '));
 
         let pdqmBundle = null;
-
-        if (idCandidates.length) {
-          for (const cand of idCandidates) {
-            try {
-              console.log(`PDQm: buscando por identifier=${cand}`);
-              const tryBundle = await pdqmFetchBundleByIdentifier(cand);
-              const hasHits = !!tryBundle && (
-                (Array.isArray(tryBundle.entry) && tryBundle.entry.length > 0) ||
-                (typeof tryBundle.total === 'number' && tryBundle.total > 0)
-              );
-              if (hasHits) {
-                pdqmBundle = tryBundle;
-                  console.log(`PDQm: resultados encontrados con identifier=${cand}`);
-                break;
-              } else {
-                  console.log(`PDQm: sin resultados con identifier=${cand}`);
-              }
-            } catch (e) {
-                console.log(`PDQm: error buscando identifier=${cand} → ${e?.message || e}`);
+        for (const value of idCandidates) {
+          try {
+            const b = await pdqmFetchBundleByIdentifier(value);
+            if (b?.resourceType === 'Bundle' && Number(b.total || 0) > 0) {
+              pdqmBundle = b;
+              pdqmLog('info', `Resultado PDQm: total=${b.total} con identifier="${value}"`);
+              break;
             }
+          } catch (e) {
+            console.warn('⚠️ PDQm error buscando por', value, e.message);
           }
         }
-
-        if (pdqmBundle?.resourceType === 'Bundle' && Array.isArray(pdqmBundle.entry) && pdqmBundle.entry.length > 0) {
+        if (pdqmBundle) {
           // Guardar para trazabilidad/debug
           try {
             const pdqmFile = path.join(debugDir, `pdqmBundle_${Date.now()}.json`);
@@ -2378,6 +2405,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
           req._pdqmBundle = pdqmBundle;
         } else {
           console.warn('ℹ️ PDQm: sin resultados con ningún identificador de los candidatos');
+          pdqmLog('debug', 'PDQm sin resultados. Revisa si el Patient trae un identificador de Pasaporte (PPN) o si el servidor requiere system|value.');
         }
       } else {
         console.warn('ℹ️ PDQm: no se encontró recurso Patient en el summaryBundle');
