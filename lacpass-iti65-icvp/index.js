@@ -2030,7 +2030,7 @@ app.post('/icvp/_iti65', async (req, res) => {
   if (req.body.uuid) {
     try {
       const resp = await axios.get(
-        `${FHIR_NODE_URL}/Patient/${req.body.uuid}/$summary`,
+        `${FHIR_NODE_URL}/fhir/Patient/${req.body.uuid}/$summary`,
         { params: { profile: SUMMARY_ICVP_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
       );
       summaryBundle = resp.data;
@@ -2215,7 +2215,7 @@ app.post('/icvp/_iti65', async (req, res) => {
     const urlMap = new Map();
       summaryBundle.entry.forEach(entry => {
       const { resource } = entry;
-      const urn = `${FHIR_NODO_NACIONAL_SERVER}/fhir/${resource.resourceType}/${resource.id}`;
+      const urn = `${FHIR_NODO_NACIONAL_SERVER}/${resource.resourceType}/${resource.id}`;
       urlMap.set(`${resource.resourceType}/${resource.id}`, urn);
       });
 
@@ -2238,13 +2238,13 @@ app.post('/icvp/_iti65', async (req, res) => {
             // Añadir entry al bundle (usar referencia tipo "Practitioner/{id}" para que urlMap lo detecte)
             const pracFullRefKey = `Practitioner/${practitioner.id}`;
             summaryBundle.entry.push({
-                fullUrl: `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/fhir/Practitioner/${practitioner.id}`,
+                fullUrl: `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`,
                 resource: practitioner
             });
 
             // Añadir al urlMap (misma forma que las otras entradas: mapea "Practitioner/{id}" -> nodo nacional absoluto)
             if (typeof FHIR_NODO_NACIONAL_SERVER === 'string' && FHIR_NODO_NACIONAL_SERVER.length > 0) {
-                urlMap.set(pracFullRefKey, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/fhir/Practitioner/${practitioner.id}`);
+                urlMap.set(pracFullRefKey, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`);
             } else {
                 // fallback a urn:uuid si no hay nodo configurado
                 urlMap.set(pracFullRefKey, `urn:uuid:${practitioner.id}`);
@@ -2256,7 +2256,7 @@ app.post('/icvp/_iti65', async (req, res) => {
             const key = `Practitioner/${practitioner.id}`;
             if (!urlMap.has(key)) {
                 if (typeof FHIR_NODO_NACIONAL_SERVER === 'string' && FHIR_NODO_NACIONAL_SERVER.length > 0) {
-                    urlMap.set(key, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/fhir/Practitioner/${practitioner.id}`);
+                    urlMap.set(key, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`);
                 } else {
                     urlMap.set(key, `urn:uuid:${practitioner.id}`);
                 }
