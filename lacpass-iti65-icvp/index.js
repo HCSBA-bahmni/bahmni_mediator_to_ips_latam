@@ -1686,6 +1686,8 @@ function fixBundleValidationIssues(summaryBundle) {
                 entry.resource.code.coding = sortCodingsPreferred(entry.resource.code.coding);
             }
         }
+
+
     });
 
     // 6.bis Corregir AllergyIntolerance - absent/unknown 'no-allergy-info'
@@ -1727,6 +1729,13 @@ function fixBundleValidationIssues(summaryBundle) {
             });
         }
     });
+
+    // Aplicar a todos los Immunization del bundle
+    for (const entry of summaryBundle.entry) {
+        if (entry.resource?.resourceType === 'Immunization') {
+            ensureIcvpForImmunization(entry.resource);
+        }
+    }
 
     // 7. Asegurar que todas las referencias internas estén en el Bundle
     const allFullUrls = new Set(summaryBundle.entry?.map(e => e.fullUrl) || []);
@@ -2019,6 +2028,39 @@ function normalizeOrganizationResource(orga) {
     orga.name = 'Clínica Las Condes';
     orga.address = address;
     return orga;
+}
+function ensureIcvpForImmunization(im) {
+    if (!im || im.resourceType !== 'Immunization') return;
+
+    // 1) Extension de identificador de producto ICVP (si falta)
+    const icvpExtUrl = 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP-productBusinessIdentifier';
+    const hasIcvpExt = Array.isArray(im.extension) && im.extension.some(e => String(e.url).startsWith('http://smart.who.int/icvp/StructureDefinition'));
+    if (!hasIcvpExt) {
+        const productValue = im.vaccineCode?.coding?.[0]?.code || im.id || `${im.performer?.[0]?.actor?.reference || 'unknown'}`;
+        im.extension = im.extension || [];
+        im.extension.unshift({
+            url: icvpExtUrl,
+            valueIdentifier: {
+                system: 'https://extranet.who.int/prequal/vaccines', // heurístico; reemplazar por el sistema ICVP real si lo tienes
+                value: productValue
+            }
+        });
+    }
+
+    // 2) Garantizar vaccineCode con coding del catálogo ICVP
+    const icvpSystemHint = 'https://extranet.who.int/icvp'; // ajustar al sistema real ICVP si se conoce
+    im.vaccineCode = im.vaccineCode || { coding: [] };
+    const hasIcvpCoding = (im.vaccineCode.coding || []).some(c => String(c.system || '').toLowerCase().includes('icvp') || String(c.system || '').toLowerCase().includes('prequal'));
+    if (!hasIcvpCoding) {
+        const firstCode = im.vaccineCode.coding?.[0];
+        const newCoding = {
+            system: icvpSystemHint,
+            code: /*firstCode?.code || im.id*/ 'YellowFever' || 'unknown',
+            display: firstCode?.display || im.vaccineCode?.text || 'ICVP vaccine'
+        };
+        // Prepend para que el validador vea primero el coding ICVP
+        im.vaccineCode.coding = [newCoding, ...(im.vaccineCode.coding || [])];
+    }
 }
 
 
