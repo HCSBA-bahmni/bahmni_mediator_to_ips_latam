@@ -2585,17 +2585,25 @@ app.post('/lacpass/_iti65', async (req, res) => {
     };
 
     // ---- Patient como entrada explícita (dedupe opcional con ifNoneExist)
-    const patientTxEntry = {
-      fullUrl: patientRef,
-      resource: patientEntry.resource,
-      request: { method: 'POST', url: 'Patient' }
-    };
-    // Opcional y recomendado: evitar duplicados con ifNoneExist si tienes un identifier
-    const pid = patientEntry.resource.identifier?.[0];
-    if (pid?.system && pid?.value) {
-      patientTxEntry.request.ifNoneExist =
-        `identifier=${robustUrlEncode(pid.system)}|${robustUrlEncode(pid.value)}`;
-}
+      // Construir request para patientTxEntry: si tiene id -> PUT a Patient/{id}, si tiene identifier -> POST con ifNoneExist, si no -> POST simple
+      const pid = patientEntry.resource.identifier?.[0];
+
+      if (patientEntry.resource.id) {
+          // Actualizar recurso existente (id conocido)
+          patientTxEntry.request = { method: 'PUT', url: `Patient/${patientEntry.resource.id}` };
+      } else if (pid?.system && pid?.value) {
+          // Condicional create para evitar duplicados: POST + ifNoneExist=identifier=system|value
+          // Normalizar system a URN OID si aplica y URL-encode
+          const sys = isUrnOid(pid.system) ? pid.system : toUrnOid(pid.system) || pid.system;
+          patientTxEntry.request = {
+              method: 'POST',
+              url: 'Patient',
+              ifNoneExist: `identifier=${encodeURIComponent(sys)}|${encodeURIComponent(String(pid.value))}`
+          };
+      } else {
+          // Sin identificador útil: crear normalmente (posible duplicado)
+          patientTxEntry.request = { method: 'POST', url: 'Patient' };
+      }
 
     // ---- ProvideBundle (se arma con ramas según BINARY_DELIVERY_MODE)
     const provideBundle = {
