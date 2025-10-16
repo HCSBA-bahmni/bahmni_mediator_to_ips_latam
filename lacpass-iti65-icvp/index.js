@@ -2125,10 +2125,56 @@ app.post('/icvp/_iti65', async (req, res) => {
 
         //modificamos al Practitioner
         const practitionerEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Practitioner');
+        let practitioner;
+
         if (!practitionerEntry) {
-            console.warn('⚠️ No Practitioner found in the Bundle.');
+            // Crear nuevo Practitioner
+            const newPracId = uuidv4();
+            practitioner = normalizePractitionerResource({
+                resourceType: 'Practitioner',
+                id: newPracId
+            }) || { resourceType: 'Practitioner', id: newPracId };
+
+            // Añadir entry al bundle (usar referencia tipo "Practitioner/{id}" para que urlMap lo detecte)
+            const pracFullRefKey = `Practitioner/${practitioner.id}`;
+            summaryBundle.entry.push({
+                fullUrl: pracFullRefKey,
+                resource: practitioner
+            });
+
+            // Añadir al urlMap (misma forma que las otras entradas: mapea "Practitioner/{id}" -> nodo nacional absoluto)
+            if (typeof FHIR_NODO_NACIONAL_SERVER === 'string' && FHIR_NODO_NACIONAL_SERVER.length > 0) {
+                urlMap.set(pracFullRefKey, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/fhir/Practitioner/${practitioner.id}`);
+            } else {
+                // fallback a urn:uuid si no hay nodo configurado
+                urlMap.set(pracFullRefKey, `urn:uuid:${practitioner.id}`);
+            }
+        } else {
+            practitioner = practitionerEntry.resource;
+            normalizePractitionerResource(practitioner);
+            // Asegurar que exista mapeo si no se creó antes
+            const key = `Practitioner/${practitioner.id}`;
+            if (!urlMap.has(key)) {
+                if (typeof FHIR_NODO_NACIONAL_SERVER === 'string' && FHIR_NODO_NACIONAL_SERVER.length > 0) {
+                    urlMap.set(key, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/fhir/Practitioner/${practitioner.id}`);
+                } else {
+                    urlMap.set(key, `urn:uuid:${practitioner.id}`);
+                }
+            }
         }
-        normalizePractitionerResource(practitionerEntry?.resource);
+
+        // Asegurar que Composition.author incluya al Practitioner creado/normalizado
+        if (compositionEntry?.resource) {
+            const pracRef = urlMap.get(`Practitioner/${practitioner.id}`) || `Practitioner/${practitioner.id}`;
+            // FHIR Composition.author es un array de Reference
+            compositionEntry.resource.author = Array.isArray(compositionEntry.resource.author)
+                ? compositionEntry.resource.author
+                : (compositionEntry.resource.author ? [compositionEntry.resource.author] : []);
+
+            const already = compositionEntry.resource.author.some(a => a.reference === pracRef);
+            if (!already) compositionEntry.resource.author.push({ reference: pracRef });
+        }
+
         //modificamos la Organizacion
         const orgEntries = (summaryBundle.entry || []).filter(e => e.resource?.resourceType === 'Organization');
         for (const orgEntry of orgEntries) {
@@ -2137,6 +2183,8 @@ app.post('/icvp/_iti65', async (req, res) => {
             normalizeOrganizationResource(org);
         }
 
+        // Reescribir todas las referencias en el bundle usando el urlMap (mapea Attachment.url y .reference)
+        updateReferencesInObject(summaryBundle, urlMap);
     if (compositionEntry) {
       //add event
         if (!Array.isArray(compositionEntry.resource.event)) compositionEntry.resource.event = [];
@@ -2173,6 +2221,8 @@ app.post('/icvp/_iti65', async (req, res) => {
         res.patient.reference = urlMap.get(res.patient.reference);
       }
     });
+
+
 
     // SubmissionSet
     const submissionSet = {
