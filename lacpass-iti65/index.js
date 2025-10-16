@@ -2585,10 +2585,13 @@ app.post('/lacpass/_iti65', async (req, res) => {
     };
 
     // ---- Patient como entrada explícita (dedupe opcional con ifNoneExist)
+    const patientTxEntry = {
+      fullUrl: patientRef,
+      resource: patientEntry.resource,
+    };
+
       // Construir request para patientTxEntry: si tiene id -> PUT a Patient/{id}, si tiene identifier -> POST con ifNoneExist, si no -> POST simple
       const pid = patientEntry.resource.identifier?.[0];
-
-      let patientTxEntry = undefined;
 
       if (patientEntry.resource.id) {
           // Actualizar recurso existente (id conocido)
