@@ -2137,18 +2137,19 @@ app.post('/icvp/_iti65', async (req, res) => {
 
             // Añadir entry al bundle (usar referencia tipo "Practitioner/{id}" para que urlMap lo detecte)
             const pracFullRefKey = `Practitioner/${practitioner.id}`;
-            summaryBundle.entry.push({
-                fullUrl: pracFullRefKey,
-                resource: practitioner
-            });
-
+            let fullUrlPractitioner = ''
+;
             // Añadir al urlMap (misma forma que las otras entradas: mapea "Practitioner/{id}" -> nodo nacional absoluto)
             if (typeof FHIR_NODO_NACIONAL_SERVER === 'string' && FHIR_NODO_NACIONAL_SERVER.length > 0) {
-                urlMap.set(pracFullRefKey, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/fhir/Practitioner/${practitioner.id}`);
+                fullUrlPractitioner = urlMap.set(pracFullRefKey, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/fhir/Practitioner/${practitioner.id}`);
             } else {
                 // fallback a urn:uuid si no hay nodo configurado
-                urlMap.set(pracFullRefKey, `urn:uuid:${practitioner.id}`);
+                fullUrlPractitioner = urlMap.set(pracFullRefKey, `urn:uuid:${practitioner.id}`);
             }
+            summaryBundle.entry.push({
+                fullUrl: fullUrlPractitioner,
+                resource: practitioner
+            });
         } else {
             practitioner = practitionerEntry.resource;
             normalizePractitionerResource(practitioner);
