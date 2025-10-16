@@ -30,8 +30,8 @@ const {
   CORS_ORIGIN,
 
   // ===== Features =====
-  FEATURE_PDQ_ENABLED = 'false',
-  FEATURE_TS_ENABLED = 'false',
+  FEATURE_PDQ_ENABLED = 'true',
+  FEATURE_TS_ENABLED = 'true',
 
   // Subfeatures terminológicas
   FEATURE_TS_EXPAND_ENABLED = 'true',
@@ -2073,7 +2073,7 @@ app.post('/icvp/_iti65', async (req, res) => {
   if (req.body.uuid) {
     try {
       const resp = await axios.get(
-        `${FHIR_NODE_URL}/fhir/Patient/${req.body.uuid}/$summary`,
+        `${FHIR_NODE_URL}/Patient/${req.body.uuid}/$summary`,
         { params: { profile: SUMMARY_ICVP_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
       );
       summaryBundle = resp.data;
