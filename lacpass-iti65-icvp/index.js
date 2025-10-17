@@ -1451,8 +1451,7 @@ function buildRef(mode, resourceType, id) {
 function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
     if (!bundle?.entry?.length) return;
 
-    // 🚫 No convertir a absolutas en DOCUMENT bundles (ICVP/IPS).
-    //    Para documentos, el patrón robusto de validación es usar URNs internos.
+    // 🚫 Document bundles (ICVP/IPS) siempre en URN
     if (String(bundle.type || '').toLowerCase() === 'document') {
         mode = 'urn';
     }
@@ -1507,6 +1506,125 @@ function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
 
     // Reescribir todas las .reference y Attachment.url según urlMap
     updateReferencesInObject(bundle, urlMap);
+}
+
+// =========================================
+// Normalizador URN para Document Bundles
+// - Asegura Composition.id == entry[0].fullUrl (URN UUID)
+// - Convierte refs Patient/Practitioner/Organization a URN
+// - Reemplaza fullUrl absolutos por URN
+// - Repara custodian con UUID válido
+// - Elimina duplicados en section.entry
+// =========================================
+function normalizeDocumentBundleForURNs(bundle, updateReferencesInObject) {
+    if (!bundle || String(bundle.type || '').toLowerCase() !== 'document') return;
+    const urlMap = new Map();
+
+    // 1) Asegurar que todas las entry tengan fullUrl URN y resource.id UUID
+    for (const e of (bundle.entry || [])) {
+        const r = e.resource || {};
+        // Si no hay id, generarlo
+        if (!r.id) r.id = uuidv4();
+        const id = String(r.id).toLowerCase();
+
+        // Si fullUrl es absoluto o no-URN, o URN inválido → cambiar a URN con UUID
+        const want = `urn:uuid:${id}`;
+        const cur = e.fullUrl || '';
+
+        const looksURN = cur.startsWith('urn:uuid:');
+        const curTail = looksURN ? cur.slice(9) : cur;
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(curTail);
+
+        if (!looksURN || !isUUID || cur.toLowerCase() !== want) {
+            if (looksURN && !isUUID) {
+                // Tenías algo como urn:uuid:org-chumakov → generamos uno nuevo y mapeamos
+                const newId = uuidv4();
+                const newUrn = `urn:uuid:${newId}`;
+                urlMap.set(cur, newUrn);
+                r.id = newId;
+                e.fullUrl = newUrn;
+            } else {
+                // Absoluta o URN con id distinto → normalizar
+                if (cur) urlMap.set(cur, want);
+                e.fullUrl = want;
+                r.id = id; // ya lowercase
+            }
+        }
+    }
+
+    // 2) Reescribir todas las referencias según urlMap
+    updateReferencesInObject(bundle, urlMap);
+
+    // 3) Composition en entry[0] con id == fullUrl
+    const compEntry = bundle.entry?.[0];
+    if (compEntry?.resource?.resourceType === 'Composition') {
+        const comp = compEntry.resource;
+        const fullUrl = compEntry.fullUrl || '';
+        const tail = fullUrl.startsWith('urn:uuid:') ? fullUrl.slice(9) : '';
+        if (!comp.id || comp.id.toLowerCase() !== tail.toLowerCase()) {
+            comp.id = tail || uuidv4();
+            compEntry.fullUrl = `urn:uuid:${comp.id}`;
+        }
+        // 3a) subject: Patient/<id> → urn:uuid:<id>
+        if (comp.subject?.reference && /^Patient\//i.test(comp.subject.reference)) {
+            const id = comp.subject.reference.split('/')[1];
+            comp.subject.reference = `urn:uuid:${id}`;
+        }
+        // 3b) author[]: Practitioner/… u Organization/… → URN
+        if (Array.isArray(comp.author)) {
+            comp.author = comp.author.map(a => {
+                if (a?.reference && /^[A-Za-z]+\/[A-Za-z0-9\-\.]+$/i.test(a.reference)) {
+                    const [typ, id] = a.reference.split('/');
+                    return { ...a, reference: `urn:uuid:${id}` };
+                }
+                return a;
+            });
+        }
+        // 3c) custodian.reference: si no es URN UUID válido, normalizar
+        if (comp.custodian?.reference) {
+            const ref = comp.custodian.reference;
+            if (ref.startsWith('urn:uuid:')) {
+                const tail = ref.slice(9);
+                const ok = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(tail);
+                if (!ok) {
+                    // Buscar Organization con ese fullUrl para remapear o crear uno nuevo
+                    const orgEntry = (bundle.entry || []).find(en => en.fullUrl === ref && en.resource?.resourceType === 'Organization');
+                    const newId = uuidv4();
+                    const newUrn = `urn:uuid:${newId}`;
+                    if (orgEntry) {
+                        orgEntry.resource.id = newId;
+                        orgEntry.fullUrl = newUrn;
+                        urlMap.set(ref, newUrn);
+                        comp.custodian.reference = newUrn;
+                    } else {
+                        comp.custodian.reference = newUrn;
+                    }
+                }
+            } else if (/^Organization\//i.test(ref)) {
+                const id = ref.split('/')[1];
+                comp.custodian.reference = `urn:uuid:${id}`;
+            }
+        }
+    }
+
+    // 4) Dedupe en section[].entry (evita refs duplicadas)
+    for (const s of (bundle.entry?.[0]?.resource?.section || [])) {
+        if (Array.isArray(s.entry)) {
+            const seen = new Set();
+            s.entry = s.entry.filter(x => {
+                const key = x?.reference || '';
+                if (!key) return false;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+        }
+    }
+
+    // 5) Reaplicar mapeo después de ajustes en custodian/ids
+    if (urlMap.size) {
+        updateReferencesInObject(bundle, urlMap);
+    }
 }
 
 // ===================== Las siguientes funciones ya están definidas arriba =====================
@@ -2304,9 +2422,12 @@ app.post('/icvp/_iti65', async (req, res) => {
         // ===== Algunos nodos piden sí o sí Composition primero y Bundle.type = "document" =====
         summaryBundle.type = "document";
 
-        // ===== Aplicar modo URL al document bundle =====
-        // Forzar URN en documentos para cumplir slicing de Composition y refs internas
+        // ===== Aplicar modo URL al document bundle (forzado a URN) =====
         applyUrlModeToBundle(summaryBundle, 'urn', updateReferencesInObject);
+
+        // ===== Normalización fina URN para documentos (Composition/refs/custodian/dedupe) =====
+        normalizeDocumentBundleForURNs(summaryBundle, updateReferencesInObject);
+
         // ===== Forzar orden de slices (Composition, Patient) y sujeto coherente =====
         //ensureEntrySliceOrder(summaryBundle);
         if (summaryBundle.entry && summaryBundle.entry.length > 0) {
