@@ -2539,7 +2539,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       },
       extension: [{
         url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId',
-        valueIdentifier: { value: buildRef(FULLURL_MODE_DOCUMENT, 'Bundle', originalBundleId) }
+        valueIdentifier: { value: bundleUrn }
       }],
       identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: `urn:uuid:${ssId}` }],
       status: 'current',
@@ -2550,6 +2550,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
     };
 
+    /*
     // ---- Attachment (cambio puntual): en 'nobinary' usar siempre el URN del Bundle
     const attachment = {
       contentType: 'application/fhir+json',
@@ -2559,9 +2560,9 @@ app.post('/lacpass/_iti65', async (req, res) => {
     if (BINARY_DELIVERY_MODE === 'nobinary') {
       // Haz que el attachment siga el mismo modo del bundle de documento
       attachment.url = buildRef(FULLURL_MODE_DOCUMENT, 'Bundle', originalBundleId);
-    }
+    }*/
 
-    // Si queremos Binary o ambos, preparamos Binary y/o data
+    /*// Si queremos Binary o ambos, preparamos Binary y/o data
     const binaryId = uuidv4();
     const attachmentBinaryUrl = buildRef(ATTACHMENT_URL_MODE, 'Binary', binaryId);
 
@@ -2583,7 +2584,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
     if (BINARY_DELIVERY_MODE === 'both') {
       attachment.url = attachmentBinaryUrl;           // URL → Binary
       attachment.data = bundleBytes.toString('base64'); // y data inline
-    }
+    }*/
 
     // ---- DocumentReference (usa Coding simple en format, como antes)
     const documentReference = {
@@ -2597,14 +2598,18 @@ app.post('/lacpass/_iti65', async (req, res) => {
         status: 'generated',
         div: '<div xmlns="http://www.w3.org/1999/xhtml">Resumen clínico en formato DocumentReference</div>'
       },
-      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: docMasterIdentifier },
+      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: bundleUrn },
       status: 'current',
       type: docType,
       subject: { reference: patientRef, display: patientDisplay },
       date: bundleDate,
       content: [{
-        attachment,
-        // format es Coding (no "coding: []"), igual que la versión anterior
+         attachment: {
+          contentType: 'application/fhir+json',
+          url: bundleUrn,
+          size: bundleSize,
+          hash: bundleHash
+        },
         format: {
           system: MHD_FORMAT_SYSTEM || 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode',
           code: MHD_FORMAT_CODE
@@ -2612,6 +2617,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       }]
     };
 
+   /*
     // ---- Patient como entrada explícita (dedupe opcional con ifNoneExist)
     const patientTxEntry = {
       fullUrl: patientRef,
@@ -2637,6 +2643,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
           // Sin identificador útil: crear normalmente (posible duplicado)
           patientTxEntry.request = { method: 'POST', url: 'Patient' };
       }
+    */
 
     // ---- ProvideBundle (se arma con ramas según BINARY_DELIVERY_MODE)
     const provideBundle = {
@@ -2648,11 +2655,12 @@ app.post('/lacpass/_iti65', async (req, res) => {
       },
       type: 'transaction',
       timestamp: now,
-      entry: [
-        patientTxEntry,
-        { fullUrl: buildRef('urn', 'List', ssId), resource: submissionSet, request: { method: 'POST', url: 'List' } },
-        { fullUrl: buildRef('urn', 'DocumentReference', drId), resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } }
-      ]
+        entry: [
+            { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
+            { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
+            { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } },
+            { fullUrl: patientDisplay, resource: patientEntry.resource, request: { method: 'PUT', url: `Patient/${patientEntry.resource.id}` } }
+        ]
     };
 
     // Agregar las alergias del LAC al transaction bundle
@@ -2664,7 +2672,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
       });
     }*/
 
-    // ➕ "comportamiento anterior": incluir el Bundle si no hay Binary
+    /*
+      // ➕ "comportamiento anterior": incluir el Bundle si no hay Binary
     if (BINARY_DELIVERY_MODE === 'nobinary') {
       provideBundle.entry.push({
         fullUrl: buildRef(ATTACHMENT_URL_MODE, 'Bundle', originalBundleId),
@@ -2677,10 +2686,13 @@ app.post('/lacpass/_iti65', async (req, res) => {
     if (BINARY_DELIVERY_MODE === 'binary' || BINARY_DELIVERY_MODE === 'both') {
       provideBundle.entry.push(binaryTxEntry);
     }
+     */
 
-    // Normalizar modos de URL en ambos bundles
+      // Normalizar modos de URL en ambos bundles
+    /*
     applyUrlModeToBundle(summaryBundle, FULLURL_MODE_DOCUMENT, updateReferencesInObject);
     applyUrlModeToBundle(provideBundle, FULLURL_MODE_PROVIDE, updateReferencesInObject);
+    */
 
     // Debug + envío
     console.log('DEBUG: Sending ProvideBundle to', FHIR_NODO_NACIONAL_SERVER);
