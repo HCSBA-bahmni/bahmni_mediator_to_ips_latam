@@ -153,13 +153,13 @@ const IPS_PROFILES = {
     BUNDLE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Bundle-uv-ips',
     MEDICATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Medication-uv-ips',
     MEDICATION_REQUEST: 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationRequest-uv-ips',
-    COMPOSITION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Composition-uv-ips',
+    COMPOSITION: 'http://smart.who.int/trust-phw/StructureDefinition/Composition-uv-ips-ICVP',
     PATIENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips',
     ALLERGY_INTOLERANCE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/AllergyIntolerance-uv-ips',
     CONDITION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Condition-uv-ips',
     MEDICATION_STATEMENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationStatement-uv-ips',
     PROCEDURE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Procedure-uv-ips',
-    IMMUNIZATION: 'http://smart.who.int/trust-phw/StructureDefinition/Immunization-uv-ips-PreQual',
+    IMMUNIZATION: 'http://smart.who.int/trust-phw/StructureDefinition/Immunization-uv-ips-ICVP',
     OBSERVATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Observation-results-uv-ips'
 };
 
@@ -174,10 +174,11 @@ const LOINC_CODES = {
     RESULTS_SECTION: '30954-2'
 };
 
-// Perfiles LAC (racsel) — coinciden con el validador
+// Perfiles ICVP (racsel) — coinciden con el validador
 const LAC_PROFILES = {
     BUNDLE: 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP',
-    COMPOSITION: 'http://smart.who.int/trust-phw/StructureDefinition/Composition-uv-ips-PreQual',
+    COMPOSITION: 'http://smart.who.int/trust-phw/StructureDefinition/Composition-uv-ips-ICVP',
+    IMMUNIZATION: 'http://smart.who.int/trust-phw/StructureDefinition/Immunization-uv-ips-ICVP',
     PATIENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips'
 };
 
