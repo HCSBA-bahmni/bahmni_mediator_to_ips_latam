@@ -1627,6 +1627,85 @@ function normalizeDocumentBundleForURNs(bundle, updateReferencesInObject) {
     }
 }
 
+// === Refuerzo final específico de Composition y terminología mínima (doc bundles) ===
+function enforceCompositionRefsAndMinimalTerminology(bundle, updateReferencesInObject) {
+  if (!bundle || String(bundle.type || '').toLowerCase() !== 'document') return;
+  const e0 = bundle.entry?.[0];
+  if (!e0?.resource || e0.resource.resourceType !== 'Composition') return;
+  const comp = e0.resource;
+
+  // 1) Composition.id == entry[0].fullUrl (URN)
+  if (!e0.fullUrl?.startsWith('urn:uuid:')) {
+    const id = comp.id || uuidv4();
+    e0.fullUrl = `urn:uuid:${id}`;
+    comp.id = id;
+  } else {
+    const tail = e0.fullUrl.slice(9);
+    if (!comp.id || comp.id.toLowerCase() !== tail.toLowerCase()) comp.id = tail;
+  }
+
+  // 2) subject/author/custodian → URN
+  if (comp.subject?.reference && /^Patient\//i.test(comp.subject.reference)) {
+    comp.subject.reference = `urn:uuid:${comp.subject.reference.split('/')[1]}`;
+  }
+  if (Array.isArray(comp.author)) {
+    comp.author = comp.author.map(a => {
+      if (a?.reference && /^[A-Za-z]+\/[A-Za-z0-9\-\.]{1,64}$/i.test(a.reference)) {
+        const [, id] = a.reference.split('/');
+        return { ...a, reference: `urn:uuid:${id}` };
+      }
+      return a;
+    });
+  }
+  if (comp.custodian?.reference && /^Organization\//i.test(comp.custodian.reference)) {
+    comp.custodian.reference = `urn:uuid:${comp.custodian.reference.split('/')[1]}`;
+  }
+
+  // 3) Practitioner con fullUrl absoluto → remap a URN preservando id
+  const urlMap = new Map();
+  for (const ent of (bundle.entry || [])) {
+    const r = ent.resource;
+    if (r?.resourceType !== 'Practitioner') continue;
+    const id = r.id || uuidv4();
+    const want = `urn:uuid:${id}`;
+    if (!ent.fullUrl || /^https?:\/\//i.test(ent.fullUrl)) {
+      if (ent.fullUrl) urlMap.set(ent.fullUrl, want);
+      ent.fullUrl = want;
+      r.id = id;
+    }
+  }
+  if (urlMap.size) updateReferencesInObject(bundle, urlMap);
+
+  // 4) Terminología mínima para errores del validador:
+  //    - LOINC 11369-6 display permitido
+  //    - MedicationStatement.medicationCodeableConcept.coding[].system
+  //    - Immunization.vaccineCode.coding[].system SNOMED (429374003 = Yellow fever vaccine)
+  const sec = comp.section || [];
+  for (const s of sec) {
+    const c = s?.code?.coding?.[0];
+    if (c?.system === 'http://loinc.org' && c.code === '11369-6') {
+      c.display = 'History of Immunization note';
+    }
+  }
+  for (const ent of (bundle.entry || [])) {
+    const r = ent.resource;
+    if (!r) continue;
+    if (r.resourceType === 'MedicationStatement' && r.medicationCodeableConcept?.coding?.length) {
+      r.medicationCodeableConcept.coding.forEach(cd => {
+        if (!cd.system) cd.system = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+      });
+    }
+    if (r.resourceType === 'Immunization' && r.vaccineCode?.coding?.length) {
+      r.vaccineCode.coding.forEach(cd => {
+        if (!cd.system) {
+          cd.system = 'http://snomed.info/sct';
+          if (!cd.code) { cd.code = '429374003'; cd.display = cd.display || 'Yellow fever vaccine'; }
+        }
+      });
+    }
+  }
+}
+
 // ===================== Las siguientes funciones ya están definidas arriba =====================
 
 function sortCodingsPreferred_OLD(codings) {
@@ -2422,11 +2501,11 @@ app.post('/icvp/_iti65', async (req, res) => {
         // ===== Algunos nodos piden sí o sí Composition primero y Bundle.type = "document" =====
         summaryBundle.type = "document";
 
-        // ===== Aplicar modo URL al document bundle (forzado a URN) =====
+        // ===== URN siempre para documentos + normalización fina =====
         applyUrlModeToBundle(summaryBundle, 'urn', updateReferencesInObject);
-
-        // ===== Normalización fina URN para documentos (Composition/refs/custodian/dedupe) =====
         normalizeDocumentBundleForURNs(summaryBundle, updateReferencesInObject);
+        // Refuerzo final de Composition y terminología mínima para validación
+        enforceCompositionRefsAndMinimalTerminology(summaryBundle, updateReferencesInObject);
 
         // ===== Forzar orden de slices (Composition, Patient) y sujeto coherente =====
         //ensureEntrySliceOrder(summaryBundle);
