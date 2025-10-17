@@ -187,11 +187,15 @@ const LAC_PROFILES = {
     ORGANIZATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Organization-uv-ips'
 };
 
-// Constantes ICVP
-const ICVP_PRODUCT_EXT_URL = 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP-productBusinessIdentifier';
-const PREQUAL_SYSTEM = 'https://extranet.who.int/prequal/vaccines';
+// Constantes ICVP / PCMT (canónicos)
+const ICVP_PRODUCT_EXT_URL = 'http://smart.who.int/pcmt/StructureDefinition/ProductID';
+const PREQUAL_SYSTEM = 'https://extranet.who.int/prequal/vaccines';      // ya no se usa para ProductID (se deja por compat)
 const ICD11_MMS = 'http://id.who.int/icd/release/11/mms';
 const LOINC_PATIENT_SUMMARY = '60591-5';
+
+// Catálogos ICVP Pre-Qualification (PCMT)
+const CS_PREQUAL_PRODUCTIDS  = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIds';
+const CS_PREQUAL_VACCINETYPE = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualVaccineType';
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -936,17 +940,25 @@ function getRefOrNull(entry) {
 function getPrimaryImmunizationInfo(bundle) {
   const im = (bundle?.entry || []).map(e=>e.resource).find(r => r?.resourceType==='Immunization');
   if (!im) return null;
-  // PreQual en extensión valueIdentifier
+  // PreQual en extensión (PCMT: valueCoding o valueIdentifier legacy)
   let prequal = null;
   for (const ext of (im.extension || [])) {
-    if (ext?.url === ICVP_PRODUCT_EXT_URL && ext.valueIdentifier?.system && ext.valueIdentifier?.value) {
-      prequal = { system: ext.valueIdentifier.system, value: ext.valueIdentifier.value };
-      break;
+    if (ext?.url === ICVP_PRODUCT_EXT_URL) {
+      if (ext.valueCoding?.system && ext.valueCoding?.code) {
+        prequal = { system: ext.valueCoding.system, value: ext.valueCoding.code };
+        break;
+      }
+      if (ext.valueIdentifier?.system && ext.valueIdentifier?.value) {
+        prequal = { system: ext.valueIdentifier.system, value: ext.valueIdentifier.value };
+        break;
+      }
     }
   }
-  // ICD-11 en vaccineCode
-  const icd11 = (im.vaccineCode?.coding || []).find(c => c.system === ICD11_MMS && c.code);
-  return { prequal, icd11, immunization: im };
+  // VaccineType en vaccineCode (preferir catálogo PCMT, fallback ICD-11)
+  const vaccineType = (im.vaccineCode?.coding || []).find(c => 
+    (c.system === CS_PREQUAL_VACCINETYPE || c.system === ICD11_MMS) && c.code
+  );
+  return { prequal, vaccineType, immunization: im };
 }
 
 // ====== NUEVO: construir DocumentReference para ITI-65 usando los datos del ICVP entrante ======
@@ -986,10 +998,14 @@ function buildDocumentReferenceFromICVP(icvpBundle) {
     ids.push({ system: primary.prequal.system, value: primary.prequal.value });
   }
   if (ids.length) docRef.identifier = ids;
-  // Si hay ICD-11 en vaccineCode, lo incluimos como código complementario (no obligatorio)
-  if (primary?.icd11) {
+  // Si hay vaccineType (PCMT o ICD-11), lo incluimos como securityLabel para indexación
+  if (primary?.vaccineType) {
     docRef.securityLabel = docRef.securityLabel || [];
-    docRef.securityLabel.push({ system: ICD11_MMS, code: primary.icd11.code, display: primary.icd11.display });
+    docRef.securityLabel.push({ 
+      system: primary.vaccineType.system, 
+      code: primary.vaccineType.code, 
+      display: primary.vaccineType.display 
+    });
   }
   return docRef;
 }
@@ -1951,31 +1967,26 @@ function postProcessICVPDocumentBundle(bundle) {
     // Perfil ICVP
     addProfile(im, LAC_PROFILES.IMMUNIZATION);
 
-    // --- (1) Extensión de PRODUCTO = PreQual ---
+    // --- (1) Extensión de PRODUCTO = PreQual (PCMT ProductID) ---
     const hasProductId = Array.isArray(im.extension) &&
-                         im.extension.some(x => x?.url === ICVP_PRODUCT_EXT_URL && x?.valueIdentifier?.value);
+                         im.extension.some(x => x?.url === ICVP_PRODUCT_EXT_URL &&
+                           ((x?.valueCoding && x.valueCoding.code) || (x?.valueIdentifier && x.valueIdentifier.value)));
     if (!hasProductId) {
       im.extension = im.extension || [];
       // Usa un identificador estable del producto si lo traes; si no, cae a un candidato neutro
       const candidateValue = im?.vaccineCode?.coding?.find(c => c?.code)?.code || im?.id || 'unknown';
       im.extension.unshift({
         url: ICVP_PRODUCT_EXT_URL,
-        valueIdentifier: { system: PREQUAL_SYSTEM, value: candidateValue }
+        valueCoding: { system: CS_PREQUAL_PRODUCTIDS, code: candidateValue }
       });
     }
 
-    // --- (2) vaccineCode en ICD-11 MMS (sin traducir) ---
-    // Política: si ya trae un coding en ICD-11, lo respetamos.
-    // Si NO trae system pero el code "parece" ICD-11 (heurística simple), asignamos ICD-11.
-    // Si trae otro system, NO inventamos mapping (no hacemos translate).
+    // --- (2) vaccineCode: preferir catálogo ICVP/PreQual (Vaccine Type) ---
+    // Si falta 'system' en algún coding con 'code', asumimos catálogo ICVP Vaccine Type.
     if (im.vaccineCode?.coding?.length) {
-      const hasICD11 = im.vaccineCode.coding.some(c => c?.system === ICD11_MMS && c?.code);
-      if (!hasICD11) {
-        for (const c of im.vaccineCode.coding) {
-          if (!c.system && typeof c.code === 'string' && /^[A-Z][0-9]{2}(\.[0-9A-Z]+)?$/.test(c.code)) {
-            c.system = ICD11_MMS; // normalizamos solo si el code ya luce ICD-11
-            break;
-          }
+      for (const c of im.vaccineCode.coding) {
+        if (!c.system && c.code) {
+          c.system = CS_PREQUAL_VACCINETYPE;
         }
       }
     }
