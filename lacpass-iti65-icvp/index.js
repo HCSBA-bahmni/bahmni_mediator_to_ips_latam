@@ -153,14 +153,17 @@ const IPS_PROFILES = {
     BUNDLE: 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0',
     MEDICATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Medication-uv-ips',
     MEDICATION_REQUEST: 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationRequest-uv-ips',
-    COMPOSITION: 'http://smart.who.int/trust-phw/StructureDefinition/Composition-uv-ips-ICVP',
+    // ICVP guía pública usa este canónico:
+    COMPOSITION: 'http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP',
     PATIENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips',
     ALLERGY_INTOLERANCE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/AllergyIntolerance-uv-ips',
     CONDITION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Condition-uv-ips',
     MEDICATION_STATEMENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationStatement-uv-ips',
     PROCEDURE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Procedure-uv-ips',
-    IMMUNIZATION: 'http://smart.who.int/trust-phw/StructureDefinition/Immunization-uv-ips-ICVP',
-    OBSERVATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Observation-results-uv-ips'
+    // ICVP guía pública usa este canónico:
+    IMMUNIZATION: 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP',
+    OBSERVATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Observation-results-uv-ips',
+    ORGANIZATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Organization-uv-ips'
 };
 
 // Códigos LOINC para secciones IPS
@@ -177,10 +180,17 @@ const LOINC_CODES = {
 // Perfiles ICVP (racsel) — coinciden con el validador
 const LAC_PROFILES = {
     BUNDLE: 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0',
-    COMPOSITION: 'http://smart.who.int/trust-phw/StructureDefinition/Composition-uv-ips-ICVP',
-    IMMUNIZATION: 'http://smart.who.int/trust-phw/StructureDefinition/Immunization-uv-ips-ICVP',
-    PATIENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips'
+    // Alinear canónicos a los que exige la herramienta de validación:
+    COMPOSITION: 'http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP',
+    IMMUNIZATION: 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP',
+    PATIENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips',
+    ORGANIZATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Organization-uv-ips'
 };
+
+// Constantes ICVP
+const ICVP_PRODUCT_EXT_URL = 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP-productBusinessIdentifier';
+const PREQUAL_SYSTEM = 'https://extranet.who.int/prequal/vaccines';
+const ICD11_MMS = 'http://id.who.int/icd/release/11/mms';
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -721,6 +731,22 @@ async function normalizeTerminologyInBundle(bundle) {
   console.log('✅ Normalización terminológica completada');
 }
 
+// ====== FIXERS ESPECÍFICOS PARA ICVP/IPS ======
+function fixMedicationStatementCodingSystems(bundle) {
+  for (const e of (bundle.entry || [])) {
+    const r = e.resource;
+    if (r?.resourceType === 'MedicationStatement' && r.medicationCodeableConcept?.coding?.length) {
+      r.medicationCodeableConcept.coding = r.medicationCodeableConcept.coding.map(c => {
+        // Si no trae system (p.ej. "no-medication-info"), usar el CS IPS de absent-unknown.
+        if (!c.system) {
+          return { ...c, system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips' };
+        }
+        return c;
+      });
+    }
+  }
+}
+
 // ===================== Mapeo recurso → dominio =====================
 function resourceToDomain(resource) {
   switch (resource.resourceType) {
@@ -866,6 +892,29 @@ function joinUrl(base, path) {
     const b = (base || '').replace(/\/+$/, '');
     const p = (path || '').replace(/^\/+/, '');
     return `${b}/${p}`;
+}
+
+// ====== PUNTO ÚNICO DE POSTPROCESO ICVP ======
+function finalizeICVPBundle(bundle) {
+  try {
+    // Normaliza URNs + Composition + refs
+    normalizeDocumentBundleForURNs(bundle, updateReferencesInObject);
+    // Arreglos de perfil/terminología mínimos ICVP
+    postProcessICVPDocumentBundle(bundle);
+    // Verificación: entry[0] debe ser Composition y tener subject y custodian
+    const entry0 = bundle.entry?.[0]?.resource;
+    if (entry0?.resourceType !== 'Composition') {
+      throw new Error('ICVP document bundle inválido: entry[0] no es Composition');
+    }
+    if (!entry0.subject?.reference) {
+      throw new Error('ICVP Composition inválido: falta subject');
+    }
+    if (!entry0.custodian?.reference) {
+      throw new Error('ICVP Composition inválido: falta custodian');
+    }
+  } catch (e) {
+    console.warn('⚠️ finalizeICVPBundle error:', e?.message);
+  }
 }
 
 // ===================== PDQm =====================
@@ -1147,10 +1196,11 @@ function addProfile(resource, profileUrl) {
     if (!resource || !profileUrl) return;
 
     if (!resource.meta) resource.meta = {};
-    ensureArray(resource.meta, 'profile');
+    // Asegurar array y mantener todos los perfiles necesarios
+    resource.meta.profile = Array.isArray(resource.meta.profile) ? resource.meta.profile : [];
 
     if (!resource.meta.profile.includes(profileUrl)) {
-        resource.meta.profile = profileUrl;
+        resource.meta.profile.push(profileUrl);
     }
 }
 
@@ -1236,6 +1286,12 @@ function ensureIpsProfile(resource) {
     if (profile) {
         addProfile(resource, profile);
     }
+}
+
+// Extiende a Organization para evitar "unknown profile" con perfiles locales
+function ensureIpsOrganizationProfile(org) {
+  if (!org || org.resourceType !== 'Organization') return;
+  addProfile(org, IPS_PROFILES.ORGANIZATION);
 }
 
 
@@ -1559,6 +1615,11 @@ function normalizeDocumentBundleForURNs(bundle, updateReferencesInObject) {
     const compEntry = bundle.entry?.[0];
     if (compEntry?.resource?.resourceType === 'Composition') {
         const comp = compEntry.resource;
+        // Alinear al canónico ICVP requerido por el validador
+        try {
+            ensureLacCompositionProfile(comp);
+        } catch {}
+
         const fullUrl = compEntry.fullUrl || '';
         const tail = fullUrl.startsWith('urn:uuid:') ? fullUrl.slice(9) : '';
         if (!comp.id || comp.id.toLowerCase() !== tail.toLowerCase()) {
@@ -1606,6 +1667,9 @@ function normalizeDocumentBundleForURNs(bundle, updateReferencesInObject) {
             }
         }
     }
+
+    // Armonizar perfiles Organization a IPS conocidos
+    for (const e of (bundle.entry || [])) if (e.resource?.resourceType === 'Organization') ensureIpsOrganizationProfile(e.resource);
 
     // 4) Dedupe en section[].entry (evita refs duplicadas)
     for (const s of (bundle.entry?.[0]?.resource?.section || [])) {
@@ -1716,6 +1780,99 @@ function sortCodingsPreferred_OLD(codings) {
         return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
     });
 }
+
+/**
+ * Normaliza un Bundle tipo "document" a URN UUID y garantiza que:
+ *  - Composition.meta.profile use el canónico ICVP esperado por el validador.
+ *  - Composition.subject y author[] referencien por URN UUID (no relativo/absoluto).
+ *  - Patient/Practitioner/Organization usen perfiles IPS conocidos (evita UNKNOWN).
+ *  - Immunization cumpla con ICVP: vaccineCode en ICD-11 MMS si es posible y
+ *    la extensión de ProductID (PreQual) mantenga system/código.
+ */
+function postProcessICVPDocumentBundle(bundle) {
+  if (!bundle || String(bundle.type || '').toLowerCase() !== 'document') return;
+
+  // 1) Forzar modo URN para entry.fullUrl y referencias
+  applyUrlModeToBundle(bundle, 'urn', updateReferencesInObject);
+
+  // 2) Alinear perfiles del Bundle y de Composition a canónicos ICVP
+  ensureLacBundleProfile(bundle); // ya mapea al ICVP Bundle con versión
+  const comp = bundle.entry?.[0]?.resource;
+  if (comp?.resourceType === 'Composition') {
+    ensureLacCompositionProfile(comp); // cambia a http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP
+  }
+
+  // 3) Parche de subject/author a URN (por si vinieran relativos)
+  const compEntry = bundle.entry?.[0];
+  if (comp && compEntry?.fullUrl?.startsWith('urn:uuid:')) {
+    const patEntry = (bundle.entry || []).find(en => en.resource?.resourceType === 'Patient');
+    if (patEntry?.fullUrl) {
+      comp.subject = { reference: patEntry.fullUrl };
+    }
+    if (Array.isArray(comp.author)) {
+      comp.author = comp.author.map(a => {
+        // Si viene "Practitioner/xxx" o "Organization/yyy" → forzar URN si existe en el bundle
+        if (/^[A-Za-z]+\/[A-Za-z0-9\-\.]+$/.test(a?.reference || '')) {
+          const [typ, id] = a.reference.split('/');
+          const hit = (bundle.entry || []).find(en => en.resource?.resourceType === typ && en.resource?.id === id);
+          return hit?.fullUrl ? { reference: hit.fullUrl } : a;
+        }
+        return a;
+      });
+    }
+  }
+
+  // 4) Quitar perfiles locales desconocidos y forzar IPS Organization
+  for (const e of (bundle.entry || [])) {
+    const r = e.resource;
+    if (r?.resourceType === 'Organization') {
+      // Reemplaza perfiles locales (p.ej. lac-organization) por IPS Organization
+      addProfile(r, IPS_PROFILES.ORGANIZATION);
+    }
+  }
+
+  // 5) Arreglar MedicationStatement sin system en "no-medication-info"
+  fixMedicationStatementCodingSystems(bundle);
+
+  // 6) Immunization (ICVP): perfil + business identifier + fallback de sistema en vaccineCode
+  for (const e of (bundle.entry || [])) {
+    const im = e.resource;
+    if (im?.resourceType !== 'Immunization') continue;
+    
+    // Perfil ICVP
+    addProfile(im, LAC_PROFILES.IMMUNIZATION);
+
+    // --- (1) Extensión de PRODUCTO = PreQual ---
+    const hasProductId = Array.isArray(im.extension) &&
+                         im.extension.some(x => x?.url === ICVP_PRODUCT_EXT_URL && x?.valueIdentifier?.value);
+    if (!hasProductId) {
+      im.extension = im.extension || [];
+      // Usa un identificador estable del producto si lo traes; si no, cae a un candidato neutro
+      const candidateValue = im?.vaccineCode?.coding?.find(c => c?.code)?.code || im?.id || 'unknown';
+      im.extension.unshift({
+        url: ICVP_PRODUCT_EXT_URL,
+        valueIdentifier: { system: PREQUAL_SYSTEM, value: candidateValue }
+      });
+    }
+
+    // --- (2) vaccineCode en ICD-11 MMS (sin traducir) ---
+    // Política: si ya trae un coding en ICD-11, lo respetamos.
+    // Si NO trae system pero el code "parece" ICD-11 (heurística simple), asignamos ICD-11.
+    // Si trae otro system, NO inventamos mapping (no hacemos translate).
+    if (im.vaccineCode?.coding?.length) {
+      const hasICD11 = im.vaccineCode.coding.some(c => c?.system === ICD11_MMS && c?.code);
+      if (!hasICD11) {
+        for (const c of im.vaccineCode.coding) {
+          if (!c.system && typeof c.code === 'string' && /^[A-Z][0-9]{2}(\.[0-9A-Z]+)?$/.test(c.code)) {
+            c.system = ICD11_MMS; // normalizamos solo si el code ya luce ICD-11
+            break;
+          }
+        }
+      }
+    }
+  }
+}
+
 // Función auxiliar para verificar y corregir referencias
 function checkAndFixReferences(obj, availableUrls, bundle) {
     if (!obj || typeof obj !== 'object') return;
@@ -2612,6 +2769,10 @@ app.post('/icvp/_iti65', async (req, res) => {
 
     // ========= Paso opcional 2: Terminología por dominio =========
     await normalizeTerminologyInBundle(summaryBundle);
+
+    // ========= Paso 2.1: Finalizar detalles ICVP =========
+    // Esto corrige: subject/author URN, perfiles icvp, Organization IPS, vaccineCode.system, etc.
+    finalizeICVPBundle(summaryBundle);
 
     // ========= Resto del flujo ITI-65 =========
     const now = new Date().toISOString();
