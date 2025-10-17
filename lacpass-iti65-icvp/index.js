@@ -39,6 +39,10 @@ const {
   FEATURE_TS_VALIDATE_CS_ENABLED = 'false',
   FEATURE_TS_LOOKUP_ENABLED = 'true',
   FEATURE_TS_TRANSLATE_ENABLED = 'false',
+  
+  // Feature flag específico para vacunas (nuevo)
+  // Si no está definida, por defecto queda habilitado (true) para no romper otros ambientes
+  FEATURE_TS_VACCINES_ENABLED = 'true',
 
   // ===== OIDs para identificadores de paciente (desde tu .env) =====
   LAC_NATIONAL_ID_SYSTEM_OID,
@@ -691,6 +695,12 @@ async function normalizeTerminologyInBundle(bundle) {
   for (const entry of bundle.entry) {
     const res = entry.resource;
     if (!res) continue;
+
+    // 🚫 Desactivar toda normalización terminológica para vacunas
+    if (res.resourceType === 'Immunization' && (FEATURE_TS_VACCINES_ENABLED ?? 'true').toLowerCase() === 'false') {
+      tsLog('debug', 'TS[SKIP]: Vaccines normalization disabled by FEATURE_TS_VACCINES_ENABLED=false');
+      continue; // salir sin hacer lookup/translate
+    }
 
     // Determinar dominio
     const domain = resourceToDomain(res);
