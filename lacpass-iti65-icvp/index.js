@@ -902,8 +902,28 @@ function joinUrl(base, path) {
 // ====== PUNTO ÚNICO DE POSTPROCESO ICVP ======
 function finalizeICVPBundle(bundle) {
   try {
-    // Normaliza URNs + Composition + refs
+    // Normaliza URNs + Composition + refs (hardening: todo a URN dentro de Document)
     normalizeDocumentBundleForURNs(bundle, updateReferencesInObject);
+    for (const ent of (bundle.entry || [])) {
+      const r = ent.resource;
+      if (!r || !ent.fullUrl) continue;
+      // si el fullUrl no es URN, y tenemos id, conviértelo
+      if (!/^urn:uuid:/.test(ent.fullUrl) && r.id) {
+        ent.fullUrl = `urn:uuid:${r.id}`;
+      }
+    }
+    // Composition: subject/author/custodian -> que referencien exactamente esos URN
+    const comp = getComposition(bundle);
+    if (comp) {
+      const pt = getPatientEntry(bundle);
+      if (pt?.fullUrl) comp.subject = { reference: pt.fullUrl };
+      if (Array.isArray(comp.author)) {
+        comp.author = comp.author.map(a => {
+          const pr = (bundle.entry || []).find(e => e.resource?.resourceType === 'Practitioner');
+          return pr?.fullUrl ? { reference: pr.fullUrl } : a;
+        });
+      }
+    }
     // Arreglos de perfil/terminología mínimos ICVP
     postProcessICVPDocumentBundle(bundle);
     // Limpieza de extensiones no permitidas (narrativeLink)
@@ -944,6 +964,10 @@ function getPrimaryImmunizationInfo(bundle) {
   let prequal = null;
   for (const ext of (im.extension || [])) {
     if (ext?.url === ICVP_PRODUCT_EXT_URL) {
+      // normaliza sistema mal tipeado "...PreQualProductIDs" -> "...PreQualProductIds"
+      if (ext.valueCoding?.system === 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs') {
+        ext.valueCoding.system = CS_PREQUAL_PRODUCTIDS;
+      }
       if (ext.valueCoding?.system && ext.valueCoding?.code) {
         prequal = { system: ext.valueCoding.system, value: ext.valueCoding.code };
         break;
@@ -1491,17 +1515,22 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         };
     } else if (allowedTypes.includes('Immunization')) {
         placeholder = {
-            fullUrl: 'urn:uuid:meds-none',
+            fullUrl: 'urn:uuid:imm-none',
             resource: {
                 resourceType: 'Immunization',
-                meta: { profile: [IPS_PROFILES.MEDICATION_STATEMENT] },
-                status: 'active',
-                medicationCodeableConcept: {
-                    coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-immunization', display: 'No known immunization' }],
-                    text: 'No known Immunization'
+                meta: { profile: [IPS_PROFILES.IMMUNIZATION] },
+                status: 'not-done',
+                // usamos absent/unknown para "no información de inmunizaciones"
+                vaccineCode: {
+                    coding: [{
+                        system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips',
+                        code: 'no-immunization-info',
+                        display: 'No information about immunizations'
+                    }],
+                    text: 'No information about immunizations'
                 },
                 subject: patRef ? { reference: patRef } : undefined,
-                effectiveDateTime: nowIso
+                occurrenceDateTime: nowIso
             }
         };
     }  else if (allowedTypes.includes('MedicationStatement')) {
@@ -1951,8 +1980,14 @@ function postProcessICVPDocumentBundle(bundle) {
   for (const e of (bundle.entry || [])) {
     const r = e.resource;
     if (r?.resourceType === 'Organization') {
-      // Reemplaza perfiles locales (p.ej. lac-organization) por IPS Organization
+      // Perfil IPS para evitar "unknown profile"
       addProfile(r, IPS_PROFILES.ORGANIZATION);
+      // Reemplaza systems HTTP locales por URN OID si detecta los dominios conocidos
+      (r.identifier || []).forEach(id => {
+        if (id.system === 'https://registroorganizaciones.cl/id') {
+          id.system = toUrnOid(process.env.LAC_ORG_SYS_OID || '2.16.152.1.3.0.1');
+        }
+      });
     }
   }
 
@@ -1966,6 +2001,21 @@ function postProcessICVPDocumentBundle(bundle) {
     
     // Perfil ICVP
     addProfile(im, LAC_PROFILES.IMMUNIZATION);
+
+    // --- ProductID: migrar valueIdentifier -> valueCoding (PCMT), y arreglar system
+    if (Array.isArray(im.extension)) {
+      im.extension.forEach(ext => {
+        if (ext?.url === ICVP_PRODUCT_EXT_URL) {
+          if (ext.valueIdentifier?.value) {
+            ext.valueCoding = { system: CS_PREQUAL_PRODUCTIDS, code: String(ext.valueIdentifier.value) };
+            delete ext.valueIdentifier;
+          }
+          if (ext.valueCoding?.system === 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs') {
+            ext.valueCoding.system = CS_PREQUAL_PRODUCTIDS;
+          }
+        }
+      });
+    }
 
     // --- (1) Extensión de PRODUCTO = PreQual (PCMT ProductID) ---
     const hasProductId = Array.isArray(im.extension) &&
@@ -1984,11 +2034,14 @@ function postProcessICVPDocumentBundle(bundle) {
     // --- (2) vaccineCode: preferir catálogo ICVP/PreQual (Vaccine Type) ---
     // Si falta 'system' en algún coding con 'code', asumimos catálogo ICVP Vaccine Type.
     if (im.vaccineCode?.coding?.length) {
-      for (const c of im.vaccineCode.coding) {
-        if (!c.system && c.code) {
+      im.vaccineCode.coding.forEach(c => {
+        if (!c?.code) return;
+        if (!c.system) c.system = CS_PREQUAL_VACCINETYPE;
+        // corrige un system inválido si lo encontráramos
+        if (c.system === 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs') {
           c.system = CS_PREQUAL_VACCINETYPE;
         }
-      }
+      });
     }
   }
 }
@@ -2522,7 +2575,7 @@ function fixBundleValidationIssues(summaryBundle) {
             console.error('❌ Bundle.entry[0] debe ser Composition');
             return false;
         }
-        if (!comp.resource.meta?.profile?.includes('http://smart.who.int/trust-phw/StructureDefinition/Composition-uv-ips-ICVP')) {
+        if (!comp.resource.meta?.profile?.includes('http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP')) {
             console.error('❌ Composition no tiene perfil ICVP');
             return false;
         }
@@ -2670,7 +2723,7 @@ function normalizeOrganizationResource(orga) {
     const identifiers = [
         {
             "use": "official",
-            "system": "https://registroorganizaciones.cl/id",
+            "system": toUrnOid(process.env.LAC_ORG_SYS_OID || '2.16.152.1.3.0.1'),
             "value": "G7H8"
         }
     ];
@@ -2695,9 +2748,7 @@ function normalizeOrganizationResource(orga) {
         }
     ];
 
-    orga.meta = {
-        "profile": [ "http://lacpass.racsel.org/StructureDefinition/lac-organization" ]
-    };
+    addProfile(orga, IPS_PROFILES.ORGANIZATION);
     orga.identifier = identifiers;
     orga.name = 'Clínica Las Condes';
     orga.address = address;
@@ -2721,21 +2772,8 @@ function ensureIcvpForImmunization(im) {
         });*/
     }
 
-    // 2) Garantizar vaccineCode con coding del catálogo ICVP
-    const icvpSystemHint = 'https://extranet.who.int/icvp'; // ajustar al sistema real ICVP si se conoce
-    im.vaccineCode = im.vaccineCode || { coding: [] };
-    const hasIcvpCoding = (im.vaccineCode.coding || []).some(c => String(c.system || '').toLowerCase().includes('icvp') || String(c.system || '').toLowerCase().includes('prequal'));
-    if (!hasIcvpCoding) {
-        const firstCode = im.vaccineCode.coding?.[0];
-        const newCoding = {
-            system: icvpSystemHint,
-            code: /*firstCode?.code || im.id*/ 'YellowFever' || 'unknown',
-            display: firstCode?.display || im.vaccineCode?.text || 'ICVP vaccine'
-        };
-        // Prepend para que el validador vea primero el coding ICVP
-        //im.vaccineCode.coding = [newCoding, ...(im.vaccineCode.coding || [])];
-        im.vaccineCode.coding = [newCoding];
-    }
+    // 2) vaccineCode: si falta system, ya lo corrige postProcessICVPDocumentBundle a CS_PREQUAL_VACCINETYPE
+    // no agregar codings "inventados"
 }
 
 
