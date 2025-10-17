@@ -191,6 +191,7 @@ const LAC_PROFILES = {
 const ICVP_PRODUCT_EXT_URL = 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP-productBusinessIdentifier';
 const PREQUAL_SYSTEM = 'https://extranet.who.int/prequal/vaccines';
 const ICD11_MMS = 'http://id.who.int/icd/release/11/mms';
+const LOINC_PATIENT_SUMMARY = '60591-5';
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -901,6 +902,8 @@ function finalizeICVPBundle(bundle) {
     normalizeDocumentBundleForURNs(bundle, updateReferencesInObject);
     // Arreglos de perfil/terminología mínimos ICVP
     postProcessICVPDocumentBundle(bundle);
+    // Limpieza de extensiones no permitidas (narrativeLink)
+    for (const e of (bundle.entry || [])) stripNarrativeLinkExtensions(e.resource);
     // Verificación: entry[0] debe ser Composition y tener subject y custodian
     const entry0 = bundle.entry?.[0]?.resource;
     if (entry0?.resourceType !== 'Composition') {
@@ -915,6 +918,80 @@ function finalizeICVPBundle(bundle) {
   } catch (e) {
     console.warn('⚠️ finalizeICVPBundle error:', e?.message);
   }
+}
+
+// ====== NUEVO: extractores para reutilizar datos del ICVP ======
+function getComposition(bundle) {
+  return bundle?.entry?.[0]?.resource?.resourceType === 'Composition'
+    ? bundle.entry[0].resource
+    : (bundle?.entry || []).map(e=>e.resource).find(r => r?.resourceType==='Composition') || null;
+}
+function getPatientEntry(bundle) {
+  return (bundle?.entry || []).find(e => e.resource?.resourceType === 'Patient') || null;
+}
+function getRefOrNull(entry) {
+  return entry?.fullUrl || (entry?.resource?.id ? `${entry.resource.resourceType}/${entry.resource.id}` : null);
+}
+// Toma el PRIMER Immunization válido y extrae PreQual + ICD-11
+function getPrimaryImmunizationInfo(bundle) {
+  const im = (bundle?.entry || []).map(e=>e.resource).find(r => r?.resourceType==='Immunization');
+  if (!im) return null;
+  // PreQual en extensión valueIdentifier
+  let prequal = null;
+  for (const ext of (im.extension || [])) {
+    if (ext?.url === ICVP_PRODUCT_EXT_URL && ext.valueIdentifier?.system && ext.valueIdentifier?.value) {
+      prequal = { system: ext.valueIdentifier.system, value: ext.valueIdentifier.value };
+      break;
+    }
+  }
+  // ICD-11 en vaccineCode
+  const icd11 = (im.vaccineCode?.coding || []).find(c => c.system === ICD11_MMS && c.code);
+  return { prequal, icd11, immunization: im };
+}
+
+// ====== NUEVO: construir DocumentReference para ITI-65 usando los datos del ICVP entrante ======
+function buildDocumentReferenceFromICVP(icvpBundle) {
+  const comp = getComposition(icvpBundle);
+  const ptEntry = getPatientEntry(icvpBundle);
+  const ptRef = getRefOrNull(ptEntry);
+  const primary = getPrimaryImmunizationInfo(icvpBundle);
+
+  const docRef = {
+    resourceType: 'DocumentReference',
+    status: 'current',
+    type: { coding: [{ system: 'http://loinc.org', code: LOINC_PATIENT_SUMMARY, display: 'Patient Summary Document' }] },
+    category: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/document-classcode', code: 'clinical-document' }] }],
+    subject: ptRef ? { reference: ptRef } : undefined,
+    date: comp?.date || new Date().toISOString(),
+    description: comp?.title || 'International Certificate of Vaccination/Prophylaxis',
+    content: [{
+      attachment: {
+        // El propio Bundle ICVP serializado como documento
+        contentType: 'application/fhir+json',
+        // El generador ITI-65 decidirá si embebe (Binary) o referencia URL según ATTACHMENT_URL_MODE
+      }
+    }]
+  };
+  // Custodian (Organization) y Author (resolve URN)
+  if (comp?.custodian?.reference) docRef.custodian = { reference: comp.custodian.reference };
+  if (Array.isArray(comp?.author) && comp.author[0]?.reference) {
+    docRef.author = [{ reference: comp.author[0].reference }];
+  }
+  // Identificadores: arrastra el identifier del Bundle y/o PreQual como identifier secundario
+  const ids = [];
+  if (icvpBundle?.identifier?.system && icvpBundle?.identifier?.value) {
+    ids.push({ system: icvpBundle.identifier.system, value: icvpBundle.identifier.value });
+  }
+  if (primary?.prequal?.system && primary?.prequal?.value) {
+    ids.push({ system: primary.prequal.system, value: primary.prequal.value });
+  }
+  if (ids.length) docRef.identifier = ids;
+  // Si hay ICD-11 en vaccineCode, lo incluimos como código complementario (no obligatorio)
+  if (primary?.icd11) {
+    docRef.securityLabel = docRef.securityLabel || [];
+    docRef.securityLabel.push({ system: ICD11_MMS, code: primary.icd11.code, display: primary.icd11.display });
+  }
+  return docRef;
 }
 
 // ===================== PDQm =====================
@@ -1768,6 +1845,38 @@ function enforceCompositionRefsAndMinimalTerminology(bundle, updateReferencesInO
       });
     }
   }
+}
+
+// ====== NUEVO: Generador del Provide Document Bundle (ITI-65) usando el ICVP ya normalizado ======
+function buildProvideDocumentBundle_ICVP(icvpBundle) {
+  // 1) Asegurar que el ICVP esté listo (URNs, perfiles, custodian/subject)
+  finalizeICVPBundle(icvpBundle);
+  // 2) Construir el DocumentReference con info rica
+  const docRef = buildDocumentReferenceFromICVP(icvpBundle);
+  // 3) Armar el Bundle de transacción ITI-65 (MHD)
+  const docId = uuidv4();
+  const docFullUrl = makeUrn(docId);
+  const prov = {
+    resourceType: 'Bundle',
+    type: 'transaction',
+    entry: [
+      {
+        fullUrl: docFullUrl,
+        request: { method: 'POST', url: 'DocumentReference' },
+        resource: {
+          ...docRef,
+          // formatCode MHD
+          content: docRef.content?.map(c => ({
+            ...c,
+            format: { coding: [{ system: MHD_FORMAT_SYSTEM, code: MHD_FORMAT_CODE }] }
+          }))
+        }
+      },
+      // Según tu configuración previa, aquí incluyes Binary o Bundle/document
+      // (no cambiamos tu estrategia; solo aseguramos que el DocumentReference se nutra del ICVP)
+    ]
+  };
+  return prov;
 }
 
 // ===================== Las siguientes funciones ya están definidas arriba =====================
