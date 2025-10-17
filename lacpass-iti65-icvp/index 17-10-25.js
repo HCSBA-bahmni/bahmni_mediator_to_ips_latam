@@ -37,7 +37,6 @@ const {
   FEATURE_TS_EXPAND_ENABLED = 'true',
   FEATURE_TS_VALIDATE_VS_ENABLED = 'true',
   FEATURE_TS_VALIDATE_CS_ENABLED = 'true',
-  FEATURE_TS_LOOKUP_ENABLED = 'true',
   FEATURE_TS_TRANSLATE_ENABLED = 'true',
 
   // ===== OIDs para identificadores de paciente (desde tu .env) =====
@@ -120,15 +119,8 @@ const {
   VACCINES_TRANSLATE_SOURCE_SYSTEM = 'http://snomed.info/sct',
   VACCINES_TRANSLATE_TARGET_SYSTEM = 'http://hl7.org/fhir/sid/icd-10',
 
-  // Nuevo: configuración para formatCode
-  MHD_FORMAT_CODE = 'urn:ihe:iti:xds-sd:text:2008',
-  MHD_FORMAT_SYSTEM = 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode',
-  
-  // Debug level para ops terminológicas
-  TS_DEBUG_LEVEL = 'warn', // 'debug', 'warn', 'error', 'silent'
 } = process.env;
 
-// ====== NUEVO: separador configurable para URN OID (por defecto ".")
 const OID_URN_SEPARATOR = process.env.OID_URN_SEPARATOR || '.';
 
 const {
@@ -179,28 +171,6 @@ const LAC_PROFILES = {
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
-
-// --- SNOMED $lookup (solo consulta, sin usar respuesta) -----------------------
-const SNOMED_SYSTEM = 'http://snomed.info/sct';
-const LOOKUP_SNOMED_ONLY = String(process.env.LOOKUP_SNOMED_ONLY || 'false').toLowerCase() === 'true';
-
-async function fireAndForgetSnomedLookup(ts, system, code, versionUri) {
-  if (!ts || !system || !code) return;
-  try {
-    // SOLO CONSULTA: CodeSystem/$lookup (no usamos la respuesta)
-    await ts.get('/CodeSystem/$lookup', {
-      params: {
-        system,                   // http://snomed.info/sct
-        code,                     // p.ej. 59621000
-        version: versionUri,      // p.ej. http://snomed.info/sct/900000000000207008/version/20240331
-        _format: 'json'
-      }
-    });
-  } catch (e) {
-    // Log no bloqueante (usar WARN para que se vea con TS_DEBUG_LEVEL=warn)
-    tsLog('warn', `SNOMED $lookup fallo: ${system}|${code}|${versionUri} -> ${e?.response?.status || e?.message}`);
-  }
-}
 
 // ===================== Debug dir =====================
 const debugDir = DEBUG_DIR ? path.resolve(DEBUG_DIR) : '/tmp';
@@ -302,28 +272,6 @@ function buildTsClient() {
   });
 }
 
-// ===================== Logging helper para terminología =====================
-function tsLog(level, message, data = null) {
-  const debugLevel = TS_DEBUG_LEVEL.toLowerCase();
-  
-  if (debugLevel === 'silent') return;
-  
-  const shouldLog = {
-    debug: ['debug'].includes(debugLevel),
-    warn: ['debug', 'warn'].includes(debugLevel), 
-    error: ['debug', 'warn', 'error'].includes(debugLevel)
-  }[level];
-  
-  if (shouldLog) {
-    const prefix = `🔧 TS[${level.toUpperCase()}]:`;
-    if (data) {
-      console[level === 'error' ? 'error' : 'log'](prefix, message, data);
-    } else {
-      console[level === 'error' ? 'error' : 'log'](prefix, message);
-    }
-  }
-}
-
 // ===================== Domain config =====================
 const DOMAIN_CONFIG = {
   conditions: {
@@ -381,88 +329,34 @@ const DOMAIN_NAMES = new Set(arr(TS_DOMAINS));
 async function opValidateVS(ts, { code, system, display }, domainCfg) {
   if (!isTrue(FEATURE_TS_VALIDATE_VS_ENABLED)) return null;
   if (!domainCfg?.vsValidate) return null;
-  
   try {
     const params = { url: domainCfg.vsValidate, code };
     if (system) params.system = system;
     if (display) params.display = display;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
-    
-    tsLog('debug', `Validating VS: ${domainCfg.vsValidate} | ${system}|${code}`);
-    
     const { data } = await ts.get('/ValueSet/$validate-code', { params });
     const ok = extractResultFromParameters(data);
-    
     if (ok.result) {
-      tsLog('debug', `✅ VS validation OK: ${code} -> ${ok.display || display}`);
       return { system: system, code, display: ok.display || display, source: 'validate-vs' };
-    } else {
-      tsLog('debug', `❌ VS validation failed: ${system}|${code}`);
     }
-  } catch (e) {
-    tsLog('warn', `VS validation error: ${e.response?.status} ${e.message}`, { system, code });
-  }
+  } catch { /* noop */ }
   return null;
 }
-
 async function opValidateCS(ts, { code, system, display }, domainCfg) {
   if (!isTrue(FEATURE_TS_VALIDATE_CS_ENABLED)) return null;
-  const url = domainCfg?.codeSystem || system;
-  if (!url || !code) return null;
-
-  try {
-    const params = { url, code };
-    const version = domainCfg?.codeSystemVersion || process.env.TS_SNOMED_VERSION;
-
-    if (version) params.version = version;
-    if (display) params.display = display;
-    if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
-
-    tsLog('debug', `Validating CS: ${url} | ${code}`);
-
-    const { data } = await ts.get('/CodeSystem/$validate-code', { params });
-    const ok = extractResultFromParameters(data);
-    
-    if (ok.result) {
-      tsLog('debug', `✅ CS validation OK: ${code} -> ${ok.display || display}`);
-      return { system: url, code, display: ok.display || display, source: 'validate-cs' };
-    } else {
-      tsLog('debug', `❌ CS validation failed: ${url}|${code}`);
-    }
-  } catch (e) {
-    tsLog('warn', `CS validation error: ${e.response?.status} ${e.message}`, { system: url, code });
-  }
-  return null;
-}
-
-async function opLookup(ts, { code, system, display }, domainCfg) {
-  if (!isTrue(FEATURE_TS_LOOKUP_ENABLED)) return null;
-  if (!system || !code) return null;
-
+  if (!domainCfg?.codeSystem || !system) return null;
   try {
     const params = { system, code };
-    const version = domainCfg?.codeSystemVersion || process.env.TS_SNOMED_VERSION;
-
-    if (version) params.version = version;
+    if (display) params.display = display;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
-
-    tsLog('debug', `Looking up: ${system}|${code}`);
-
-    const { data } = await ts.get('/CodeSystem/$lookup', { params });
-    const disp = extractDisplayFromLookup(data);
-    
-    if (disp) {
-      tsLog('debug', `✅ Lookup OK: ${code} -> ${disp}`);
-      return { system, code, display: disp, source: 'lookup' };
-    } else {
-      tsLog('debug', `❌ Lookup no display: ${system}|${code}`);
+    const { data } = await ts.get('/CodeSystem/$validate-code', { params });
+    const ok = extractResultFromParameters(data);
+    if (ok.result) {
+      return { system, code, display: ok.display || display, source: 'validate-cs' };
     }
-  } catch (e) {
-    tsLog('warn', `Lookup error: ${e.response?.status} ${e.message}`, { system, code });
-  }
+  } catch { /* noop */ }
   return null;
 }
-
 async function opExpand(ts, { code, system, display }, domainCfg) {
   if (!isTrue(FEATURE_TS_EXPAND_ENABLED)) return null;
   if (!domainCfg?.vsExpand) return null;
@@ -482,7 +376,17 @@ async function opExpand(ts, { code, system, display }, domainCfg) {
   } catch { /* noop */ }
   return null;
 }
-
+async function opLookup(ts, { code, system, display }) {
+  if (!system || !code) return null; // lookup requiere ambos
+  try {
+    const params = { system, code };
+    if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
+    const { data } = await ts.get('/CodeSystem/$lookup', { params });
+    const disp = extractDisplayFromLookup(data);
+    if (disp) return { system, code, display: disp, source: 'lookup' };
+  } catch { /* noop */ }
+  return null;
+}
 async function opTranslate(ts, { code, system, display }, domainCfg) {
   if (!isTrue(FEATURE_TS_TRANSLATE_ENABLED)) return null;
 
@@ -496,29 +400,21 @@ async function opTranslate(ts, { code, system, display }, domainCfg) {
   if (code) params.code = code;
   if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
 
+  // Si no hay url/source/target ni targetsystem, no intentamos translate
   const hasConfig = params.url || params.source || params.target || params.targetsystem;
-  if (!hasConfig) {
-    tsLog('debug', 'Translate skipped: no ConceptMap config', { system, code });
-    return null;
-  }
+  if (!hasConfig) return null;
 
   try {
-    tsLog('debug', `Translating: ${system}|${code} -> ${params.targetsystem}`);
     const { data } = await ts.get('/ConceptMap/$translate', { params });
     const match = extractMatchFromTranslate(data);
     if (match?.system && match?.code) {
-      tsLog('debug', `✅ Translate OK: ${code} -> ${match.code}`);
       return { system: match.system, code: match.code, display: match.display || display || code, source: 'translate' };
-    } else {
-      tsLog('debug', `❌ Translate no match: ${system}|${code}`);
     }
-  } catch (e) {
-    tsLog('warn', `Translate error: ${e.response?.status} ${e.message}`, { system, code });
-  }
+  } catch { /* noop */ }
   return null;
 }
 
-// ===================== TerminologyOp Response Parsers =====================
+// ---- Parsers auxiliares ----
 function extractResultFromParameters(data) {
   // Parameters.parameter[name=result|message|display]
   const out = { result: false, display: undefined };
@@ -538,176 +434,21 @@ function extractDisplayFromLookup(data) {
   const p = data.parameter.find(x => x.name === 'display');
   return p?.valueString;
 }
-
 function extractMatchFromTranslate(data) {
-  if (data?.resourceType !== 'Parameters') return null;
-  const matchParam = data.parameter?.find(p => p.name === 'match');
-  if (!matchParam?.part) return null;
-
-  let equivalence, system, code, display;
-  for (const part of matchParam.part) {
-    if (part.name === 'equivalence') equivalence = part.valueCode;
-    if (part.name === 'concept' && part.valueCoding) {
-      system = part.valueCoding.system;
-      code = part.valueCoding.code;
-      display = part.valueCoding.display;
+  // Parameters.parameter[name=match].part[name=concept].valueCoding{system,code,display}
+  if (data?.resourceType !== 'Parameters' || !Array.isArray(data.parameter)) return null;
+  const matchParam = data.parameter.find(p => p.name === 'match');
+  const parts = matchParam?.part || [];
+  const concept = parts.find(x => x.name === 'concept')?.valueCoding;
+  if (concept?.code) return { system: concept.system, code: concept.code, display: concept.display };
+  // fallback: algunos servidores devuelven primer 'match' en array
+  for (const p of data.parameter) {
+    if (p.name === 'match' && Array.isArray(p.part)) {
+      const c = p.part.find(x => x.name === 'concept')?.valueCoding;
+      if (c?.code) return { system: c.system, code: c.code, display: c.display };
     }
-  }
-
-  if (equivalence && system && code) {
-    return { system, code, display };
   }
   return null;
-}
-
-// ===================== Terminology Pipeline =====================
-const CS_ABSENT = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
-const CS_SCT = 'http://snomed.info/sct';
-
-function shouldLookupTS(system) {
-  if (!isTrue(FEATURE_TS_ENABLED)) return false;
-  if (system === CS_ABSENT) return false;
-  if (system === CS_SCT && process.env.TS_HAS_SNOMED !== 'true') return false;
-  return true;
-}
-
-function sortCodingsPreferred(codings) {
-  const pref = [CS_SCT]; // primero SNOMED
-  return [...codings].sort((a, b) => {
-    const aIdx = pref.indexOf(a.system);
-    const bIdx = pref.indexOf(b.system);
-    if (aIdx !== -1 && bIdx === -1) return -1;
-    if (aIdx === -1 && bIdx !== -1) return 1;
-    return 0;
-  });
-}
-
-function pickDomainCoding(cc, domainCfg) {
-  if (!cc?.coding) return null;
-  const targetSys = domainCfg?.codeSystem || 'http://snomed.info/sct';
-  return cc.coding.find(c => c.system === targetSys && c.code) || cc.coding[0] || null;
-}
-
-function buildPipeline(domain, ts, base, domainCfg) {
-  // Secuencia: validateVS → validateCS → lookup → translate
-  return [
-    () => opValidateVS(ts, base, domainCfg),
-    () => opValidateCS(ts, base, domainCfg),
-    () => opLookup(ts, base, domainCfg),
-    () => opTranslate(ts, base, domainCfg),
-  ];
-}
-
-async function normalizeCC(ts, cc, domainCfg, domain) {
-  if (!cc?.coding || !Array.isArray(cc.coding) || cc.coding.length === 0) return;
-
-  const target = pickDomainCoding(cc, domainCfg);
-  if (!target) return;
-
-  const base = {
-    system: target.system,
-    code: target.code,
-    display: target.display || cc.text
-  };
-
-  // Skip TS lookup for absent/unknown codes and SNOMED when not available
-  if (!shouldLookupTS(base.system)) return;
-
-  const steps = buildPipeline(domain, ts, base, domainCfg);
-
-  for (const step of steps) {
-    try {
-      const result = await step();
-      if (result?.system && result?.code) {
-        target.system = result.system;
-        target.code = result.code;
-        target.display = result.display || target.display || cc.text;
-        return; // Usa el primer resultado exitoso
-      }
-    } catch (error) {
-      continue; // Continúa con el siguiente paso
-    }
-  }
-}
-
-function* iterateCodeableConcepts(resource) {
-  if (!resource || typeof resource !== 'object') return;
-
-  const typeToFields = {
-    'Condition': ['code'],
-    'Procedure': ['code'],
-    'MedicationStatement': ['medicationCodeableConcept'],
-    'MedicationRequest': ['medicationCodeableConcept'],
-    'Immunization': ['vaccineCode'],
-    'AllergyIntolerance': ['code'],
-    'Observation': ['code'],
-  };
-
-  const fields = typeToFields[resource.resourceType] || [];
-  for (const field of fields) {
-    if (resource[field]) {
-      yield { path: field, cc: resource[field] };
-    }
-  }
-}
-
-async function normalizeTerminologyInBundle(bundle) {
-  if (!isTrue(FEATURE_TS_ENABLED)) return;
-  const ts = buildTsClient();
-  if (!ts || !bundle?.entry?.length) return;
-
-  // --- SOLO CONSULTA: ejecutar $lookup para cada código SNOMED sin usar datos ---
-  // Se puede habilitar/forzar con LOOKUP_SNOMED_ONLY=true
-  if (LOOKUP_SNOMED_ONLY) {
-    const uniq = new Set(); // system|code|version
-    const entries = bundle?.entry || [];
-    const versionDefault = process.env.SNOMED_VERSION_URI
-      || 'http://snomed.info/sct/900000000000207008/version/20240331';
-    for (const ent of entries) {
-      const res = ent.resource;
-      if (!res) continue;
-      const codables = [
-        res.code, res.medicationCodeableConcept, res.category, res.clinicalStatus
-      ].filter(Boolean);
-      for (const cc of codables) {
-        const codings = cc.coding || [];
-        for (const c of codings) {
-          if (c?.system === SNOMED_SYSTEM && c?.code) {
-            uniq.add(`${c.system}|${c.code}|${versionDefault}`);
-          }
-        }
-      }
-    }
-    await Promise.all(
-      [...uniq].map(k => {
-        const [system, code, versionUri] = k.split('|');
-        return fireAndForgetSnomedLookup(ts, system, code, versionUri);
-      })
-    );
-  }
-
-  console.log('🔍 Iniciando normalización terminológica con enfoque SNOMED...');
-
-  for (const entry of bundle.entry) {
-    const res = entry.resource;
-    if (!res) continue;
-
-    // Determinar dominio
-    const domain = resourceToDomain(res);
-    const domainCfg = DOMAIN_CONFIG[domain] || DOMAIN_CONFIG[TS_DEFAULT_DOMAIN] || {};
-    if (!DOMAIN_NAMES.has(domain)) {
-      // Dominio no listado en TS_DOMAINS → igualmente intenta con default
-      // (o puedes simplemente continue)
-    }
-
-    // Normalizar todas las CC relevantes del recurso
-    for (const { cc } of iterateCodeableConcepts(res)) {
-      try { await normalizeCC(ts, cc, domainCfg, domain); }
-      catch (e) { console.warn(`⚠️ TS normalize error (${domain}):`, e.message); }
-    }
-  }
-
-  console.log('✅ Normalización terminológica completada');
 }
 
 // ===================== Mapeo recurso → dominio =====================
@@ -723,7 +464,83 @@ function resourceToDomain(resource) {
   }
 }
 
-// ===================== Helpers para PDQm =====================
+// ===================== Iterador de CodeableConcepts =====================
+function* iterateCodeableConcepts(resource) {
+  switch (resource.resourceType) {
+    case 'Condition':
+      if (resource.code) yield { path: 'code', cc: resource.code };
+      break;
+    case 'AllergyIntolerance':
+      if (resource.code) yield { path: 'code', cc: resource.code };
+      break;
+    case 'Procedure':
+      if (resource.code) yield { path: 'code', cc: resource.code };
+      break;
+    case 'MedicationRequest':
+      if (resource.medicationCodeableConcept) yield { path: 'medicationCodeableConcept', cc: resource.medicationCodeableConcept };
+      break;
+    case 'MedicationStatement':
+      if (resource.medicationCodeableConcept) yield { path: 'medicationCodeableConcept', cc: resource.medicationCodeableConcept };
+      break;
+    case 'Immunization':
+      if (resource.vaccineCode) yield { path: 'vaccineCode', cc: resource.vaccineCode };
+      break;
+    default:
+      break;
+  }
+}
+
+// ===================== Pipeline por dominio =====================
+async function normalizeCC(ts, cc, domainCfg) {
+  if (!cc?.coding || !Array.isArray(cc.coding) || cc.coding.length === 0) return;
+  // trabajamos sobre el PRIMER coding (puedes extender a todos si lo prefieres)
+  const coding = cc.coding[0];
+  const base = { system: coding.system, code: coding.code, display: coding.display || cc.text };
+
+  // Orden sugerido: Validate VS → Validate CS → Expand → Lookup → Translate
+  const steps = [
+    () => opValidateVS(ts, base, domainCfg),
+    () => opValidateCS(ts, base, domainCfg),
+    () => opExpand(ts, base, domainCfg),
+    () => opLookup(ts, base),
+    () => opTranslate(ts, base, domainCfg),
+  ];
+
+  for (const step of steps) {
+    // si la sub-función está deshabilitada o no aplica, retornará null
+    const out = await step();
+    if (out && out.code) {
+      cc.coding[0] = { system: out.system || base.system, code: out.code, display: out.display || base.display };
+      return;
+    }
+  }
+  // Si nada aplicó, dejamos el coding original
+}
+
+async function normalizeTerminologyInBundle(bundle) {
+  if (!isTrue(FEATURE_TS_ENABLED)) return;
+  const ts = buildTsClient();
+  if (!ts || !bundle?.entry?.length) return;
+
+  for (const entry of bundle.entry) {
+    const res = entry.resource;
+    if (!res) continue;
+
+    // Determinar dominio
+    const domain = resourceToDomain(res);
+    const domainCfg = DOMAIN_CONFIG[domain] || DOMAIN_CONFIG[TS_DEFAULT_DOMAIN] || {};
+    if (!DOMAIN_NAMES.has(domain)) {
+      // Dominio no listado en TS_DOMAINS → igualmente intenta con default
+      // (o puedes simplemente continue)
+    }
+
+    // Normalizar todas las CC relevantes del recurso
+    for (const { cc } of iterateCodeableConcepts(res)) {
+      try { await normalizeCC(ts, cc, domainCfg); }
+      catch (e) { console.warn(`⚠️ TS normalize error (${domain}):`, e.message); }
+    }
+  }
+}
 
 function pickIdentifiersOrderedForPdqm(identifiers) {
     if (!Array.isArray(identifiers) || identifiers.length === 0) return [];
@@ -1490,10 +1307,11 @@ function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
     // Reescribir todas las .reference y Attachment.url según urlMap
     updateReferencesInObject(bundle, urlMap);
 }
+// ===================== Terminology Pipeline =====================
+const CS_ABSENT = 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips';
+const CS_SCT = 'http://snomed.info/sct';
 
-// ===================== Las siguientes funciones ya están definidas arriba =====================
-
-function sortCodingsPreferred_OLD(codings) {
+function sortCodingsPreferred(codings) {
     const pref = [CS_SCT]; // primero SNOMED
     return [...codings].sort((a, b) => {
         const ia = pref.indexOf(a.system);
