@@ -34,11 +34,11 @@ const {
   FEATURE_TS_ENABLED = 'true',
 
   // Subfeatures terminológicas
-  FEATURE_TS_EXPAND_ENABLED = 'true',
-  FEATURE_TS_VALIDATE_VS_ENABLED = 'true',
-  FEATURE_TS_VALIDATE_CS_ENABLED = 'true',
+  FEATURE_TS_EXPAND_ENABLED = 'false',
+  FEATURE_TS_VALIDATE_VS_ENABLED = 'false',
+  FEATURE_TS_VALIDATE_CS_ENABLED = 'false',
   FEATURE_TS_LOOKUP_ENABLED = 'true',
-  FEATURE_TS_TRANSLATE_ENABLED = 'true',
+  FEATURE_TS_TRANSLATE_ENABLED = 'false',
 
   // ===== OIDs para identificadores de paciente (desde tu .env) =====
   LAC_NATIONAL_ID_SYSTEM_OID,
@@ -65,7 +65,7 @@ const {
   TS_ACTIVE_ONLY = 'true',
 
   // Dominios
-  TS_DOMAINS = 'conditions,procedures,medications,vaccines',
+  TS_DOMAINS = 'conditions,procedures,medications',
   TS_DEFAULT_DOMAIN = 'conditions',
 
   // Defaults para $translate (si el dominio no define)

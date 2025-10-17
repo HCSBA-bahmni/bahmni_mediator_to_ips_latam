@@ -67,7 +67,7 @@ const {
     TS_ACTIVE_ONLY = 'true',
 
     // Dominios
-    TS_DOMAINS = 'conditions,procedures,medications,vaccines',
+    TS_DOMAINS = 'conditions,procedures,medications', //se saca vaccines
     TS_DEFAULT_DOMAIN = 'conditions',
 
     // Defaults para $translate (si el dominio no define)
