@@ -63,15 +63,6 @@ const USE_TRANSLATE = /^true$/i.test(process.env.USE_TRANSLATE_TO_SNOMED || 'fal
 const TERMINOLOGY_BASE = (process.env.TERMINOLOGY_BASE || '').replace(/\/$/, '')
 const TRANSLATE_TARGET = SNOMED
 
-// =============================
-// SNOMED \u2192 ICD-10 (opcional)
-// =============================
-const USE_SNOMED_TO_ICD10 = /^true$/i.test(process.env.USE_SNOMED_TO_ICD10 || 'false')
-const ICD10_TARGET_SYSTEM = process.env.ICD10_TARGET_SYSTEM || 'http://hl7.org/fhir/sid/icd-10'
-const ICD10_MODE = (process.env.ICD10_MODE || 'append').toLowerCase() // 'replace' | 'append'
-const ALLOW_ICD10_NON_EQUIVALENT = /^true$/i.test(process.env.ALLOW_ICD10_NON_EQUIVALENT || 'false')
-const ALLOW_ICD10_MAP_ADVICE_ALWAYS = /^true$/i.test(process.env.ALLOW_ICD10_MAP_ADVICE_ALWAYS || 'true')
-
 // ====== Códigos Bahmni/OpenMRS para diagnóstico de visita (ajustables por ENV) ======
 // Grupo "Visit Diagnoses" (observation set)
 const DIAG_SET_CODE = (process.env.DIAG_SET_CODE || 'd367d289-5e07-11ef-8f7c-0242ac120002')
@@ -186,54 +177,6 @@ async function translateToSNOMED (sourceCoding) {
     return parseTranslate(data)
   } catch (e) {
     dbg('translate error:', e.message)
-    return null
-  }
-}
-
-function parseTranslateICD10 (parameters) {
-  const params = parameters?.parameter || []
-  const matches = params.filter(p => p.name === 'match')
-  const ordered = [
-    ...matches.filter(m => m.part?.some(p => p.name === 'equivalence' && p.valueCode === 'equivalent')),
-    ...matches.filter(m => m.part?.some(p => p.name === 'equivalence' && p.valueCode !== 'equivalent'))
-  ]
-  for (const match of ordered) {
-    const parts = match.part || []
-    const eq = parts.find(p => p.name === 'equivalence')?.valueCode
-    const concept = parts.find(p => p.name === 'concept')?.valueCoding
-    const code = concept?.code || parts.find(p => p.name === 'code')?.valueCode
-    const system = concept?.system || parts.find(p => p.name === 'system')?.valueUri
-    const display = concept?.display || parts.find(p => p.name === 'display')?.valueString
-    const eqOk = (eq === 'equivalent') || (ALLOW_ICD10_NON_EQUIVALENT && (!eq || eq === 'wider' || eq === 'narrower' || eq === 'inexact'))
-    if (code && system === ICD10_TARGET_SYSTEM && eqOk) {
-      return { system, code, ...(display ? { display } : {}) }
-    }
-  }
-  if (ALLOW_ICD10_MAP_ADVICE_ALWAYS) {
-    const advice = params.find(p => p.name === 'message')?.valueString || ''
-    const matchAlways = advice.match(/ALWAYS\s+([A-Z]\d{2}(?:\.\d{1,2})?)/i)
-    if (matchAlways) {
-      return { system: ICD10_TARGET_SYSTEM, code: matchAlways[1].toUpperCase() }
-    }
-  }
-  return null
-}
-
-async function translateSnomedToICD10 (snomedCoding) {
-  if (!USE_SNOMED_TO_ICD10 || !TERMINOLOGY_BASE || !snomedCoding?.code) return null
-  try {
-    const url = `${TERMINOLOGY_BASE}/ConceptMap/$translate`
-    const { data } = await axios.get(url, {
-      params: {
-        system: SNOMED,
-        code: snomedCoding.code,
-        targetsystem: ICD10_TARGET_SYSTEM
-      },
-      httpsAgent: axios.defaults.httpsAgent
-    })
-    return parseTranslateICD10(data)
-  } catch (e) {
-    dbg('icd10 translate error:', e.message)
     return null
   }
 }
@@ -368,21 +311,6 @@ async function buildConditionFromDiagnosisGroup (groupObs, byId, patientRef, enc
   condition.text = {
     status: 'generated',
     div: `<div xmlns="http://www.w3.org/1999/xhtml"><table class="hapiPropertyTable"><tbody>${rows.join('')}</tbody></table></div>`
-  }
-
-  // Traducción opcional SNOMED \u2192 ICD-10
-  try {
-    const icd10Coding = await translateSnomedToICD10(snomed)
-    if (icd10Coding?.code) {
-      if (ICD10_MODE === 'replace') {
-        condition.code.coding = [icd10Coding]
-      } else {
-        const exists = (condition.code.coding || []).some(c => c.system === ICD10_TARGET_SYSTEM && c.code === icd10Coding.code)
-        if (!exists) condition.code.coding.push(icd10Coding)
-      }
-    }
-  } catch (e) {
-    dbg('icd10 apply error:', e.message)
   }
 
   return condition

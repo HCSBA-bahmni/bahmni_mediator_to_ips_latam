@@ -2889,46 +2889,49 @@ function normalizeOrganizationResource(orga) {
 }
 function ensureIcvpForImmunization(im) {
   if (!im || im.resourceType !== 'Immunization') return;
-
-  // Perfil ICVP para Immunization
+  // Asegurar perfil ICVP
   addProfile(im, LAC_PROFILES.IMMUNIZATION);
 
-  // Extensión obligatoria ProductID (PCMT PreQual ProductID) en valueCoding
-  im.extension = Array.isArray(im.extension) ? im.extension : [];
-  let prodExt = im.extension.find(e => e && e.url === ICVP_PRODUCT_EXT_URL);
-  if (!prodExt) {
+  // 1) Extensión ProductID (PCMT). Si falta, crearla con un candidato razonable.
+  const hasProduct =
+    Array.isArray(im.extension) &&
+    im.extension.some(
+      (e) =>
+        e?.url === ICVP_PRODUCT_EXT_URL &&
+        ((e.valueCoding && e.valueCoding.code) ||
+          (e.valueIdentifier && e.valueIdentifier.value))
+    );
+  if (!hasProduct) {
+    im.extension = im.extension || [];
     const codeCandidate =
-      (im.vaccineCode?.coding || []).find(c => c && c.code)?.code ||
-      im.id || 'unknown';
-    prodExt = {
+      im.vaccineCode?.coding?.find((c) => c?.code)?.code ||
+      im.id ||
+      'unknown';
+    im.extension.unshift({
       url: ICVP_PRODUCT_EXT_URL,
-      valueCoding: { system: CS_PREQUAL_PRODUCTIDS, code: String(codeCandidate) }
-    };
-    im.extension.unshift(prodExt);
-  } else {
-    // Migrar valueIdentifier -> valueCoding si viene legacy
-    if (prodExt.valueIdentifier?.value) {
-      prodExt.valueCoding = {
-        system: CS_PREQUAL_PRODUCTIDS,
-        code: String(prodExt.valueIdentifier.value)
-      };
-      delete prodExt.valueIdentifier;
-    }
-    // Normalizar sistema mal tipeado
-    if (prodExt.valueCoding?.system === 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs') {
-      prodExt.valueCoding.system = CS_PREQUAL_PRODUCTIDS;
-    }
+      valueCoding: { system: CS_PREQUAL_PRODUCTIDS, code: String(codeCandidate) },
+    });
   }
 
-  // Asegurar system en vaccineCode (preferir catálogo ICVP Vaccine Type)
-  if (im.vaccineCode && Array.isArray(im.vaccineCode.coding)) {
-    for (const c of im.vaccineCode.coding) {
-      if (!c) continue;
-      if (c.code && !c.system) c.system = CS_PREQUAL_VACCINETYPE;
-      if (c.system === 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs') {
-        c.system = CS_PREQUAL_VACCINETYPE;
+  // 2) vaccineCode: asegurar system/display mínimos (preferir catálogo PCMT VaccineType).
+  if (Array.isArray(im.vaccineCode?.coding) && im.vaccineCode.coding.length) {
+    im.vaccineCode.coding = im.vaccineCode.coding.map((c) => {
+      const out = { ...c };
+      if (!out.system) out.system = CS_PREQUAL_VACCINETYPE;
+      if (!out.display && out.code === 'no-immunization-info') {
+        out.display = 'No information about immunizations';
       }
-    }
+      return out;
+    });
+  } else if (im.vaccineCode) {
+    // Si vino solo .text, crear un coding mínimo compatible
+    im.vaccineCode.coding = [
+      {
+        system: CS_PREQUAL_VACCINETYPE,
+        code: 'no-immunization-info',
+        display: 'No information about immunizations',
+      },
+    ];
   }
 }
 
