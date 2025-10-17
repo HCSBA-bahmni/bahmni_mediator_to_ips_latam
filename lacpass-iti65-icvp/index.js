@@ -2887,116 +2887,49 @@ function normalizeOrganizationResource(orga) {
     orga.address = address;
     return orga;
 }
-// ====== NUEVO: asegurar mínimos ICVP/IPS en Immunization ======
 function ensureIcvpForImmunization(im) {
-  if (!im || im.resourceType !== 'Immunization') return im;
+  if (!im || im.resourceType !== 'Immunization') return;
 
-  // 1) Perfiles requeridos (IPS + ICVP de LAC)
-  addProfile(im, IPS_PROFILES.IMMUNIZATION);
+  // Perfil ICVP para Immunization
   addProfile(im, LAC_PROFILES.IMMUNIZATION);
 
-  // 2) status mínimo
-  //    - si trae absent/unknown 'no-immunization-info' mantenemos 'not-done'
-  //    - en otro caso, por defecto 'completed'
-  const isNoImmunInfo = (im.vaccineCode?.coding || []).some(c =>
-    c.system === 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips' &&
-    (c.code === 'no-immunization-info' || /no information about immunizations/i.test(c.display || ''))
-  );
-  if (!im.status) im.status = isNoImmunInfo ? 'not-done' : 'completed';
-
-  // 3) vaccineCode — asegurar 'system' y un coding válido
-  if (!im.vaccineCode) im.vaccineCode = {};
-  im.vaccineCode.coding = Array.isArray(im.vaccineCode.coding) ? im.vaccineCode.coding : [];
-
-  // - normalizar codings sin system
-  im.vaccineCode.coding.forEach(c => {
-    if (!c.system) {
-      // preferimos catálogo PCMT VaccineType; si no, caemos a SNOMED
-      c.system = CS_PREQUAL_VACCINETYPE;
-    }
-  });
-
-  // - si no hay ningún coding con system+code, añadimos un fallback SNOMED genérico
-  const hasUsableCoding = im.vaccineCode.coding.some(c => c.system && c.code);
-  if (!hasUsableCoding && !isNoImmunInfo) {
-    im.vaccineCode.coding.push({
-      system: 'http://snomed.info/sct',
-      code: '429374003', // Yellow fever vaccine (fallback neutro)
-      display: im.vaccineCode.text || 'Yellow fever vaccine'
-    });
-  }
-
-  // 4) Extensión de ProductID (PCMT) — si falta, creamos una con valor razonable
-  //    Usa el CodeSystem oficial normalizado (…/PreQualProductIds)
+  // Extensión obligatoria ProductID (PCMT PreQual ProductID) en valueCoding
   im.extension = Array.isArray(im.extension) ? im.extension : [];
-  const hasProductId = im.extension.some(ext =>
-    ext?.url === ICVP_PRODUCT_EXT_URL &&
-    ((ext.valueCoding && ext.valueCoding.code) || (ext.valueIdentifier && ext.valueIdentifier.value))
-  );
-  if (!hasProductId && !isNoImmunInfo) {
-    // tratamos de derivar un candidate desde vaccineCode.code
-    const candidate =
-      (im.vaccineCode?.coding || []).find(c => c.code)?.code ||
+  let prodExt = im.extension.find(e => e && e.url === ICVP_PRODUCT_EXT_URL);
+  if (!prodExt) {
+    const codeCandidate =
+      (im.vaccineCode?.coding || []).find(c => c && c.code)?.code ||
       im.id || 'unknown';
-    im.extension.unshift({
+    prodExt = {
       url: ICVP_PRODUCT_EXT_URL,
-      valueCoding: { system: CS_PREQUAL_PRODUCTIDS, code: String(candidate) }
-    });
+      valueCoding: { system: CS_PREQUAL_PRODUCTIDS, code: String(codeCandidate) }
+    };
+    im.extension.unshift(prodExt);
   } else {
-    // normaliza system mal tipeado si viniera
-    im.extension.forEach(ext => {
-      if (ext?.url === ICVP_PRODUCT_EXT_URL) {
-        if (ext.valueIdentifier?.value) {
-          ext.valueCoding = { system: CS_PREQUAL_PRODUCTIDS, code: String(ext.valueIdentifier.value) };
-          delete ext.valueIdentifier;
-        }
-        if (ext.valueCoding?.system === 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs') {
-          ext.valueCoding.system = CS_PREQUAL_PRODUCTIDS;
-        }
+    // Migrar valueIdentifier -> valueCoding si viene legacy
+    if (prodExt.valueIdentifier?.value) {
+      prodExt.valueCoding = {
+        system: CS_PREQUAL_PRODUCTIDS,
+        code: String(prodExt.valueIdentifier.value)
+      };
+      delete prodExt.valueIdentifier;
+    }
+    // Normalizar sistema mal tipeado
+    if (prodExt.valueCoding?.system === 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs') {
+      prodExt.valueCoding.system = CS_PREQUAL_PRODUCTIDS;
+    }
+  }
+
+  // Asegurar system en vaccineCode (preferir catálogo ICVP Vaccine Type)
+  if (im.vaccineCode && Array.isArray(im.vaccineCode.coding)) {
+    for (const c of im.vaccineCode.coding) {
+      if (!c) continue;
+      if (c.code && !c.system) c.system = CS_PREQUAL_VACCINETYPE;
+      if (c.system === 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs') {
+        c.system = CS_PREQUAL_VACCINETYPE;
       }
-    });
+    }
   }
-
-  // 5) occurrence[x] mínimo (ICVP/IPS no quiere eventos sin fecha)
-  if (!im.occurrenceDateTime && !im.occurrenceString && !im.occurrencePeriod) {
-    im.occurrenceDateTime = new Date().toISOString();
-  }
-
-  // 6) subject y performer opcionales pero, si existen, que sean Reference válidas
-  //    (ya tienes rutinas para normalizar refs en el bundle completo; aquí solo saneamos estructuras)
-  if (im.performer && !Array.isArray(im.performer)) {
-    im.performer = [im.performer];
-  }
-  if (Array.isArray(im.performer)) {
-    im.performer = im.performer
-      .filter(p => p?.actor?.reference) // quitar entradas vacías
-      .map(p => {
-        // role opcional; si no hay, lo dejamos sin setear
-        return { actor: { reference: p.actor.reference }, function: p.function };
-      });
-    if (im.performer.length === 0) delete im.performer;
-  }
-
-  // 7) protocolApplied — eliminar extensiones no permitidas (ya lo haces en removeUnknownDoseExtension)
-  if (Array.isArray(im.protocolApplied)) {
-    im.protocolApplied.forEach(pa => {
-      if (Array.isArray(pa.extension)) {
-        pa.extension = pa.extension.filter(ext => ext.url !== ICVP_DOSE_EXT);
-        if (pa.extension.length === 0) delete pa.extension;
-      }
-      // Si te interesa dejar un número de dosis válido sin extensiones:
-      // if (!pa.doseNumberPositiveInt && !pa.series && !pa.doseNumberString) {
-      //   pa.doseNumberString = '1';
-      // }
-    });
-    if (im.protocolApplied.length === 0) delete im.protocolApplied;
-  }
-
-  // 8) lotNumber/expirationDate son opcionales; si vienen vacíos, limpiarlos
-  if (im.lotNumber !== undefined && String(im.lotNumber).trim() === '') delete im.lotNumber;
-  if (im.expirationDate !== undefined && String(im.expirationDate).trim() === '') delete im.expirationDate;
-
-  return im;
 }
 
 
