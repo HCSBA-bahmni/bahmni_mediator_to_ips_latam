@@ -1451,12 +1451,6 @@ function buildRef(mode, resourceType, id) {
 function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
     if (!bundle?.entry?.length) return;
 
-    // 🚫 No convertir a absolutas en DOCUMENT bundles (ICVP/IPS).
-    //    Para documentos, el patrón robusto de validación es usar URNs internos.
-    if (String(bundle.type || '').toLowerCase() === 'document') {
-        mode = 'urn';
-    }
-
     // Mapa de reemplazos: cualquier forma conocida -> forma final (según 'mode')
     const urlMap = new Map();
 
@@ -1498,8 +1492,7 @@ function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
             variants.add(`${base}/${r.resourceType}/${id}`);
         }
 
-        // Mapear todas las variantes conocidas a la forma final
-        for (const v of Array.from(variants).filter(Boolean)) urlMap.set(v, finalRef);
+        for (const v of [...variants].filter(Boolean)) urlMap.set(v, finalRef);
 
         // asignar fullUrl final según el modo
         e.fullUrl = finalRef;
@@ -2305,8 +2298,7 @@ app.post('/icvp/_iti65', async (req, res) => {
         summaryBundle.type = "document";
 
         // ===== Aplicar modo URL al document bundle =====
-        // Forzar URN en documentos para cumplir slicing de Composition y refs internas
-        applyUrlModeToBundle(summaryBundle, 'urn', updateReferencesInObject);
+        applyUrlModeToBundle(summaryBundle, FULLURL_MODE_DOCUMENT, updateReferencesInObject);
         // ===== Forzar orden de slices (Composition, Patient) y sujeto coherente =====
         //ensureEntrySliceOrder(summaryBundle);
         if (summaryBundle.entry && summaryBundle.entry.length > 0) {
