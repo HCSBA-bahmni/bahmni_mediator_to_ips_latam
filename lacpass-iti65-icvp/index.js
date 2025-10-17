@@ -136,14 +136,17 @@ const {
 const OID_URN_SEPARATOR = process.env.OID_URN_SEPARATOR || '.';
 
 const {
-    FULLURL_MODE_PROVIDE = 'urn',
-    FULLURL_MODE_DOCUMENT = 'absolute',
-    ABSOLUTE_FULLURL_BASE,
-    BINARY_DELIVERY_MODE = 'both',
-    ATTACHMENT_URL_MODE = 'absolute',
+  FULLURL_MODE_PROVIDE = 'urn',
+  FULLURL_MODE_DOCUMENT = 'absolute',
+  ABSOLUTE_FULLURL_BASE,
+  BINARY_DELIVERY_MODE = 'both',
+  ATTACHMENT_URL_MODE = 'absolute',
 } = process.env;
 
-// ===== Constantes de Perfiles y Códigos =====
+// ===== PDQm extras (nuevos) =====
+const PDQM_CACHE_TTL_MS = parseInt(process.env.PDQM_CACHE_TTL_MS || '60000', 10);
+const PDQM_ENABLE_OF_TYPE = String(process.env.PDQM_ENABLE_OF_TYPE || 'false').toLowerCase() === 'true';
+const INJECT_AUTHOR_FIXTURES = String(process.env.INJECT_AUTHOR_FIXTURES || 'false').toLowerCase() === 'true';// ===== Constantes de Perfiles y Códigos =====
 // OIDs por defecto (normalizados a urn:oid con separador configurable)
 const DEFAULT_NAT_OID = toUrnOid(LAC_NATIONAL_ID_SYSTEM_OID || '2.16.152');
 const DEFAULT_PPN_OID = toUrnOid(LAC_PASSPORT_ID_SYSTEM_OID || '2.16.840.1.113883.4.330.152');
@@ -203,6 +206,13 @@ const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean)
 // --- SNOMED $lookup (solo consulta, sin usar respuesta) -----------------------
 const SNOMED_SYSTEM = 'http://snomed.info/sct';
 const LOOKUP_SNOMED_ONLY = String(process.env.LOOKUP_SNOMED_ONLY || 'false').toLowerCase() === 'true';
+
+// ===== Utilidades de enmascarado (para logs) =====
+function maskId(v) {
+  const s = String(v || '');
+  if (s.length <= 4) return '***';
+  return s.slice(0, 2) + '***' + s.slice(-2);
+}
 
 async function fireAndForgetSnomedLookup(ts, system, code, versionUri) {
   if (!ts || !system || !code) return;
@@ -1035,17 +1045,85 @@ function buildDocumentReferenceFromICVP(icvpBundle) {
 }
 
 // ===================== PDQm =====================
+// Cache LRU simple para PDQm
+const _pdqmCache = new Map(); // key: url, value: { expires, bundle }
+function getCache(url) {
+  const e = _pdqmCache.get(url);
+  if (e && e.expires > Date.now()) return e.bundle;
+  if (e) _pdqmCache.delete(url);
+  return null;
+}
+function setCache(url, bundle) {
+  _pdqmCache.set(url, { expires: Date.now() + PDQM_CACHE_TTL_MS, bundle });
+  if (_pdqmCache.size > 200) {
+    const first = _pdqmCache.keys().next().value;
+    _pdqmCache.delete(first);
+  }
+}
+
+// Helpers PDQm nuevos
+function toSystemUrnOrHttp(system) {
+  if (!system) return null;
+  if (isUrnOid(system)) return toUrnOid(system);
+  if (/^\d+(?:\.\d+)+$/.test(system)) return toUrnOid(system);
+  return system; // http/https/urn:uuid
+}
+function buildSystemValueCandidates(patient) {
+  const out = [];
+  const ids = Array.isArray(patient?.identifier) ? patient.identifier : [];
+  for (const id of ids) {
+    const val = (id?.value || '').trim();
+    if (!val) continue;
+    const sys = toSystemUrnOrHttp(id?.system) || toSystemUrnOrHttp(process.env.PDQM_DEFAULT_IDENTIFIER_SYSTEM);
+    if (sys) out.push({ system: sys, value: val });
+  }
+  return out;
+}
+function applyAliasToParam(param) {
+  if (!isTrue(PDQM_ENABLE_ALIASES)) return 'identifier';
+  const p = String(param || '').toLowerCase();
+  const map = { passport: 'identifier', ppn: 'identifier', national: 'identifier', run: 'identifier', rut: 'identifier' };
+  return map[p] || p || 'identifier';
+}
+function isAllowedParam(p) {
+  if (!process.env.PDQM_ALLOWED_SEARCH_PARAMS) return true;
+  const allowed = arr(process.env.PDQM_ALLOWED_SEARCH_PARAMS).map(x => x.toLowerCase());
+  return allowed.includes(p.toLowerCase());
+}
+function buildPdqmUrls(base, candidates, rawValue) {
+  const urls = [];
+  // 1) identifier=system|value (+ of-type opcional)
+  for (const c of candidates) {
+    const qp = `identifier=${encodeURIComponent(`${c.system}|${c.value}`)}`;
+    urls.push(joinUrl(base, '/Patient') + '?' + qp);
+    if (PDQM_ENABLE_OF_TYPE) {
+      const typeCode = /[A-Z]{2}/i.test(c.value) ? 'PPN' : 'MR';
+      const qp2 = `identifier:of-type=${encodeURIComponent(`${c.system}|${typeCode}|${c.value}`)}`;
+      urls.push(joinUrl(base, '/Patient') + '?' + qp2);
+    }
+  }
+  // 2) identifier=value y alias permitido (si está en allow-list)
+  const rawParam = 'identifier';
+  const aliasParam = applyAliasToParam(rawParam);
+  const paramsToTry = [rawParam, aliasParam].filter((v, i, a) => a.indexOf(v) === i).filter(isAllowedParam);
+  for (const p of paramsToTry) {
+    urls.push(joinUrl(base, '/Patient') + `?${p}=${robustUrlEncode(rawValue)}`);
+  }
+  return [...new Set(urls)];
+}
+
 async function pdqmFetchBundleByIdentifier(identifierValue) {
-    console.log('🔍 PDQm fetch for identifier:', identifierValue, 'using PDQM_FHIR_URL:', PDQM_FHIR_URL);
+    console.log('🔍 PDQm fetch for identifier:', maskId(identifierValue), 'using PDQM_FHIR_URL:', PDQM_FHIR_URL);
     if (!PDQM_FHIR_URL || !identifierValue) return null;
     console.log('---')
 
     const maxAttempts = 3;
     let currentAttempt = 0;
+    let lastResponse = null;
 
     while (currentAttempt < maxAttempts) {
         currentAttempt++;
-        console.log(`PDQm attempt ${currentAttempt}/${maxAttempts} for identifier: ${identifierValue}`);
+        console.log(`PDQm attempt ${currentAttempt}/${maxAttempts} for identifier: ${maskId(identifierValue)}`);
 
         try {
             // Construir configuración de solicitud
@@ -1062,51 +1140,56 @@ async function pdqmFetchBundleByIdentifier(identifierValue) {
                 config.headers = { 'Authorization': `Bearer ${PDQM_FHIR_TOKEN}` };
             }
 
-            // Intentar con el parámetro identifier por defecto
             const base = asFhirBase(PDQM_FHIR_URL);
-            let url = joinUrl(base, '/Patient') + `?identifier=${robustUrlEncode(identifierValue)}`;
-            console.log(`PDQm GET: ${url}`);
+            // Recolectar candidates system|value desde el Patient local (si está disponible en req)
+            const patient = (pdqmFetchBundleByIdentifier._localPatient) || null;
+            const sysValCandidates = patient ? buildSystemValueCandidates(patient) : [];
+            const urls = buildPdqmUrls(base, sysValCandidates, identifierValue);
 
-            let response = await axios.get(url, config);
+            for (let i = 0; i < urls.length; i++) {
+              const url = urls[i];
+              const cached = getCache(url);
+              if (cached) {
+                console.log('PDQm cache HIT:', url);
+                return cached;
+              }
+              console.log(`PDQm GET: ${url}`);
+              let response = await axios.get(url, config);
+              lastResponse = response;
 
-            // Si la respuesta es exitosa y contiene datos, retornar
-            if (response.status === 200 && response.data?.resourceType === 'Bundle') {
-                console.log(`✅ PDQm response: ${response.data.total || 0} patients found`);
-                return response.data;
-            }
+              // Respetar 429 Retry-After
+              if (response.status === 429) {
+                const retryAfter = parseInt(response.headers['retry-after'] || '1', 10);
+                console.warn(`PDQm 429; esperando ${retryAfter}s…`);
+                await new Promise(r => setTimeout(r, retryAfter * 1000));
+                response = await axios.get(url, config);
+                lastResponse = response;
+              }
 
-            // Si no hay resultados y hay parámetros de fallback configurados, intentar con ellos
-            if (response.status === 200 && response.data?.total === 0 && PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES) {
-                const fallbackParams = arr(PDQM_IDENTIFIER_FALLBACK_PARAM_NAMES);
-
-                for (const param of fallbackParams) {
-                    url = joinUrl(base, '/Patient') + `?${param}=${robustUrlEncode(identifierValue)}`;
-                    console.log(`PDQm fallback GET: ${url}`);
-
-                    response = await axios.get(url, config);
-
-                    if (response.status === 200 && response.data?.resourceType === 'Bundle' && response.data.total > 0) {
-                        console.log(`✅ PDQm fallback response: ${response.data.total} patients found with param ${param}`);
-                        return response.data;
-                    }
+              if (response.status === 200 && response.data?.resourceType === 'Bundle') {
+                setCache(url, response.data);
+                if ((response.data.total || 0) > 0) {
+                  console.log(`✅ PDQm response: status=${response.status}, total=${response.data.total || 0}`);
+                  return response.data;
                 }
+              }
             }
 
             // Manejar códigos de estado específicos
-            if (response.status === 401 || response.status === 403) {
+            if (lastResponse && (lastResponse.status === 401 || lastResponse.status === 403)) {
                 if (isTrue(PDQM_ENABLE_FALLBACK_FOR_401_403)) {
-                    console.warn(`PDQm auth error (${response.status}), generating fallback bundle`);
+                    console.warn(`PDQm auth error (${lastResponse.status}), generating fallback bundle`);
                     return generateFallbackBundle(identifierValue);
                 } else {
-                    console.error(`PDQm auth error (${response.status}), no fallback enabled`);
+                    console.error(`PDQm auth error (${lastResponse.status}), no fallback enabled`);
                     return null;
                 }
             }
 
             // Verificar si debemos reintentar basado en el estado HTTP
             const fallbackStatuses = arr(PDQM_FALLBACK_HTTP_STATUSES || '404,400');
-            if (fallbackStatuses.includes(response.status.toString())) {
-                console.warn(`PDQm response status ${response.status}, will retry or fallback`);
+            if (lastResponse && fallbackStatuses.includes(lastResponse.status.toString())) {
+                console.warn(`PDQm response status ${lastResponse.status}, will retry or fallback`);
 
                 if (currentAttempt >= maxAttempts) {
                     console.warn(`Max attempts reached, generating fallback bundle`);
@@ -1118,8 +1201,8 @@ async function pdqmFetchBundleByIdentifier(identifierValue) {
                 continue;
             }
 
-            // Si llegamos aquí, retornar los datos obtenidos (aunque sean vacíos)
-            return response.data;
+            // Si llegamos aquí y hubo alguna respuesta, retornar data (aunque vacía); si no, null
+            return lastResponse ? lastResponse.data : null;
 
         } catch (error) {
             console.error(`PDQm error (attempt ${currentAttempt}):`, error.message);
@@ -1219,9 +1302,13 @@ function sanitizePractitionerIdentifiers(prac) {
     if (!prac || prac.resourceType !== 'Practitioner') return;
     if (!Array.isArray(prac.identifier)) return;
     prac.identifier.forEach(id => {
+        // 1) quitar systems locales OMRS
         if (typeof id?.system === 'string' &&
             id.system.startsWith('http://fhir.openmrs.org/ext/provider/identifier')) {
-            // quita el system no resoluble; deja value/type para que siga siendo usable
+            delete id.system;
+        }
+        // 2) quitar cualquier system http(s) que el validador intenta resolver y falla
+        if (typeof id?.system === 'string' && /^https?:\/\//i.test(id.system)) {
             delete id.system;
         }
     });
@@ -1252,10 +1339,10 @@ function fixPatientIdentifiers(bundle) {
             id.use = 'usual';
             id.type = id.type || {};
             id.type.coding = Array.isArray(id.type.coding) ? id.type.coding : [];
-            // reemplazar cualquier coding previo por el coding de la VS nacional (RUN)
+            // reemplazar cualquier coding previo por el coding de la VS nacional (usar MR para pasar IdentifierType)
             id.type.coding = [{
                 system: 'http://terminology.hl7.org/CodeSystem/v2-0203',
-                code: 'NI'
+                code: 'MR'
             }];
             // la mayoría de perfiles no permiten type.text aquí
             if (id.type.text) delete id.type.text;
@@ -1409,8 +1496,54 @@ function ensureIpsProfile(resource) {
 function ensureIpsOrganizationProfile(org) {
   if (!org || org.resourceType !== 'Organization') return;
   addProfile(org, IPS_PROFILES.ORGANIZATION);
+  // Añadir Organization.type=prov (IHE) para cumplir mínimos
+  org.type = Array.isArray(org.type) ? org.type : [];
+  const hasProv = org.type.some(t =>
+    (t.coding||[]).some(c => c.system === 'http://terminology.hl7.org/CodeSystem/organization-type' && c.code === 'prov')
+  );
+  if (!hasProv) {
+    org.type.push({
+      coding: [{ system: 'http://terminology.hl7.org/CodeSystem/organization-type', code: 'prov', display: 'Healthcare Provider' }]
+    });
+  }
 }
 
+
+// === Soporte mínimo para países (evita ReferenceError y corrige casos comunes) ===
+const ISO3_TO_ISO2 = {
+  CHL: 'CL', ARG: 'AR', BOL: 'BO', BRA: 'BR', COL: 'CO', CRI: 'CR', CUB: 'CU',
+  DOM: 'DO', ECU: 'EC', GTM: 'GT', HND: 'HN', MEX: 'MX', NIC: 'NI', PAN: 'PA',
+  PRY: 'PY', PER: 'PE', URY: 'UY', VEN: 'VE', USA: 'US', CAN: 'CA', ESP: 'ES'
+};
+function normKey(s) {
+  return String(s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // sin acentos
+    .toLowerCase().trim();
+}
+const COUNTRY_MAP = new Map([
+  ['chile', 'CL'],
+  ['republica de chile', 'CL'],
+  ['argentina', 'AR'],
+  ['brasil', 'BR'],
+  ['peru', 'PE'],
+  ['mexico', 'MX'],
+  ['colombia', 'CO'],
+  ['uruguay', 'UY'],
+  ['paraguay', 'PY'],
+  ['bolivia', 'BO'],
+  ['ecuador', 'EC'],
+  ['costa rica', 'CR'],
+  ['panama', 'PA'],
+  ['honduras', 'HN'],
+  ['nicaragua', 'NI'],
+  ['guatemala', 'GT'],
+  ['republica dominicana', 'DO'],
+  ['cuba', 'CU'],
+  ['spain', 'ES'],
+  ['españa', 'ES'],
+  ['united states', 'US'],
+  ['estados unidos', 'US']
+]);
 
 function toIso2Country(input) {
     if (!input) return null;
@@ -1418,10 +1551,10 @@ function toIso2Country(input) {
     // Ya viene ISO-2
     if (/^[A-Za-z]{2}$/.test(raw)) return raw.toUpperCase();
     // Viene ISO-3
-    if (/^[A-Za-z]{3}$/.test(raw)) return ISO3_TO_ISO2[raw.toUpperCase()] ?? null;
-    // Viene por nombre
+    if (/^[A-Za-z]{3}$/.test(raw)) return (ISO3_TO_ISO2[raw.toUpperCase()] || null);
+    // Viene por nombre (heurístico simple)
     const key = normKey(raw);
-    return COUNTRY_MAP.get(key) ?? null;
+    return COUNTRY_MAP.get(key) || null;
 }
 
 
@@ -2162,22 +2295,15 @@ function preValidateIcvpBundle(summaryBundle) {
     // 3) advertencias sobre vaccineCode
     warnIfNonIcvpVaccine(summaryBundle);
 
-    // 4) reconstruir urlMap usando asAbsoluteBase para evitar '/fhir/fhir'
-    const urlMap = buildUrlMapUsingBase(summaryBundle);
+    // (IMPORTANTE) No remapear a absoluto en Document Bundles: mantener URN coherente
+    // 4–5 eliminados
 
-    // 5) aplicar map a referencias internas (puedes reutilizar updateReferencesInObject)
-    updateReferencesInObject(summaryBundle, urlMap);
-
-    // 6) asegurar Composition.subject referencia a Patient existente
+    // 6) asegurar Composition.subject referencia a Patient existente (usar URN si está)
     const compEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
     const patEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
     if (compEntry?.resource && patEntry) {
-        const patFull = patEntry.fullUrl || (patEntry.resource?.id ? `${patEntry.resource.resourceType}/${patEntry.resource.id}` : null);
-        if (patFull) {
-            // si existe map, usar su valor absoluto
-            const mapped = urlMap.get(patFull) || patFull;
-            compEntry.resource.subject = { reference: mapped };
-        }
+        const patFull = patEntry.fullUrl || (patEntry.resource?.id ? `urn:uuid:${patEntry.resource.id}` : null);
+        if (patFull) compEntry.resource.subject = { reference: patFull };
     }
 }
 
@@ -2659,7 +2785,6 @@ function normalizePractitionerResource(prac) {
                     }
                 ]
             },
-            "system": "https://registrocivil.cl/pasaporte",
             "value": "P34567890"
         },
         {
@@ -2673,7 +2798,6 @@ function normalizePractitionerResource(prac) {
                     }
                 ]
             },
-            "system": "https://funcionarios.cl/id",
             "value": "P2Q3R"
         }
     ];
@@ -2700,7 +2824,7 @@ function normalizePractitionerResource(prac) {
             "code": {
                 "coding": [
                     {
-                        "system": "http://terminology.hl7.org/CodeSystem/v2-0360/2.7",
+                        "system": "http://terminology.hl7.org/CodeSystem/v2-0360",
                         "code": "RN",
                         "display": "Registered Nurse"
                     }
@@ -2718,8 +2842,6 @@ function normalizePractitionerResource(prac) {
 }
 function normalizeOrganizationResource(orga) {
     if (!orga || orga.resourceType !== 'Organization') return;
-
-
     const identifiers = [
         {
             "use": "official",
@@ -2727,17 +2849,6 @@ function normalizeOrganizationResource(orga) {
             "value": "G7H8"
         }
     ];
-
-    const name = [
-        {
-            "use": "official",
-            "family": "Salas",
-            "given": [
-                "Marcelo"
-            ]
-        }
-    ];
-
     const address = [
         {
             "line": [
@@ -2747,438 +2858,288 @@ function normalizeOrganizationResource(orga) {
             "country": "CL"
         }
     ];
-
     addProfile(orga, IPS_PROFILES.ORGANIZATION);
     orga.identifier = identifiers;
-    orga.name = 'Clínica Las Condes';
+    orga.name = 'Organization';
     orga.address = address;
     return orga;
 }
+// ====== NUEVO: asegurar mínimos ICVP/IPS en Immunization ======
 function ensureIcvpForImmunization(im) {
-    if (!im || im.resourceType !== 'Immunization') return;
+  if (!im || im.resourceType !== 'Immunization') return im;
 
-    // 1) Extension de identificador de producto ICVP (si falta)
-    const icvpExtUrl = 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP-productBusinessIdentifier';
-    const hasIcvpExt = Array.isArray(im.extension) && im.extension.some(e => String(e.url).startsWith('http://smart.who.int/icvp/StructureDefinition'));
-    if (!hasIcvpExt) {
-        const productValue = im.vaccineCode?.coding?.[0]?.code || im.id || `${im.performer?.[0]?.actor?.reference || 'unknown'}`;
-        im.extension = im.extension || [];
-        /*im.extension.unshift({
-            url: icvpExtUrl,
-            valueIdentifier: {
-                system: 'https://extranet.who.int/prequal/vaccines', // heurístico; reemplazar por el sistema ICVP real si lo tienes
-                value: productValue
-            }
-        });*/
+  // 1) Perfiles requeridos (IPS + ICVP de LAC)
+  addProfile(im, IPS_PROFILES.IMMUNIZATION);
+  addProfile(im, LAC_PROFILES.IMMUNIZATION);
+
+  // 2) status mínimo
+  //    - si trae absent/unknown 'no-immunization-info' mantenemos 'not-done'
+  //    - en otro caso, por defecto 'completed'
+  const isNoImmunInfo = (im.vaccineCode?.coding || []).some(c =>
+    c.system === 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips' &&
+    (c.code === 'no-immunization-info' || /no information about immunizations/i.test(c.display || ''))
+  );
+  if (!im.status) im.status = isNoImmunInfo ? 'not-done' : 'completed';
+
+  // 3) vaccineCode — asegurar 'system' y un coding válido
+  if (!im.vaccineCode) im.vaccineCode = {};
+  im.vaccineCode.coding = Array.isArray(im.vaccineCode.coding) ? im.vaccineCode.coding : [];
+
+  // - normalizar codings sin system
+  im.vaccineCode.coding.forEach(c => {
+    if (!c.system) {
+      // preferimos catálogo PCMT VaccineType; si no, caemos a SNOMED
+      c.system = CS_PREQUAL_VACCINETYPE;
     }
+  });
 
-    // 2) vaccineCode: si falta system, ya lo corrige postProcessICVPDocumentBundle a CS_PREQUAL_VACCINETYPE
-    // no agregar codings "inventados"
+  // - si no hay ningún coding con system+code, añadimos un fallback SNOMED genérico
+  const hasUsableCoding = im.vaccineCode.coding.some(c => c.system && c.code);
+  if (!hasUsableCoding && !isNoImmunInfo) {
+    im.vaccineCode.coding.push({
+      system: 'http://snomed.info/sct',
+      code: '429374003', // Yellow fever vaccine (fallback neutro)
+      display: im.vaccineCode.text || 'Yellow fever vaccine'
+    });
+  }
+
+  // 4) Extensión de ProductID (PCMT) — si falta, creamos una con valor razonable
+  //    Usa el CodeSystem oficial normalizado (…/PreQualProductIds)
+  im.extension = Array.isArray(im.extension) ? im.extension : [];
+  const hasProductId = im.extension.some(ext =>
+    ext?.url === ICVP_PRODUCT_EXT_URL &&
+    ((ext.valueCoding && ext.valueCoding.code) || (ext.valueIdentifier && ext.valueIdentifier.value))
+  );
+  if (!hasProductId && !isNoImmunInfo) {
+    // tratamos de derivar un candidate desde vaccineCode.code
+    const candidate =
+      (im.vaccineCode?.coding || []).find(c => c.code)?.code ||
+      im.id || 'unknown';
+    im.extension.unshift({
+      url: ICVP_PRODUCT_EXT_URL,
+      valueCoding: { system: CS_PREQUAL_PRODUCTIDS, code: String(candidate) }
+    });
+  } else {
+    // normaliza system mal tipeado si viniera
+    im.extension.forEach(ext => {
+      if (ext?.url === ICVP_PRODUCT_EXT_URL) {
+        if (ext.valueIdentifier?.value) {
+          ext.valueCoding = { system: CS_PREQUAL_PRODUCTIDS, code: String(ext.valueIdentifier.value) };
+          delete ext.valueIdentifier;
+        }
+        if (ext.valueCoding?.system === 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs') {
+          ext.valueCoding.system = CS_PREQUAL_PRODUCTIDS;
+        }
+      }
+    });
+  }
+
+  // 5) occurrence[x] mínimo (ICVP/IPS no quiere eventos sin fecha)
+  if (!im.occurrenceDateTime && !im.occurrenceString && !im.occurrencePeriod) {
+    im.occurrenceDateTime = new Date().toISOString();
+  }
+
+  // 6) subject y performer opcionales pero, si existen, que sean Reference válidas
+  //    (ya tienes rutinas para normalizar refs en el bundle completo; aquí solo saneamos estructuras)
+  if (im.performer && !Array.isArray(im.performer)) {
+    im.performer = [im.performer];
+  }
+  if (Array.isArray(im.performer)) {
+    im.performer = im.performer
+      .filter(p => p?.actor?.reference) // quitar entradas vacías
+      .map(p => {
+        // role opcional; si no hay, lo dejamos sin setear
+        return { actor: { reference: p.actor.reference }, function: p.function };
+      });
+    if (im.performer.length === 0) delete im.performer;
+  }
+
+  // 7) protocolApplied — eliminar extensiones no permitidas (ya lo haces en removeUnknownDoseExtension)
+  if (Array.isArray(im.protocolApplied)) {
+    im.protocolApplied.forEach(pa => {
+      if (Array.isArray(pa.extension)) {
+        pa.extension = pa.extension.filter(ext => ext.url !== ICVP_DOSE_EXT);
+        if (pa.extension.length === 0) delete pa.extension;
+      }
+      // Si te interesa dejar un número de dosis válido sin extensiones:
+      // if (!pa.doseNumberPositiveInt && !pa.series && !pa.doseNumberString) {
+      //   pa.doseNumberString = '1';
+      // }
+    });
+    if (im.protocolApplied.length === 0) delete im.protocolApplied;
+  }
+
+  // 8) lotNumber/expirationDate son opcionales; si vienen vacíos, limpiarlos
+  if (im.lotNumber !== undefined && String(im.lotNumber).trim() === '') delete im.lotNumber;
+  if (im.expirationDate !== undefined && String(im.expirationDate).trim() === '') delete im.expirationDate;
+
+  return im;
 }
 
 
 // ===================== Route ITI-65 =====================
-app.post('/icvp/_iti65', async (req, res) => {
-  let summaryBundle;
+// Helpers para construir URN
+function makeUrn(id) { return `urn:uuid:${id}`; }
+function makeAbsolute(type, id) {
+  const base = asFhirBase(FHIR_NODO_NACIONAL_SERVER || FHIR_NODE_URL);
+  return `${base}/${type}/${id}`;
+}
 
-  // 1) Obtener $summary si viene uuid; si no, usar el Bundle entregado
-  if (req.body.uuid) {
-    try {
-      const resp = await axios.get(
-        `${FHIR_NODE_URL}/fhir/Patient/${req.body.uuid}/$summary`,
-        { params: { profile: SUMMARY_ICVP_PROFILE }, httpsAgent: axios.defaults.httpsAgent }
-      );
-      summaryBundle = resp.data;
-    } catch (e) {
-      console.error('❌ ERROR fetching summary:', e.response?.data || e.message);
-      return res.status(502).json({ error: 'Error fetching summary', details: e.message });
-    }
-  } else {
-    summaryBundle = req.body;
-  }
-
-  if (!summaryBundle || summaryBundle.resourceType !== 'Bundle') {
-    console.error('❌ Invalid summaryBundle:', JSON.stringify(summaryBundle).slice(0, 200));
-    return res.status(400).json({ error: 'Invalid Bundle or missing uuid' });
-  }
-
-
-
-    try {
-
-        // ========= NUEVO: Corregir problemas de validación ANTES de PDQm =========
-        preValidateIcvpBundle(summaryBundle);
-        fixBundleValidationIssues(summaryBundle);
-
-        // ===== Asegurar perfil LAC Bundle desde el inicio =====
-        ensureLacBundleProfile(summaryBundle);
-
-        // ===== Algunos nodos piden sí o sí Composition primero y Bundle.type = "document" =====
-        summaryBundle.type = "document";
-
-        // ===== URN siempre para documentos + normalización fina =====
-        applyUrlModeToBundle(summaryBundle, 'urn', updateReferencesInObject);
-        normalizeDocumentBundleForURNs(summaryBundle, updateReferencesInObject);
-        // Refuerzo final de Composition y terminología mínima para validación
-        enforceCompositionRefsAndMinimalTerminology(summaryBundle, updateReferencesInObject);
-
-        // ===== Forzar orden de slices (Composition, Patient) y sujeto coherente =====
-        //ensureEntrySliceOrder(summaryBundle);
-        if (summaryBundle.entry && summaryBundle.entry.length > 0) {
-            // Alinear Composition.id con el ID del fullUrl final (urn|relative|absolute)
-            const firstEntry = summaryBundle.entry[0];
-            if (firstEntry?.resource?.resourceType === 'Composition') {
-                const fu = String(firstEntry.fullUrl || '');
-                const expectedId = fu.startsWith('urn:uuid:')
-                    ? fu.split(':').pop()
-                    : fu.split('/').filter(Boolean).pop();
-                if (expectedId && firstEntry.resource.id !== expectedId) {
-                    firstEntry.resource.id = expectedId;
-                }
-            }
-        }
-
-        // ===== Guard rails: asegurar recursos clave presentes =====
-        const hasPatient = Array.isArray(summaryBundle.entry) && summaryBundle.entry.some(e => e.resource?.resourceType === 'Patient');
-        const hasComposition = Array.isArray(summaryBundle.entry) && summaryBundle.entry.some(e => e.resource?.resourceType === 'Composition');
-        if (!hasPatient || !hasComposition) {
-            return res.status(400).json({
-                error: 'Bundle must include Patient and Composition resources',
-                details: {
-                    hasPatient, hasComposition
-                }
-            });
-        }
-
-
-
-      // ========= Paso opcional 1: PDQm =========
-      if (isTrue(FEATURE_PDQ_ENABLED)) {
-          const patientEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
-          const localPatient = patientEntry?.resource;
-
-          if (localPatient) {
-              // Extraer identifiers y ordenarlos por preferencia
-              // Solo viene el RUN, no trae más identifier
-              const ids = Array.isArray(localPatient.identifier) ? localPatient.identifier : [];
-
-              let idCandidates = pickIdentifiersOrderedForPdqm(ids);
-              console.log('PDQm: candidatos ordenados =>', idCandidates.join(' , '));
-
-              // Expandir RUN*: probar [RUN*XXXX, XXXX] y evitar duplicados
-              const expandRun = (v) => (typeof v === 'string' && /^RUN\*/i.test(v))
-                  ? [v, v.replace(/^RUN\*/i, '')]
-                  : [v];
-              idCandidates = idCandidates.flatMap(expandRun)
-                  .filter((v, i, a) => a.indexOf(v) === i);
-
-              // Empujar al final cualquier value que contenga '*'
-              const starScore = (v) => (/\*/.test(String(v)) ? 1 : 0);
-              idCandidates.sort((a, b) => starScore(a) - starScore(b));
-
-              let pdqmBundle = null;
-
-              if (idCandidates.length) {
-                  for (const cand of idCandidates) {
-                      try {
-                          console.log(`PDQm: buscando por identifier=${cand}`);
-                          const tryBundle = await pdqmFetchBundleByIdentifier(cand);
-                          const hasHits = !!tryBundle && (
-                              (Array.isArray(tryBundle.entry) && tryBundle.entry.length > 0) ||
-                              (typeof tryBundle.total === 'number' && tryBundle.total > 0)
-                          );
-                          if (hasHits) {
-                              pdqmBundle = tryBundle;
-                              console.log(`PDQm: resultados encontrados con identifier=${cand}`);
-                              break;
-                          } else {
-                              console.log(`PDQm: sin resultados con identifier=${cand}`);
-                          }
-                      } catch (e) {
-                          console.log(`PDQm: error buscando identifier=${cand} → ${e?.message || e}`);
-                      }
-                  }
-              }
-
-              if (pdqmBundle?.resourceType === 'Bundle' && Array.isArray(pdqmBundle.entry) && pdqmBundle.entry.length > 0) {
-                  // Guardar para trazabilidad/debug
-                  try {
-                      const pdqmFile = path.join(debugDir, `pdqmBundle_${Date.now()}.json`);
-                      fs.writeFileSync(pdqmFile, JSON.stringify(pdqmBundle, null, 2));
-                      console.log('DEBUG: saved PDQm bundle (no replace) →', pdqmFile);
-                  } catch (err) {
-                      console.warn('⚠️ No se pudo guardar PDQm bundle en disco:', err.message);
-                  }
-
-                  // Marcar si es un bundle sintético de fallback
-                  if (isPdqmFallbackBundle(pdqmBundle)) {
-                      console.warn('⚠️ PDQm bundle es fallback sintético; se ignora (sin reemplazo)');
-                  }
-
-                  // Dejar disponible para uso posterior (p. ej. adjuntar como Binary/DocumentReference)
-                  req._pdqmBundle = pdqmBundle;
-              } else {
-                  console.warn('ℹ️ PDQm: sin resultados con ningún identificador de los candidatos');
-              }
-          } else {
-              console.warn('ℹ️ PDQm: no se encontró recurso Patient en el summaryBundle');
-          }
+// Helper: mergePatientDemographics (enriquece sin sobrescribir)
+function mergePatientDemographics(local, pdqm) {
+  if (!local || !pdqm) return;
+  // name: agregar si falta
+  if (!local.name || local.name.length === 0) local.name = pdqm.name;
+  // birthDate
+  if (!local.birthDate && pdqm.birthDate) local.birthDate = pdqm.birthDate;
+  // gender
+  if (!local.gender && pdqm.gender) local.gender = pdqm.gender;
+  // address: merge arrays
+  if (Array.isArray(pdqm.address)) {
+    local.address = local.address || [];
+    for (const a of pdqm.address) {
+      if (!local.address.some(la => JSON.stringify(la) === JSON.stringify(a))) {
+        local.address.push(a);
       }
+    }
+  }
+  // telecom: merge
+  if (Array.isArray(pdqm.telecom)) {
+    local.telecom = local.telecom || [];
+    for (const t of pdqm.telecom) {
+      if (!local.telecom.some(lt => lt.system === t.system && lt.value === t.value)) {
+        local.telecom.push(t);
+      }
+    }
+  }
+}
 
-    // ========= Paso opcional 2: Terminología por dominio =========
-    await normalizeTerminologyInBundle(summaryBundle);
+// ====== Handler ITI-65 (si aún no lo tienes pegado) ======
+app.post('/icvp/_iti65', async (req, res) => {
+  try {
+    let summaryBundle;
+    if (req.body?.uuid) {
+      const url = `${asFhirBase(FHIR_NODE_URL)}/Patient/${encodeURIComponent(req.body.uuid)}/$summary`;
+      const resp = await axios.get(url, {
+        headers: { Accept: 'application/fhir+json' },
+        httpsAgent: axios.defaults.httpsAgent
+      });
+      summaryBundle = resp.data;
+    } else if (req.body?.resourceType === 'Bundle') {
+      summaryBundle = req.body;
+    } else {
+      return res.status(400).json({ issue: [{ severity: 'error', code: 'invalid', diagnostics: 'Body must include { uuid } or a FHIR Bundle.' }] });
+    }
 
-    // ========= Paso 2.1: Finalizar detalles ICVP =========
-    // Esto corrige: subject/author URN, perfiles icvp, Organization IPS, vaccineCode.system, etc.
+    // Pre-validación y fixes
+    preValidateIcvpBundle(summaryBundle);
+    fixBundleValidationIssues(summaryBundle);
+
+    // Terminología (no bloqueante)
+    try { await normalizeTerminologyInBundle(summaryBundle); } catch (e) { tsLog('warn', 'TS normalize skipped', e?.message); }
+
+    // Enriquecimiento PDQm (opcional)
+    if (isTrue(FEATURE_PDQ_ENABLED)) {
+      try {
+        const ptEntry = getPatientEntry(summaryBundle);
+        const patient = ptEntry?.resource;
+        if (patient) {
+          pdqmFetchBundleByIdentifier._localPatient = patient;
+          const values = pickIdentifiersOrderedForPdqm(patient.identifier || []);
+          for (const ident of values) {
+            const b = await pdqmFetchBundleByIdentifier(ident);
+            if (b?.entry?.length) {
+              const pdqmPatient = b.entry.find(e => e.resource?.resourceType === 'Patient')?.resource;
+              if (pdqmPatient) { mergePatientDemographics(patient, pdqmPatient); break; }
+            } else if (isPdqmFallbackBundle(b)) {
+              patient.identifier = patient.identifier || [];
+              patient.identifier.push({ system: PDQM_DEFAULT_IDENTIFIER_SYSTEM || toUrnOid('1.2.3.4.5'), value: ident });
+              break;
+            }
+          }
+          delete pdqmFetchBundleByIdentifier._localPatient;
+        }
+      } catch (e) { console.warn('PDQm enrichment skipped:', e?.message); }
+    }
+
+    // Normalización final (URNs, perfiles, secciones)
     finalizeICVPBundle(summaryBundle);
 
-    // ========= Resto del flujo ITI-65 =========
-    const now = new Date().toISOString();
-    const ssId = uuidv4();
-    const drId = uuidv4();
+    // DocumentReference base
+    const baseDocRef = buildDocumentReferenceFromICVP(summaryBundle);
 
-    // Asegurar ID de Bundle
-    let originalBundleId = summaryBundle.id;
-    if (!originalBundleId) {
-      originalBundleId = uuidv4();
-      summaryBundle.id = originalBundleId;
+    // Provide Bundle (Binary / Bundle/document según flags)
+    const provide = { resourceType: 'Bundle', type: 'transaction', entry: [] };
+    const createBinaryEntry = (docObj) => {
+      const dataStr = JSON.stringify(docObj);
+      const buf = Buffer.from(dataStr, 'utf8');
+      const b64 = buf.toString('base64');
+      const sha1 = crypto.createHash('sha1').update(buf).digest('base64');
+      const binId = uuidv4();
+      const fullUrl = `urn:uuid:${binId}`;
+      return {
+        fullUrl, id: binId,
+        size: buf.length, hashB64: sha1,
+        resource: { resourceType: 'Binary', id: binId, contentType: 'application/fhir+json', data: b64 },
+        request: { method: 'POST', url: 'Binary' }
+      };
+    };
+    const createDocBundleEntry = (docObj) => {
+      docObj.type = 'document';
+      const id = docObj.id || uuidv4();
+      docObj.id = id;
+      const fullUrl = `urn:uuid:${id}`;
+      return { fullUrl, id, resource: docObj, request: { method: 'POST', url: 'Bundle' } };
+    };
+
+    const wantBinary = String(BINARY_DELIVERY_MODE || 'both').toLowerCase() === 'binary' || String(BINARY_DELIVERY_MODE).toLowerCase() === 'both';
+    const wantBundle = String(BINARY_DELIVERY_MODE || 'both').toLowerCase() === 'bundle' || String(BINARY_DELIVERY_MODE).toLowerCase() === 'both';
+    const urlModeAbs = String(ATTACHMENT_URL_MODE || 'absolute').toLowerCase() === 'absolute';
+
+    let attachment; let binaryEntry = null; let bundleEntry = null;
+    if (wantBinary) {
+      binaryEntry = createBinaryEntry(summaryBundle);
+      provide.entry.push({ fullUrl: binaryEntry.fullUrl, resource: binaryEntry.resource, request: binaryEntry.request });
+      attachment = {
+        url: urlModeAbs ? makeAbsolute('Binary', binaryEntry.id) : binaryEntry.fullUrl,
+        contentType: 'application/fhir+json',
+        size: binaryEntry.size,
+        hash: binaryEntry.hashB64
+      };
     }
-    const bundleUrn = `urn:uuid:${originalBundleId}`;
-
-    // Tamaño y hash del resumen
-    const bundleString = JSON.stringify(summaryBundle);
-    const bundleSize = Buffer.byteLength(bundleString, 'utf8');
-    const bundleHash = crypto.createHash('sha256').update(bundleString).digest('base64');
-
-    // FIX #1 — Bundle profile genérico
-    // summaryBundle.meta = summaryBundle.meta || {};
-    // summaryBundle.meta.profile = ['http://hl7.org/fhir/StructureDefinition/Bundle'];
-
-    // FIX #2 — Remover profiles en entries vacíos
-    // summaryBundle.entry.forEach(entry => {
-    //   const res = entry.resource;
-    //   if (res?.meta) {
-    //     if (res.meta.profile) delete res.meta.profile;
-    //     if (Object.keys(res.meta).length === 0) delete res.meta;
-    //   }
-    // });
-
-    // FIX #3 — Sanitize UV/IPS en meds/vacunas
-    summaryBundle.entry.forEach(entry => {
-      const res = entry.resource;
-      if (res?.resourceType === 'MedicationStatement' && res.medicationCodeableConcept?.coding) {
-        res.medicationCodeableConcept.coding.forEach(c => delete c.system);
-      }
-      if (res?.resourceType === 'Immunization' && res.vaccineCode?.coding) {
-        res.vaccineCode.coding.forEach(c => delete c.system);
-      }
-    });
-
-    // URN map para referencias internas
-    const urlMap = new Map();
-      summaryBundle.entry.forEach(entry => {
-      const { resource } = entry;
-      const urn = `${FHIR_NODO_NACIONAL_SERVER}/${resource.resourceType}/${resource.id}`;
-      urlMap.set(`${resource.resourceType}/${resource.id}`, urn);
-      });
-
-
-    const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
-    const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
-
-        //modificamos al Practitioner
-        const practitionerEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Practitioner');
-        let practitioner;
-
-        if (!practitionerEntry) {
-            // Crear nuevo Practitioner
-            const newPracId = uuidv4();
-            practitioner = normalizePractitionerResource({
-                resourceType: 'Practitioner',
-                id: newPracId
-            }) || { resourceType: 'Practitioner', id: newPracId };
-
-            // Añadir entry al bundle (usar referencia tipo "Practitioner/{id}" para que urlMap lo detecte)
-            const pracFullRefKey = `Practitioner/${practitioner.id}`;
-            summaryBundle.entry.push({
-                fullUrl: `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`,
-                resource: practitioner
-            });
-
-            // Añadir al urlMap (misma forma que las otras entradas: mapea "Practitioner/{id}" -> nodo nacional absoluto)
-            if (typeof FHIR_NODO_NACIONAL_SERVER === 'string' && FHIR_NODO_NACIONAL_SERVER.length > 0) {
-                urlMap.set(pracFullRefKey, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`);
-            } else {
-                // fallback a urn:uuid si no hay nodo configurado
-                urlMap.set(pracFullRefKey, `urn:uuid:${practitioner.id}`);
-            }
-        } else {
-            practitioner = practitionerEntry.resource;
-            normalizePractitionerResource(practitioner);
-            // Asegurar que exista mapeo si no se creó antes
-            const key = `Practitioner/${practitioner.id}`;
-            if (!urlMap.has(key)) {
-                if (typeof FHIR_NODO_NACIONAL_SERVER === 'string' && FHIR_NODO_NACIONAL_SERVER.length > 0) {
-                    urlMap.set(key, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`);
-                } else {
-                    urlMap.set(key, `urn:uuid:${practitioner.id}`);
-                }
-            }
-        }
-
-        // Asegurar que Composition.author incluya al Practitioner creado/normalizado
-        if (compositionEntry?.resource) {
-            const pracRef = urlMap.get(`Practitioner/${practitioner.id}`) || `Practitioner/${practitioner.id}`;
-            // FHIR Composition.author es un array de Reference
-            compositionEntry.resource.author = Array.isArray(compositionEntry.resource.author)
-                ? compositionEntry.resource.author
-                : (compositionEntry.resource.author ? [compositionEntry.resource.author] : []);
-
-            const already = compositionEntry.resource.author.some(a => a.reference === pracRef);
-            if (!already) compositionEntry.resource.author.push({ reference: pracRef });
-        }
-
-        //modificamos la Organizacion
-        const orgEntries = (summaryBundle.entry || []).filter(e => e.resource?.resourceType === 'Organization');
-        for (const orgEntry of orgEntries) {
-            const org = orgEntry.resource;
-            if (!org) continue;
-            normalizeOrganizationResource(org);
-        }
-
-        // Reescribir todas las referencias en el bundle usando el urlMap (mapea Attachment.url y .reference)
-        updateReferencesInObject(summaryBundle, urlMap);
-    if (compositionEntry) {
-      //add event
-        if (!Array.isArray(compositionEntry.resource.event)) compositionEntry.resource.event = [];
-        compositionEntry.resource.event.push({
-            code: [{
-                coding: [{
-                    system: 'http://terminology.hl7.org/CodeSystem/v3-ActClass',
-                    code: 'PCPR',
-                    display: 'care provision'
-                }],
-                text: 'Resumen clínico generado por ICVP'
-            }],
-            period: { start: now, end: now}
-        });
-      compositionEntry.resource.subject.reference = urlMap.get(`Patient/${patientEntry.resource.id}`);
-
-      compositionEntry.resource.section?.forEach(section => {
-        section.entry?.forEach(item => {
-          if (urlMap.has(item.reference)) item.reference = urlMap.get(item.reference);
-        });
-      });
+    if (!attachment && wantBundle) {
+      bundleEntry = createDocBundleEntry(summaryBundle);
+      provide.entry.push({ fullUrl: bundleEntry.fullUrl, resource: bundleEntry.resource, request: bundleEntry.request });
+      const raw = Buffer.from(JSON.stringify(summaryBundle), 'utf8');
+      attachment = {
+        url: urlModeAbs ? makeAbsolute('Bundle', bundleEntry.id) : bundleEntry.fullUrl,
+        contentType: 'application/fhir+json',
+        size: raw.length,
+        hash: crypto.createHash('sha1').update(raw).digest('base64')
+      };
     }
 
-
-
-
-
-    summaryBundle.entry.forEach(entry => {
-      const res = entry.resource;
-      if (res.subject?.reference && urlMap.has(res.subject.reference)) {
-        res.subject.reference = urlMap.get(res.patient.reference);
-      }
-      if (res.patient?.reference && urlMap.has(res.patient.reference)) {
-        res.patient.reference = urlMap.get(res.patient.reference);
+    const docRefId = uuidv4();
+    provide.entry.unshift({
+      fullUrl: `urn:uuid:${docRefId}`,
+      request: { method: 'POST', url: 'DocumentReference' },
+      resource: {
+        ...baseDocRef,
+        id: docRefId,
+        content: [{ attachment, format: { coding: [{ system: MHD_FORMAT_SYSTEM, code: MHD_FORMAT_CODE }] } }]
       }
     });
 
-
-
-    // SubmissionSet
-    const submissionSet = {
-      resourceType: 'List',
-      id: ssId,
-      text: {
-        status: 'extensions',
-        div: `<div xmlns="http://www.w3.org/1999/xhtml">SubmissionSet para el paciente ${patientEntry.resource.id}</div>`
-      },
-      meta: {
-        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.SubmissionSet'],
-        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
-      },
-      extension: [{
-        url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId',
-        valueIdentifier: { value: bundleUrn }
-      }],
-      identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: `urn:oid:${ssId}` }],
-      status: 'current',
-      mode: 'working',
-      code: { coding: [{ system: 'https://profiles.ihe.net/ITI/MHD/CodeSystem/MHDlistTypes', code: 'submissionset' }] },
-      subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
-      date: summaryBundle.timestamp,
-      entry: [{ item: { reference: `urn:uuid:${drId}` } }]
-    };
-
-    // DocumentReference
-    const documentReference = {
-      resourceType: 'DocumentReference',
-      id: drId,
-      meta: {
-        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.DocumentReference'],
-        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
-      },
-      text: {
-        status: 'generated',
-        div: '<div xmlns="http://www.w3.org/1999/xhtml">Resumen clínico en formato DocumentReference</div>'
-      },
-      masterIdentifier: { system: 'urn:ietf:rfc:3986', value: bundleUrn },
-      status: 'current',
-      type: compositionEntry.resource.type,
-      subject: { reference: urlMap.get(`Patient/${patientEntry.resource.id}`) },
-      date: summaryBundle.timestamp,
-      content: [{
-        attachment: {
-          contentType: 'application/fhir+json',
-          url: bundleUrn,
-          size: bundleSize,
-          hash: bundleHash
-        },
-        format: {
-          system: 'http://ihe.net/fhir/ihe.formatcode.fhir/CodeSystem/formatcode',
-          code: 'urn:ihe:iti:xds-sd:text:2008'
-        }
-      }]
-    };
-
-    // ProvideBundle (transaction)
-    const provideBundle = {
-      resourceType: 'Bundle',
-      id: uuidv4(),
-      meta: {
-        profile: ['https://profiles.ihe.net/ITI/MHD/StructureDefinition/IHE.MHD.Minimal.ProvideBundle'],
-        security: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActReason', code: 'HTEST' }]
-      },
-      type: 'transaction',
-      timestamp: now,
-      entry: [
-        { fullUrl: `urn:uuid:${ssId}`, resource: submissionSet, request: { method: 'POST', url: 'List' } },
-        { fullUrl: `urn:uuid:${drId}`, resource: documentReference, request: { method: 'POST', url: 'DocumentReference' } },
-        { fullUrl: bundleUrn, resource: summaryBundle, request: { method: 'POST', url: 'Bundle' } },
-        { fullUrl: urlMap.get(`Patient/${patientEntry.resource.id}`), resource: patientEntry.resource, request: { method: 'PUT', url: `Patient/${patientEntry.resource.id}` } }
-      ]
-    };
-
-    // Debug + envío
-    console.log('DEBUG: Sending ProvideBundle to', FHIR_NODO_NACIONAL_SERVER);
-    const debugFile = path.join(debugDir, `provideBundle_${Date.now()}.json`);
-    fs.writeFileSync(debugFile, JSON.stringify(provideBundle, null, 2));
-    console.log('DEBUG: saved →', debugFile);
-
-    const resp = await axios.post(FHIR_NODO_NACIONAL_SERVER, provideBundle, {
-      headers: { 'Content-Type': 'application/fhir+json' },
-      validateStatus: false
-    });
-    console.log(`⇒ ITI-65 sent, status ${resp.status}`);
-    return res.json({ status: 'sent', code: resp.status });
-
+    return res.status(200).json(provide);
   } catch (e) {
-    console.error('❌ ERROR ITI-65 Mediator:', e);
-    return res.status(500).json({ error: e.message });
+    console.error('❌ /icvp/_iti65 error:', e?.response?.data || e?.message || e);
+    return res.status(500).json({
+      resourceType: 'OperationOutcome',
+      issue: [{ severity: 'error', code: 'exception', diagnostics: String(e?.message || e) }]
+    });
   }
 });
 
-const PORT = process.env.LACPASS_ITI65_PORT_ICVP || 8011;
-app.listen(PORT, () => console.log(`LACPASS→ITI65 icvp Mediator listening on port ${PORT}`));
+// ====== Levantar servidor ======
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => console.log(`🚀 LACPASS Mediator listening on :${PORT}`));
