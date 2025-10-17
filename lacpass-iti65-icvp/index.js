@@ -304,12 +304,35 @@ async function pdqmFetchPatientByIdentifier(identifierValue) {
 }
 function mergePatientDemographics(localPt, pdqmPt) {
   if (!localPt || !pdqmPt) return;
-  if (pdqmPt.name) localPt.name = pdqmPt.name;
-  if (pdqmPt.gender) localPt.gender = pdqmPt.gender;
-  if (pdqmPt.birthDate) localPt.birthDate = pdqmPt.birthDate;
-  if (pdqmPt.address) localPt.address = pdqmPt.address;
+  if (!localPt.name || localPt.name.length === 0) localPt.name = pdqmPt.name;
+  if (!localPt.birthDate && pdqmPt.birthDate) localPt.birthDate = pdqmPt.birthDate;
+  if (!localPt.gender && pdqmPt.gender) localPt.gender = pdqmPt.gender;
+  if (Array.isArray(pdqmPt.address)) {
+    localPt.address = localPt.address || [];
+    for (const address of pdqmPt.address) {
+      if (!localPt.address.some(existing => JSON.stringify(existing) === JSON.stringify(address))) {
+        localPt.address.push(address);
+      }
+    }
+  }
+  if (Array.isArray(pdqmPt.telecom)) {
+    localPt.telecom = localPt.telecom || [];
+    for (const telecom of pdqmPt.telecom) {
+      if (!localPt.telecom.some(existing => existing.system === telecom.system && existing.value === telecom.value)) {
+        localPt.telecom.push(telecom);
+      }
+    }
+  }
   if (Array.isArray(pdqmPt.identifier) && pdqmPt.identifier.length > 0) {
-    localPt.identifier = pdqmPt.identifier;
+    const seen = new Set((localPt.identifier || []).map(id => `${id.system}|${id.value}`));
+    localPt.identifier = localPt.identifier || [];
+    for (const id of pdqmPt.identifier) {
+      const key = `${id.system}|${id.value}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        localPt.identifier.push(id);
+      }
+    }
   }
 }
 
@@ -2978,42 +3001,6 @@ function ensureIcvpForImmunization(im) {
 
 
 // ===================== Route ITI-65 =====================
-// Helpers para construir URN
-function makeUrn(id) { return `urn:uuid:${id}`; }
-function makeAbsolute(type, id) {
-  const base = asFhirBase(FHIR_NODO_NACIONAL_SERVER || FHIR_NODE_URL);
-  return `${base}/${type}/${id}`;
-}
-
-// Helper: mergePatientDemographics (enriquece sin sobrescribir)
-function mergePatientDemographics(local, pdqm) {
-  if (!local || !pdqm) return;
-  // name: agregar si falta
-  if (!local.name || local.name.length === 0) local.name = pdqm.name;
-  // birthDate
-  if (!local.birthDate && pdqm.birthDate) local.birthDate = pdqm.birthDate;
-  // gender
-  if (!local.gender && pdqm.gender) local.gender = pdqm.gender;
-  // address: merge arrays
-  if (Array.isArray(pdqm.address)) {
-    local.address = local.address || [];
-    for (const a of pdqm.address) {
-      if (!local.address.some(la => JSON.stringify(la) === JSON.stringify(a))) {
-        local.address.push(a);
-      }
-    }
-  }
-  // telecom: merge
-  if (Array.isArray(pdqm.telecom)) {
-    local.telecom = local.telecom || [];
-    for (const t of pdqm.telecom) {
-      if (!local.telecom.some(lt => lt.system === t.system && lt.value === t.value)) {
-        local.telecom.push(t);
-      }
-    }
-  }
-}
-
 // ====== Handler ITI-65 (si aún no lo tienes pegado) ======
 app.post('/icvp/_iti65', async (req, res) => {
   try {
