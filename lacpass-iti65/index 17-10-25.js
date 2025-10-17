@@ -2539,7 +2539,7 @@ app.post('/lacpass/_iti65', async (req, res) => {
       },
       extension: [{
         url: 'https://profiles.ihe.net/ITI/MHD/StructureDefinition/ihe-sourceId',
-        valueIdentifier: { value: buildRef(FULLURL_MODE_DOCUMENT, 'Bundle', originalBundleId) }
+        valueIdentifier: { value: buildRef('urn', 'Bundle', originalBundleId) }
       }],
       identifier: [{ use: 'usual', system: 'urn:ietf:rfc:3986', value: `urn:uuid:${ssId}` }],
       status: 'current',
@@ -2557,8 +2557,8 @@ app.post('/lacpass/_iti65', async (req, res) => {
       hash: bundleHash
     };
     if (BINARY_DELIVERY_MODE === 'nobinary') {
-      // Haz que el attachment siga el mismo modo del bundle de documento
-      attachment.url = buildRef(FULLURL_MODE_DOCUMENT, 'Bundle', originalBundleId);
+      // Referencia al Bundle incluido en el mismo transaction → evita 404
+      attachment.url = buildRef('urn', 'Bundle', originalBundleId);
     }
 
     // Si queremos Binary o ambos, preparamos Binary y/o data
