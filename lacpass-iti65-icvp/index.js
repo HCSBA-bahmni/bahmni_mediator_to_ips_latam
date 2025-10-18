@@ -38,10 +38,9 @@ const {
   FEATURE_TS_VALIDATE_VS_ENABLED = 'false',
   FEATURE_TS_VALIDATE_CS_ENABLED = 'false',
   FEATURE_TS_LOOKUP_ENABLED = 'true',
-  FEATURE_TS_TRANSLATE_ENABLED = 'false',
-  
-    // Feature flag específico para vacunas (nuevo)
-    // En ICVP conviene NO tocar vaccineCode por terminología → default = false
+    FEATURE_TS_TRANSLATE_ENABLED = 'false',
+
+    // Feature flag específico para vacunas (ICVP sugiere NO tocar terminología automáticamente)
     FEATURE_TS_VACCINES_ENABLED = 'false',
 
   // ===== OIDs para identificadores de paciente (desde tu .env) =====
@@ -185,7 +184,7 @@ const LAC_PROFILES = {
 // Sistemas terminológicos relevantes para ICVP
 const SYSTEMS = {
     PREQUAL_VACCINE_TYPE: 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualVaccineType',
-    PREQUAL_PRODUCT_IDS: 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIds'
+    PREQUAL_PRODUCT_IDS: 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs'
 };
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
@@ -1332,7 +1331,8 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
     const nowIso = new Date().toISOString();
     let placeholder = null;
 
-    if (allowedTypes.includes('AllergyIntolerance')) {
+    // ⚠️ Evita placeholders con CodeSystem 'absent-unknown-uv-ips' (el validador no lo resuelve)
+    if (false && allowedTypes.includes('AllergyIntolerance')) {
         placeholder = {
             fullUrl: 'urn:uuid:allergy-none',
             resource: {
@@ -1350,37 +1350,29 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
                 patient: patRef ? { reference: patRef } : undefined
             }
         };
-    } else if (allowedTypes.includes('Immunization')) {
+    } else if (false && allowedTypes.includes('Immunization')) {
         placeholder = {
             fullUrl: 'urn:uuid:meds-none',
             resource: {
                 resourceType: 'Immunization',
-                meta: { profile: [IPS_PROFILES.MEDICATION_STATEMENT] },
+                meta: { profile: [IPS_PROFILES.IMMUNIZATION] },
                 status: 'active',
-                medicationCodeableConcept: {
-                    coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-immunization', display: 'No known immunization' }],
-                    text: 'No known Immunization'
-                },
                 subject: patRef ? { reference: patRef } : undefined,
                 effectiveDateTime: nowIso
             }
         };
-    }  else if (allowedTypes.includes('MedicationStatement')) {
+    }  else if (false && allowedTypes.includes('MedicationStatement')) {
         placeholder = {
             fullUrl: 'urn:uuid:meds-none',
             resource: {
                 resourceType: 'MedicationStatement',
                 meta: { profile: [IPS_PROFILES.MEDICATION_STATEMENT] },
                 status: 'active',
-                medicationCodeableConcept: {
-                    coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-medications', display: 'No known medications' }],
-                    text: 'No known medications'
-                },
                 subject: patRef ? { reference: patRef } : undefined,
                 effectiveDateTime: nowIso
             }
         };
-    } else if (allowedTypes.includes('Condition')) {
+    } else if (false && allowedTypes.includes('Condition')) {
         const isPast = loincCode === LOINC_CODES.PAST_ILLNESS_SECTION;
         placeholder = {
             fullUrl: isPast ? 'urn:uuid:pasthx-none' : 'urn:uuid:problem-none',
@@ -1388,10 +1380,6 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
                 resourceType: 'Condition',
                 meta: { profile: [IPS_PROFILES.CONDITION] },
                 category: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/condition-category', code: 'problem-list-item' }] }],
-                code: {
-                    coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-problems', display: 'No known problems' }],
-                    text: isPast ? 'No known past illnesses' : 'No known problems'
-                },
                 subject: patRef ? { reference: patRef } : undefined
             }
         };
@@ -1653,6 +1641,14 @@ function preValidateIcvpBundle(summaryBundle) {
             // si existe map, usar su valor absoluto
             const mapped = urlMap.get(patFull) || patFull;
             compEntry.resource.subject = { reference: mapped };
+        }
+
+        const immSection = compEntry.resource.section?.find(sec =>
+            sec.code?.coding?.some(c => c.system === 'http://loinc.org' && c.code === LOINC_CODES.IMMUNIZATIONS_SECTION)
+        );
+        if (immSection) {
+            const loincCoding = immSection.code.coding.find(c => c.system === 'http://loinc.org' && c.code === LOINC_CODES.IMMUNIZATIONS_SECTION);
+            if (loincCoding) loincCoding.display = 'History of Immunization note';
         }
     }
 }
@@ -2123,36 +2119,17 @@ function updateReferencesInObject(obj, urlMap) {
 function normalizePractitionerResource(prac) {
     if (!prac || prac.resourceType !== 'Practitioner') return;
 
-    const identifiers = [
-        {
-            "use": "official",
-            "type": {
-                "coding": [
-                    {
-                        "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
-                        "code": "PPN",
-                        "display": "Passport number"
-                    }
-                ]
-            },
-            "system": "https://registrocivil.cl/pasaporte",
-            "value": "P34567890"
-        },
-        {
-            "use": "official",
-            "type": {
-                "coding": [
-                    {
-                        "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
-                        "code": "PRN",
-                        "display": "Provider number"
-                    }
-                ]
-            },
-            "system": "https://funcionarios.cl/id",
-            "value": "P2Q3R"
-        }
-    ];
+    const identifiers = [{
+        use: 'official',
+        type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'PPN', display: 'Passport number' }] },
+        system: toUrnOid('2.16.152.1.300.1'),
+        value: 'P34567890'
+    }, {
+        use: 'official',
+        type: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0203', code: 'PRN', display: 'Provider number' }] },
+        system: toUrnOid('2.16.152.1.300.2'),
+        value: 'P2Q3R'
+    }];
 
     const name = [
         {
@@ -2171,19 +2148,9 @@ function normalizePractitionerResource(prac) {
         }
     ]
 
-    const qualifications = [
-        {
-            "code": {
-                "coding": [
-                    {
-                        "system": "http://terminology.hl7.org/CodeSystem/v2-0360/2.7",
-                        "code": "RN",
-                        "display": "Registered Nurse"
-                    }
-                ]
-            }
-        }
-    ]
+    const qualifications = [{
+        code: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v2-0360', code: 'RN', display: 'Registered Nurse' }] }
+    }];
 
     prac.identifier = identifiers;
     prac.name = name;
@@ -2195,38 +2162,19 @@ function normalizePractitionerResource(prac) {
 function normalizeOrganizationResource(orga) {
     if (!orga || orga.resourceType !== 'Organization') return;
 
+    const identifiers = [{
+        use: 'official',
+        system: toUrnOid('2.16.152.1.200.1'),
+        value: 'G7H8'
+    }];
 
-    const identifiers = [
-        {
-            "use": "official",
-            "system": "https://registroorganizaciones.cl/id",
-            "value": "G7H8"
-        }
-    ];
+    const address = [{
+        line: ['Estoril 450'],
+        city: 'Región Metropolitana',
+        country: 'CL'
+    }];
 
-    const name = [
-        {
-            "use": "official",
-            "family": "Salas",
-            "given": [
-                "Marcelo"
-            ]
-        }
-    ];
-
-    const address = [
-        {
-            "line": [
-                "Estoril 450"
-            ],
-            "city": "Región Metropolitana",
-            "country": "CL"
-        }
-    ];
-
-    orga.meta = {
-        "profile": [ "http://lacpass.racsel.org/StructureDefinition/lac-organization" ]
-    };
+    delete orga.meta;
     orga.identifier = identifiers;
     orga.name = 'Clínica Las Condes';
     orga.address = address;
@@ -2235,43 +2183,22 @@ function normalizeOrganizationResource(orga) {
 function ensureIcvpForImmunization(im) {
     if (!im || im.resourceType !== 'Immunization') return;
 
-    // 1) Extensión de ProductID: si viene PCMT y falta la ICVP, clonarla
+    // 1) Extensión de ProductID - SOLO valueIdentifier, sin valueCoding duplicada
     const icvpBizIdUrl = 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP-productBusinessIdentifier';
     im.extension = im.extension || [];
-    const hasIcvpBizId = im.extension.some(e => e?.url === icvpBizIdUrl);
-    const pcmt = im.extension.find(e => e?.url === 'http://smart.who.int/pcmt/StructureDefinition/ProductID' && e.valueCoding);
-    if (pcmt && !hasIcvpBizId) {
-        const { system, code } = pcmt.valueCoding || {};
+    im.extension = im.extension.filter(e => !(e?.url === icvpBizIdUrl && e.valueCoding));
+    const hasIcvpBizId = im.extension.some(e => e?.url === icvpBizIdUrl && e.valueIdentifier);
+    const pcmt = im.extension.find(e => e?.url === 'http://smart.who.int/pcmt/StructureDefinition/ProductID' && (e.valueCoding || e.valueIdentifier));
+    if (!hasIcvpBizId) {
+        const code = pcmt?.valueCoding?.code || pcmt?.valueIdentifier?.value;
+        const sys = pcmt?.valueCoding?.system || pcmt?.valueIdentifier?.system || SYSTEMS.PREQUAL_PRODUCT_IDS;
         if (code) {
-            im.extension.push({
-                url: icvpBizIdUrl,
-                valueIdentifier: { system: system || SYSTEMS.PREQUAL_PRODUCT_IDS, value: code }
-                // Opcional: valueCodeableConcept: { coding: [pcmt.valueCoding] }
-            });
+            im.extension.push({ url: icvpBizIdUrl, valueIdentifier: { system: sys, value: code } });
         }
     }
 
-    // 2) Asegurar vaccineCode requerido por ICVP (debe existir coding PreQualVaccineType)
+    // 2) NO inyectar ICD-11: dejar vaccineCode tal como viene o según fuente upstream
     im.vaccineCode = im.vaccineCode || { coding: [] };
-    const codings = Array.isArray(im.vaccineCode.coding) ? im.vaccineCode.coding : [];
-    const hasPreQualType = codings.some(c => c?.system === SYSTEMS.PREQUAL_VACCINE_TYPE && c.code);
-    if (!hasPreQualType) {
-        const looksYellowFever = (im.vaccineCode.text || codings.map(c => c.display).join(' ') || '')
-            .toLowerCase()
-            .includes('fiebre amarilla');
-        const prequalCoding = {
-            system: SYSTEMS.PREQUAL_VACCINE_TYPE,
-            code: looksYellowFever ? 'YellowFever' : 'YellowFever',
-            display: 'Yellow Fever'
-        };
-        im.vaccineCode.coding = [
-            prequalCoding,
-            ...codings.filter(c => c?.system !== SYSTEMS.PREQUAL_VACCINE_TYPE)
-        ];
-        if (!im.vaccineCode.text) {
-            im.vaccineCode.text = 'Vacunas contra la fiebre amarilla';
-        }
-    }
 }
 
 
