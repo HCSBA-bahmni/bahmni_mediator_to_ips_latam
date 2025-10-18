@@ -1119,7 +1119,7 @@ function fixPatientIdentifiers(bundle) {
         }
     }
 
-    // Asegurar que exista al menos un national id si no vino (slice requerido)
+    /*// Asegurar que exista al menos un national id si no vino (slice requerido)
     const hasNational = patient.identifier.some(id =>
         String(id.system||'') === defaultNatOid ||
         (id.type?.coding||[]).some(c => c.system === 'http://lacpass.racsel.org/CodeSystem/national-identifier-types' && c.code === 'RUN')
@@ -1131,7 +1131,7 @@ function fixPatientIdentifiers(bundle) {
             type: { coding: [{ system: 'http://lacpass.racsel.org/CodeSystem/national-identifier-types', code: 'RUN' }] },
             value: patient.identifier?.[0]?.value || `RUN*${patient.id || 'UNKNOWN'}`
         });
-    }
+    }*/
 }
 /**
  * Asegura que una propiedad sea un array
