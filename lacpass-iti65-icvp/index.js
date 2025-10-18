@@ -1328,6 +1328,7 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
             }
         };
     } else if (allowedTypes.includes('Immunization')) {
+        sec.code.coding[0].display = 'History of Immunization note'; // ajustar display de la sección
         placeholder = {
             fullUrl: 'urn:uuid:meds-none',
             resource: {
