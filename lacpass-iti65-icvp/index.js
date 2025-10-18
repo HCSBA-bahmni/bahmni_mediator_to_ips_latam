@@ -2106,6 +2106,7 @@ function normalizePractitionerResource(prac) {
             "type": {
                 "coding": [
                     {
+                        "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
                         "code": "PPN",
                         "display": "Passport number"
                     }
@@ -2118,12 +2119,12 @@ function normalizePractitionerResource(prac) {
             "type": {
                 "coding": [
                     {
+                        "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
                         "code": "PRN",
                         "display": "Provider number"
                     }
                 ]
             },
-            "system": "https://funcionarios.cl/id",
             "value": "P2Q3R"
         }
     ];
@@ -2150,6 +2151,7 @@ function normalizePractitionerResource(prac) {
             "code": {
                 "coding": [
                     {
+                        "system": "http://terminology.hl7.org/CodeSystem/v2-0360|2.7",
                         "code": "RN",
                         "display": "Registered Nurse"
                     }
@@ -2157,7 +2159,9 @@ function normalizePractitionerResource(prac) {
             }
         }
     ]
-
+    prac.meta = {
+        "profile": [ "http://hl7.org/fhir/uv/ips/StructureDefinition/Practitioner-uv-ips" ]
+    }
     prac.identifier = identifiers;
     prac.name = name;
     prac.gender = 'female';
@@ -2197,7 +2201,7 @@ function normalizeOrganizationResource(orga) {
     ];
 
     orga.meta = {
-        "profile": [ "http://lacpass.racsel.org/StructureDefinition/lac-organization" ]
+        "profile": [ "http://hl7.org/fhir/uv/ips/StructureDefinition/Organization-uv-ips" ]
     };
     orga.identifier = identifiers;
     orga.name = 'Clínica Las Condes';
