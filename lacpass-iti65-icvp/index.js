@@ -148,7 +148,7 @@ const {
 const DEFAULT_NAT_OID = toUrnOid(LAC_NATIONAL_ID_SYSTEM_OID || '2.16.152');
 const DEFAULT_PPN_OID = toUrnOid(LAC_PASSPORT_ID_SYSTEM_OID || '2.16.840.1.113883.4.330.152');
 
-// Perfiles IPS (http)
+// Perfiles IPS (usar canónicos oficiales para ICVP donde aplica)
 const IPS_PROFILES = {
     BUNDLE: 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0',
     MEDICATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Medication-uv-ips',
@@ -159,7 +159,7 @@ const IPS_PROFILES = {
     CONDITION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Condition-uv-ips',
     MEDICATION_STATEMENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/MedicationStatement-uv-ips',
     PROCEDURE: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Procedure-uv-ips',
-    IMMUNIZATION: 'http://smart.who.int/trust-phw/StructureDefinition/Immunization-uv-ips-ICVP',
+    IMMUNIZATION: 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP',
     OBSERVATION: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Observation-results-uv-ips'
 };
 
@@ -180,6 +180,12 @@ const LAC_PROFILES = {
     COMPOSITION: 'http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP',
     IMMUNIZATION: 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP',
     PATIENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips'
+};
+
+// Sistemas terminológicos relevantes para ICVP
+const SYSTEMS = {
+    PREQUAL_VACCINE_TYPE: 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualVaccineType',
+    PREQUAL_PRODUCT_IDS: 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIds'
 };
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
@@ -1218,7 +1224,7 @@ function isPastIllness(cond) {
     return ['inactive','remission','resolved'].includes(cs) || hasAbatement(cond);
 }
 
-function ensureIpsProfile(resource) {
+function ensureIpsProfile(resource, explicitProfile) {
     if (!resource?.resourceType) return;
 
     const profileMap = {
@@ -1232,10 +1238,14 @@ function ensureIpsProfile(resource) {
         'Observation': IPS_PROFILES.OBSERVATION
     };
 
-    const profile = profileMap[resource.resourceType];
-    if (profile) {
-        addProfile(resource, profile);
+    const profile = explicitProfile || profileMap[resource.resourceType];
+    if (!profile) return;
+
+    if (resource.resourceType === 'Immunization' && profile !== IPS_PROFILES.IMMUNIZATION) {
+        return; // evita mezclar perfiles no canónicos en Immunization
     }
+
+    addProfile(resource, profile);
 }
 
 
@@ -2232,10 +2242,10 @@ function ensureIcvpForImmunization(im) {
     const pcmt = im.extension.find(e => e?.url === 'http://smart.who.int/pcmt/StructureDefinition/ProductID' && e.valueCoding);
     if (pcmt && !hasIcvpBizId) {
         const { system, code } = pcmt.valueCoding || {};
-        if (system && code) {
+        if (code) {
             im.extension.push({
                 url: icvpBizIdUrl,
-                valueIdentifier: { system, value: code }
+                valueIdentifier: { system: system || SYSTEMS.PREQUAL_PRODUCT_IDS, value: code }
                 // Opcional: valueCodeableConcept: { coding: [pcmt.valueCoding] }
             });
         }
