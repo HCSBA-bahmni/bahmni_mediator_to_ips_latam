@@ -13,6 +13,10 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const mediatorConfig = require('./mediatorConfig.json');
 
+// ===================== ICVP / Vaccine System (hardcoded) =====================
+// System exigido para vaccineCode por el perfil ICVP (usar ICD-11 MMS)
+const ICVP_VACCINE_SYSTEM = 'http://id.who.int/icd/release/11/mms';
+
 // ===================== ENV =====================
 const {
   // OpenHIM / FHIR Destino
@@ -2240,20 +2244,27 @@ function ensureIcvpForImmunization(im) {
         });*/
     }
 
-    // 2) Garantizar vaccineCode con coding del catálogo ICVP
-    const icvpSystemHint = 'https://extranet.who.int/icvp'; // ajustar al sistema real ICVP si se conoce
+    // 2) Garantizar vaccineCode: forzar system = ICD-11 MMS (ICVP exige system+code válidos)
     im.vaccineCode = im.vaccineCode || { coding: [] };
-    const hasIcvpCoding = (im.vaccineCode.coding || []).some(c => String(c.system || '').toLowerCase().includes('icvp') || String(c.system || '').toLowerCase().includes('prequal'));
-    if (!hasIcvpCoding) {
-        const firstCode = im.vaccineCode.coding?.[0];
-        const newCoding = {
-            system: icvpSystemHint,
-            code: /*firstCode?.code || im.id*/ 'YellowFever' || 'unknown',
-            display: firstCode?.display || im.vaccineCode?.text || 'ICVP vaccine'
-        };
-        // Prepend para que el validador vea primero el coding ICVP
-        //im.vaccineCode.coding = [newCoding, ...(im.vaccineCode.coding || [])];
-        im.vaccineCode.coding = [newCoding];
+    if (im.vaccineCode.coding.length > 0) {
+        // Mantiene code/display existentes, pero deja "duro" el system
+        im.vaccineCode.coding[0].system = ICVP_VACCINE_SYSTEM;
+    } else {
+        // Si no hay coding, inyecta uno válido por defecto (Yellow fever vaccines)
+        im.vaccineCode.coding.push({
+            system: ICVP_VACCINE_SYSTEM,
+            code: 'XM0N24',
+            display: 'Yellow fever vaccines'
+        });
+    }
+
+    // (Opcional) Normaliza codings subsiguientes sin system a ICD-11 MMS
+    if (Array.isArray(im.vaccineCode.coding)) {
+        for (let i = 1; i < im.vaccineCode.coding.length; i++) {
+            if (!im.vaccineCode.coding[i].system) {
+                im.vaccineCode.coding[i].system = ICVP_VACCINE_SYSTEM;
+            }
+        }
     }
 }
 
