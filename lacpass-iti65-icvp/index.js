@@ -942,6 +942,30 @@ async function validateWithProfile(baseUrl, resource, profileUrl) {
     const { data } = await axios.post(url, resource, { params, httpsAgent: axios.defaults.httpsAgent });
     return data;
   } catch (e) {
+    // Retry defensivo si el servidor/proxy ignora los query params (?profile=...)
+    const msg = JSON.stringify(e?.response?.data || e?.message || '');
+    if (msg.includes('HAPI-1769') || msg.includes('Profile parameter is required')) {
+      try {
+        const url2 = `${asFhirBase(baseUrl)}/${rt}/$validate`;
+        const parameters = {
+          resourceType: 'Parameters',
+          parameter: [
+            { name: 'resource', resource },
+            { name: 'profile', valueCanonical: profileUrl }
+          ]
+        };
+        const { data } = await axios.post(url2, parameters, {
+          params: {}, // profile va en Parameters
+          headers: { 'Content-Type': 'application/fhir+json', Prefer: 'handling=strict' },
+          httpsAgent: axios.defaults.httpsAgent
+        });
+        return data;
+      } catch (e2) {
+        const diag2 = e2?.response?.data || e2?.message;
+        console.error('❌ $validate retry (Parameters) error:', typeof diag2 === 'string' ? diag2 : JSON.stringify(diag2));
+        throw e2;
+      }
+    }
     const diag = e?.response?.data || e?.message;
     console.error('❌ $validate error:', typeof diag === 'string' ? diag : JSON.stringify(diag));
     throw e;
@@ -3008,7 +3032,7 @@ app.post('/icvp/_iti65', async (req, res) => {
       await validateWithProfile(
         FHIR_NODE_URL,
         summaryBundle,
-        'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0'
+        (SUMMARY_ICVP_PROFILE || 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0')
       );
     }
 
