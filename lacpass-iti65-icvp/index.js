@@ -177,8 +177,8 @@ const LOINC_CODES = {
 // Perfiles ICVP (racsel) — coinciden con el validador
 const LAC_PROFILES = {
     BUNDLE: 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0',
-    COMPOSITION: 'http://smart.who.int/trust-phw/StructureDefinition/Composition-uv-ips-ICVP',
-    IMMUNIZATION: 'http://smart.who.int/trust-phw/StructureDefinition/Immunization-uv-ips-ICVP',
+    COMPOSITION: 'http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP',
+    IMMUNIZATION: 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP',
     PATIENT: 'http://hl7.org/fhir/uv/ips/StructureDefinition/Patient-uv-ips'
 };
 
@@ -2225,38 +2225,31 @@ function normalizeOrganizationResource(orga) {
 function ensureIcvpForImmunization(im) {
     if (!im || im.resourceType !== 'Immunization') return;
 
-    // 1) Extension de identificador de producto ICVP (si falta)
-    const icvpExtUrl = 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP-productBusinessIdentifier';
-        const hasIcvpOrPcmtExt = Array.isArray(im.extension) && im.extension.some(e =>
-            e?.url === 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP-productBusinessIdentifier' ||
-            e?.url === 'http://smart.who.int/pcmt/StructureDefinition/ProductID'
-        );
-        if (!hasIcvpOrPcmtExt) {
-        const productValue = im.vaccineCode?.coding?.[0]?.code || im.id || `${im.performer?.[0]?.actor?.reference || 'unknown'}`;
-        im.extension = im.extension || [];
-        /*im.extension.unshift({
-            url: icvpExtUrl,
-            valueIdentifier: {
-                system: 'https://extranet.who.int/prequal/vaccines', // heurístico; reemplazar por el sistema ICVP real si lo tienes
-                value: productValue
-            }
-        });*/
+    // 1) Extensión de ProductID: si viene PCMT y falta la ICVP, clonarla
+    const icvpBizIdUrl = 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP-productBusinessIdentifier';
+    im.extension = im.extension || [];
+    const hasIcvpBizId = im.extension.some(e => e?.url === icvpBizIdUrl);
+    const pcmt = im.extension.find(e => e?.url === 'http://smart.who.int/pcmt/StructureDefinition/ProductID' && e.valueCoding);
+    if (pcmt && !hasIcvpBizId) {
+        const { system, code } = pcmt.valueCoding || {};
+        if (system && code) {
+            im.extension.push({
+                url: icvpBizIdUrl,
+                valueIdentifier: { system, value: code }
+                // Opcional: valueCodeableConcept: { coding: [pcmt.valueCoding] }
+            });
+        }
     }
 
-    // 2) Garantizar vaccineCode con coding del catálogo ICVP
-    const icvpSystemHint = 'https://extranet.who.int/icvp'; // ajustar al sistema real ICVP si se conoce
+    // 2) Normalizar vaccineCode: si falta system, usar ICD-11 MMS (Yellow fever vaccines)
     im.vaccineCode = im.vaccineCode || { coding: [] };
-    const hasIcvpCoding = (im.vaccineCode.coding || []).some(c => String(c.system || '').toLowerCase().includes('icvp') || String(c.system || '').toLowerCase().includes('prequal'));
-    if (!hasIcvpCoding) {
-        const firstCode = im.vaccineCode.coding?.[0];
-        const newCoding = {
-            system: icvpSystemHint,
-            code: /*firstCode?.code || im.id*/ 'YellowFever' || 'unknown',
-            display: firstCode?.display || im.vaccineCode?.text || 'ICVP vaccine'
-        };
-        // Prepend para que el validador vea primero el coding ICVP
-        //im.vaccineCode.coding = [newCoding, ...(im.vaccineCode.coding || [])];
-        im.vaccineCode.coding = [newCoding];
+    const hasSystem = (im.vaccineCode.coding || []).some(c => !!c.system);
+    if (!hasSystem) {
+        im.vaccineCode.coding = [{
+            system: 'http://id.who.int/icd/release/11/mms',
+            code: 'XM0N24',
+            display: 'Yellow fever vaccines'
+        }];
     }
 }
 
