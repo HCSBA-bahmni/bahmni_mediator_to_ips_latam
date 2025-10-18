@@ -40,9 +40,9 @@ const {
   FEATURE_TS_LOOKUP_ENABLED = 'true',
   FEATURE_TS_TRANSLATE_ENABLED = 'false',
   
-  // Feature flag específico para vacunas (nuevo)
-  // Si no está definida, por defecto queda habilitado (true) para no romper otros ambientes
-  FEATURE_TS_VACCINES_ENABLED = 'true',
+    // Feature flag específico para vacunas (nuevo)
+    // En ICVP conviene NO tocar vaccineCode por terminología → default = false
+    FEATURE_TS_VACCINES_ENABLED = 'false',
 
   // ===== OIDs para identificadores de paciente (desde tu .env) =====
   LAC_NATIONAL_ID_SYSTEM_OID,
@@ -704,7 +704,7 @@ async function normalizeTerminologyInBundle(bundle) {
     if (!res) continue;
 
     // 🚫 Desactivar toda normalización terminológica para vacunas
-    if (res.resourceType === 'Immunization' && (FEATURE_TS_VACCINES_ENABLED ?? 'true').toLowerCase() === 'false') {
+    if (res.resourceType === 'Immunization' && (FEATURE_TS_VACCINES_ENABLED ?? 'false').toLowerCase() === 'false') {
       tsLog('debug', 'TS[SKIP]: Vaccines normalization disabled by FEATURE_TS_VACCINES_ENABLED=false');
       continue; // salir sin hacer lookup/translate
     }
@@ -2251,15 +2251,26 @@ function ensureIcvpForImmunization(im) {
         }
     }
 
-    // 2) Normalizar vaccineCode: si falta system, usar ICD-11 MMS (Yellow fever vaccines)
+    // 2) Asegurar vaccineCode requerido por ICVP (debe existir coding PreQualVaccineType)
     im.vaccineCode = im.vaccineCode || { coding: [] };
-    const hasSystem = (im.vaccineCode.coding || []).some(c => !!c.system);
-    if (!hasSystem) {
-        im.vaccineCode.coding = [{
-            system: 'http://id.who.int/icd/release/11/mms',
-            code: 'XM0N24',
-            display: 'Yellow fever vaccines'
-        }];
+    const codings = Array.isArray(im.vaccineCode.coding) ? im.vaccineCode.coding : [];
+    const hasPreQualType = codings.some(c => c?.system === SYSTEMS.PREQUAL_VACCINE_TYPE && c.code);
+    if (!hasPreQualType) {
+        const looksYellowFever = (im.vaccineCode.text || codings.map(c => c.display).join(' ') || '')
+            .toLowerCase()
+            .includes('fiebre amarilla');
+        const prequalCoding = {
+            system: SYSTEMS.PREQUAL_VACCINE_TYPE,
+            code: looksYellowFever ? 'YellowFever' : 'YellowFever',
+            display: 'Yellow Fever'
+        };
+        im.vaccineCode.coding = [
+            prequalCoding,
+            ...codings.filter(c => c?.system !== SYSTEMS.PREQUAL_VACCINE_TYPE)
+        ];
+        if (!im.vaccineCode.text) {
+            im.vaccineCode.text = 'Vacunas contra la fiebre amarilla';
+        }
     }
 }
 
@@ -2441,17 +2452,6 @@ app.post('/icvp/_iti65', async (req, res) => {
     //     if (Object.keys(res.meta).length === 0) delete res.meta;
     //   }
     // });
-
-    // FIX #3 — Sanitize UV/IPS en meds/vacunas
-    summaryBundle.entry.forEach(entry => {
-      const res = entry.resource;
-      if (res?.resourceType === 'MedicationStatement' && res.medicationCodeableConcept?.coding) {
-        res.medicationCodeableConcept.coding.forEach(c => delete c.system);
-      }
-      if (res?.resourceType === 'Immunization' && res.vaccineCode?.coding) {
-        res.vaccineCode.coding.forEach(c => delete c.system);
-      }
-    });
 
     // URN map para referencias internas
     const urlMap = new Map();
