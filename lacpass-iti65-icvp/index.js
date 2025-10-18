@@ -2227,8 +2227,11 @@ function ensureIcvpForImmunization(im) {
 
     // 1) Extension de identificador de producto ICVP (si falta)
     const icvpExtUrl = 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP-productBusinessIdentifier';
-    const hasIcvpExt = Array.isArray(im.extension) && im.extension.some(e => String(e.url).startsWith('http://smart.who.int/icvp/StructureDefinition'));
-    if (!hasIcvpExt) {
+        const hasIcvpOrPcmtExt = Array.isArray(im.extension) && im.extension.some(e =>
+            e?.url === 'http://smart.who.int/icvp/StructureDefinition/Immunization-uv-ips-ICVP-productBusinessIdentifier' ||
+            e?.url === 'http://smart.who.int/pcmt/StructureDefinition/ProductID'
+        );
+        if (!hasIcvpOrPcmtExt) {
         const productValue = im.vaccineCode?.coding?.[0]?.code || im.id || `${im.performer?.[0]?.actor?.reference || 'unknown'}`;
         im.extension = im.extension || [];
         /*im.extension.unshift({
