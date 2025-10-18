@@ -1328,13 +1328,6 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
             }
         };
     } else if (allowedTypes.includes('Immunization')) {
-        sec.code = {
-            "coding": [ {
-                "system": "http://loinc.org",
-                "code": "11369-6",
-                "display": "History of Immunization note"
-            } ]
-        };
         placeholder = {
             fullUrl: 'urn:uuid:meds-none',
             resource: {
@@ -1812,6 +1805,18 @@ function fixBundleValidationIssues(summaryBundle) {
             const loincCoding = pastIllnessSection.code.coding.find(c => c.system === 'http://loinc.org' && c.code === '11348-0');
             if (loincCoding && loincCoding.display === 'History of Past illness Narrative') {
                 loincCoding.display = 'History of Past illness note';
+            }
+        }
+
+        const immunisationSection = compositionEntry.resource.section.find(s =>
+            s.code?.coding?.some(c => c.code === '11369-6')
+        );
+
+        if (immunisationSection) {
+            // Corregir display del código LOINC
+            const loincCoding = immunisationSection.code.coding.find(c => c.system === 'http://loinc.org' && c.code === '11369-6');
+            if (loincCoding && loincCoding.display === 'History of Immunization Narrative') {
+                loincCoding.display = 'History of Immunization note';
             }
         }
     }
