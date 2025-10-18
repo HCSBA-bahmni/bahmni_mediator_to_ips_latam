@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import express from 'express';
 import axios from 'axios';
+// Modo de validación: off | warn | strict
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
@@ -131,6 +132,9 @@ const {
   // Debug level para ops terminológicas
   TS_DEBUG_LEVEL = 'warn', // 'debug', 'warn', 'error', 'silent'
   FEATURE_SERVER_VALIDATE = 'true',
+  // Nuevo: controla si la validación bloquea la transacción
+  // Valores: 'off' | 'warn' | 'strict'  (default: 'warn' para preservar "sí transacciona")
+  FEATURE_SERVER_VALIDATE_MODE = 'warn',
 } = process.env;
 
 // ====== NUEVO: separador configurable para URN OID (por defecto ".")
@@ -3027,13 +3031,22 @@ app.post('/icvp/_iti65', async (req, res) => {
 
     // Normalización final (URNs, perfiles, secciones)
     finalizeICVPBundle(summaryBundle);
-    // Opcional: valida en servidor contra perfil ICVP para evitar HAPI-1769
-    if (isTrue(FEATURE_SERVER_VALIDATE)) {
-      await validateWithProfile(
-        FHIR_NODE_URL,
-        summaryBundle,
-        (SUMMARY_ICVP_PROFILE || 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0')
-      );
+
+    // Validación en servidor ($validate) con modo configurable.
+    const VALIDATE_MODE = String(FEATURE_SERVER_VALIDATE_MODE || 'warn').toLowerCase();
+    const DO_VALIDATE = isTrue(FEATURE_SERVER_VALIDATE) && VALIDATE_MODE !== 'off';
+    if (DO_VALIDATE) {
+      const profileUrl = (SUMMARY_ICVP_PROFILE || 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0');
+      try {
+        await validateWithProfile(FHIR_NODE_URL, summaryBundle, profileUrl);
+      } catch (e) {
+        const diag = e?.response?.data || e?.message;
+        if (VALIDATE_MODE === 'strict') {
+          console.error('❌ Server validate (STRICT) failed:', typeof diag === 'string' ? diag : JSON.stringify(diag));
+          throw e;
+        }
+        console.warn('⚠️  Server validate (WARN) failed, seguirá la transacción:', typeof diag === 'string' ? diag : JSON.stringify(diag));
+      }
     }
 
     // DocumentReference base
