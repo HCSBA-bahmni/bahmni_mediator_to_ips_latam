@@ -24,7 +24,7 @@
     },
     {
       "name": "ITI‑65 icvp Health Channel",
-      "urlPattern": "^/icvp/_health$$",
+      "urlPattern": "^/icvp/_health$",
       "routes": [
         {
           "name": "ITI‑65 icvp Health Route",
