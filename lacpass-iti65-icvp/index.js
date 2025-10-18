@@ -130,6 +130,7 @@ const {
   
   // Debug level para ops terminológicas
   TS_DEBUG_LEVEL = 'warn', // 'debug', 'warn', 'error', 'silent'
+  FEATURE_SERVER_VALIDATE = 'true',
 } = process.env;
 
 // ====== NUEVO: separador configurable para URN OID (por defecto ".")
@@ -930,6 +931,21 @@ function joinUrl(base, path) {
     const b = (base || '').replace(/\/+$/, '');
     const p = (path || '').replace(/^\/+/, '');
     return `${b}/${p}`;
+}
+
+// === Helper: validateWithProfile (HAPI $validate) ===
+async function validateWithProfile(baseUrl, resource, profileUrl) {
+  const rt = resource.resourceType || 'Bundle';
+  const url = `${asFhirBase(baseUrl)}/${rt}/$validate`;
+  const params = { profile: profileUrl };
+  try {
+    const { data } = await axios.post(url, resource, { params, httpsAgent: axios.defaults.httpsAgent });
+    return data;
+  } catch (e) {
+    const diag = e?.response?.data || e?.message;
+    console.error('❌ $validate error:', typeof diag === 'string' ? diag : JSON.stringify(diag));
+    throw e;
+  }
 }
 
 // ====== PUNTO ÚNICO DE POSTPROCESO ICVP ======
@@ -2987,6 +3003,14 @@ app.post('/icvp/_iti65', async (req, res) => {
 
     // Normalización final (URNs, perfiles, secciones)
     finalizeICVPBundle(summaryBundle);
+    // Opcional: valida en servidor contra perfil ICVP para evitar HAPI-1769
+    if (isTrue(FEATURE_SERVER_VALIDATE)) {
+      await validateWithProfile(
+        FHIR_NODE_URL,
+        summaryBundle,
+        'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0'
+      );
+    }
 
     // DocumentReference base
     const baseDocRef = buildDocumentReferenceFromICVP(summaryBundle);

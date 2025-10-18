@@ -2550,39 +2550,36 @@ app.post('/lacpass/_iti65', async (req, res) => {
       entry: [{ item: { reference: `urn:uuid:${drId}` } }]
     };
 
-    // ---- Attachment (cambio puntual): en 'nobinary' usar siempre el URN del Bundle
-    const attachment = {
-      contentType: 'application/fhir+json',
-      size: bundleSize,
-      hash: bundleHash
-    };
+    // ---- Attachment: referencia al Bundle o al Binary según modo configurado
+    const attachment = { contentType: 'application/fhir+json' };
+    let binaryTxEntry = null;
+
     if (BINARY_DELIVERY_MODE === 'nobinary') {
-      // Haz que el attachment siga el mismo modo del bundle de documento
       attachment.url = buildRef(FULLURL_MODE_DOCUMENT, 'Bundle', originalBundleId);
-    }
+      attachment.size = bundleSize;
+      attachment.hash = bundleHash;
+    } else {
+      const binaryId = uuidv4();
+      const attachmentBinaryUrl = buildRef(ATTACHMENT_URL_MODE, 'Binary', binaryId);
 
-    // Si queremos Binary o ambos, preparamos Binary y/o data
-    const binaryId = uuidv4();
-    const attachmentBinaryUrl = buildRef(ATTACHMENT_URL_MODE, 'Binary', binaryId);
+      attachment.url = attachmentBinaryUrl;
+      attachment.size = bundleSize;
+      attachment.hash = bundleHash;
 
-    const binaryTxEntry = {
-      fullUrl: attachmentBinaryUrl, // será normalizado luego por applyUrlModeToBundle
-      resource: {
-        resourceType: 'Binary',
-        id: binaryId,
-        contentType: 'application/fhir+json',
-        data: bundleBytes.toString('base64')
-      },
-      request: { method: 'POST', url: 'Binary' }
-    };
+      binaryTxEntry = {
+        fullUrl: attachmentBinaryUrl,
+        resource: {
+          resourceType: 'Binary',
+          id: binaryId,
+          contentType: 'application/fhir+json',
+          data: bundleBytes.toString('base64')
+        },
+        request: { method: 'POST', url: 'Binary' }
+      };
 
-    if (BINARY_DELIVERY_MODE === 'binary') {
-      attachment.url = attachmentBinaryUrl;           // URL → Binary
-      delete attachment.data;                         // sin data inline
-    }
-    if (BINARY_DELIVERY_MODE === 'both') {
-      attachment.url = attachmentBinaryUrl;           // URL → Binary
-      attachment.data = bundleBytes.toString('base64'); // y data inline
+      if (BINARY_DELIVERY_MODE === 'both') {
+        attachment.data = bundleBytes.toString('base64');
+      }
     }
 
     // ---- DocumentReference (usa Coding simple en format, como antes)
@@ -2667,14 +2664,14 @@ app.post('/lacpass/_iti65', async (req, res) => {
     // ➕ "comportamiento anterior": incluir el Bundle si no hay Binary
     if (BINARY_DELIVERY_MODE === 'nobinary') {
       provideBundle.entry.push({
-        fullUrl: buildRef(ATTACHMENT_URL_MODE, 'Bundle', originalBundleId),
+        fullUrl: buildRef(FULLURL_MODE_DOCUMENT, 'Bundle', originalBundleId),
         resource: summaryBundle,
-        request: { method: 'POST', url: `Bundle/${originalBundleId}` }
+        request: { method: 'POST', url: 'Bundle' }
       });
     }
 
     // ➕ Incluir Binary si corresponde
-    if (BINARY_DELIVERY_MODE === 'binary' || BINARY_DELIVERY_MODE === 'both') {
+    if (binaryTxEntry) {
       provideBundle.entry.push(binaryTxEntry);
     }
 
