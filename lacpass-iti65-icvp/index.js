@@ -2123,13 +2123,11 @@ function normalizePractitionerResource(prac) {
             "type": {
                 "coding": [
                     {
-                        "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
                         "code": "PPN",
                         "display": "Passport number"
                     }
                 ]
             },
-            "system": "https://registrocivil.cl/pasaporte",
             "value": "P34567890"
         },
         {
@@ -2137,7 +2135,6 @@ function normalizePractitionerResource(prac) {
             "type": {
                 "coding": [
                     {
-                        "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
                         "code": "PRN",
                         "display": "Provider number"
                     }
@@ -2170,7 +2167,6 @@ function normalizePractitionerResource(prac) {
             "code": {
                 "coding": [
                     {
-                        "system": "http://terminology.hl7.org/CodeSystem/v2-0360/2.7",
                         "code": "RN",
                         "display": "Registered Nurse"
                     }
@@ -2193,7 +2189,6 @@ function normalizeOrganizationResource(orga) {
     const identifiers = [
         {
             "use": "official",
-            "system": "https://registroorganizaciones.cl/id",
             "value": "G7H8"
         }
     ];
