@@ -2242,7 +2242,8 @@ function ensureIcvpForImmunization(im) {
     im.vaccineCode = im.vaccineCode || { coding: [] };
     if (im.vaccineCode.coding.length > 0) {
         // Mantiene code/display existentes, pero deja "duro" el system
-        im.vaccineCode.coding[0].system = ICVP_VACCINE_SYSTEM;
+        //im.vaccineCode.coding[0].system = ICVP_VACCINE_SYSTEM;
+        im.vaccineCode.coding[0].code = 'YellowFever';
     } else {
         // Si no hay coding, inyecta uno válido por defecto (Yellow fever vaccines)
         im.vaccineCode.coding.push({
