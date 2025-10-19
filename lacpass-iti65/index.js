@@ -1104,7 +1104,9 @@ async function normalizeTerminologyInBundle(bundle) {
     // Normalizar todas las CC relevantes del recurso
     for (const { path, cc } of iterateCodeableConcepts(res)) {
       try {
+          console.log(`  └─ Normalizando ${path}:`, cc.coding?.map(c => `${c.system}|${c.code}|${cc.text}`) || ['sin códigos']);
         await normalizeCC(ts, cc, domainCfg, domain);
+        console.log('    ✅ Normalizado a:', cc.coding?.map(c => `${c.system}|${c.code}|${c.display}`) || ['sin códigos']);
       } catch (e) {
         console.warn(`⚠️ TS normalize error (${domain}.${path}):`, e.message);
       }
