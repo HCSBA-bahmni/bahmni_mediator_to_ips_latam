@@ -984,9 +984,9 @@ function pickDomainCoding(cc, domainCfg) {
 function buildPipeline(domain, ts, base, domainCfg) {
     // Secuencia: validateVS → validateCS → lookup → translate
     return [
-        () => opLookup(ts, base, domainCfg),
         () => opValidateVS(ts, base, domainCfg),
         () => opValidateCS(ts, base, domainCfg),
+        () => opLookup(ts, base, domainCfg),
         () => opTranslate(ts, base, domainCfg),
     ];
 }
