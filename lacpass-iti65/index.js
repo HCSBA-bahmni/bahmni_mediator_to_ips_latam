@@ -1004,12 +1004,16 @@ async function normalizeCC(ts, cc, domainCfg, domain) {
     for (const step of steps) {
         try {
             const result = await step();
-            console.log('result--->', result);
             if (result?.system && result?.code) {
                 target.system = result.system;
                 target.code = result.code;
                 target.display = result.display || target.display || cc.text;
                 return; // Usa el primer resultado exitoso
+            }else{
+                target.system = base.system;
+                target.code = base.code;
+                target.display = base.display;
+                return;
             }
         } catch (error) {
             continue; // Continúa con el siguiente paso
