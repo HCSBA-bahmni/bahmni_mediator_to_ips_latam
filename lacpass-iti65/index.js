@@ -994,7 +994,14 @@ async function normalizeCC(ts, cc, domainCfg, domain) {
             if (result?.system && result?.code) {
                 target.system = result.system;
                 target.code = result.code;
-                target.display = result.display || target.display || cc.text;
+                //target.display = result.display || target.display || cc.text;
+                // ahora: si result.display existe, SIEMPRE reemplaza; si no, deja lo que había
+                if (result && typeof result.display === 'string' && result.display.trim() !== '') {
+                   target.display = result.display.trim();
+                 } else {
+                   // fallback al comportamiento previo
+                   target.display = target.display || cc.text;
+                 }
                 return; // Usa el primer resultado exitoso
             }else{
                 target.system = base.system;
