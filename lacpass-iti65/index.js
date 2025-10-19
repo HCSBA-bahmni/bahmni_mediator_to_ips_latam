@@ -898,9 +898,27 @@ function extractResultFromParameters(data) {
 }
 
 function extractDisplayFromLookup(data) {
-    if (data?.resourceType !== 'Parameters') return null;
-    const displayParam = data.parameter?.find(p => p.name === 'display');
-    return displayParam?.valueString || null;
+  if (data?.resourceType !== 'Parameters') return null;
+  const params = Array.isArray(data.parameter) ? data.parameter : [];
+
+  const lang = (process.env.TS_DISPLAY_LANGUAGE || 'en').toLowerCase();
+  const ROLE_PREFERRED = '900000000000548007';
+  const ROLE_ACCEPTABLE = '900000000000549004';
+
+  // helper para extraer parts por nombre
+  const getPart = (d, name) => (d.part || []).find(p => p.name === name);
+  const getVal = (d) => getPart(d, 'value')?.valueString || null;
+  const getLang = (d) => getPart(d, 'language')?.valueCode?.toLowerCase();
+  const getRole = (d) => getPart(d, 'role')?.valueCoding?.code;
+  const getUse = (d) => getPart(d, 'use')?.valueCoding?.code; // e.g. synonym/fsn
+
+  const designations = params.filter(p => p.name === 'designation' && Array.isArray(p.part));
+  let pick = designations.find(d => getLang(d) === lang && getRole(d) === ROLE_PREFERRED);
+  if (!pick) pick = designations.find(d => getLang(d) === lang && getRole(d) === ROLE_ACCEPTABLE);
+  if (!pick) pick = designations.find(d => getLang(d) === lang);
+  const paramDisplay = params.find(p => p.name === 'display')?.valueString || null;
+
+  return getVal(pick) || paramDisplay || null;
 }
 
 function extractMatchFromTranslate(data) {
