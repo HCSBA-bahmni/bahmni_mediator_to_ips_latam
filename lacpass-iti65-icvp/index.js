@@ -134,6 +134,8 @@ const {
   
   // Debug level para ops terminológicas
   TS_DEBUG_LEVEL = 'warn', // 'debug', 'warn', 'error', 'silent'
+    // Feature para enviar solo vacunas (Composition/Patient/Immunization)
+    FEATURE_ICVP_VACCINES_ONLY = 'false',
 } = process.env;
 
 // ====== NUEVO: separador configurable para URN OID (por defecto ".")
@@ -1138,7 +1140,7 @@ function addProfile(resource, profileUrl) {
     ensureArray(resource.meta, 'profile');
 
     if (!resource.meta.profile.includes(profileUrl)) {
-        resource.meta.profile = profileUrl;
+        resource.meta.profile.push(profileUrl);
     }
 }
 
@@ -1328,22 +1330,7 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
                 patient: patRef ? { reference: patRef } : undefined
             }
         };
-    } else if (allowedTypes.includes('Immunization')) {
-        placeholder = {
-            fullUrl: 'urn:uuid:meds-none',
-            resource: {
-                resourceType: 'Immunization',
-                meta: { profile: [IPS_PROFILES.MEDICATION_STATEMENT] },
-                status: 'active',
-                medicationCodeableConcept: {
-                    coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-immunization', display: 'No known immunization' }],
-                    text: 'No known Immunization'
-                },
-                subject: patRef ? { reference: patRef } : undefined,
-                effectiveDateTime: nowIso
-            }
-        };
-    }  else if (allowedTypes.includes('MedicationStatement')) {
+    } else if (allowedTypes.includes('MedicationStatement')) {
         placeholder = {
             fullUrl: 'urn:uuid:meds-none',
             resource: {
@@ -1356,6 +1343,25 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
                 },
                 subject: patRef ? { reference: patRef } : undefined,
                 effectiveDateTime: nowIso
+            }
+        };
+    } else if (allowedTypes.includes('Immunization')) {
+        // Placeholder de sección solo si realmente quieres declarar "sin info de vacunas"
+        placeholder = {
+            fullUrl: 'urn:uuid:immu-none',
+            resource: {
+                resourceType: 'Immunization',
+                meta: { profile: [IPS_PROFILES.IMMUNIZATION] },
+                status: 'not-done',
+                vaccineCode: {
+                    coding: [{
+                        system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips',
+                        code: 'no-immunization-info',
+                        display: 'No information about immunizations'
+                    }]
+                },
+                subject: patRef ? { reference: patRef } : undefined,
+                occurrenceDateTime: nowIso
             }
         };
     } else if (allowedTypes.includes('Condition')) {
@@ -2242,14 +2248,15 @@ function ensureIcvpForImmunization(im) {
     // 2) Garantizar vaccineCode: forzar system = ICD-11 MMS (ICVP exige system+code válidos)
     im.vaccineCode = im.vaccineCode || { coding: [] };
     if (im.vaccineCode.coding.length > 0) {
-        // Mantiene code/display existentes, pero deja "duro" el system
-        //im.vaccineCode.coding[0].system = ICVP_VACCINE_SYSTEM;
-        im.vaccineCode.coding[0].code = 'YellowFever';
+        // Mantiene code/display existentes, pero asegura system ICD-11 MMS
+        if (!im.vaccineCode.coding[0].system) {
+          im.vaccineCode.coding[0].system = ICVP_VACCINE_SYSTEM;
+        }
     } else {
         // Si no hay coding, inyecta uno válido por defecto (Yellow fever vaccines)
         im.vaccineCode.coding.push({
             system: ICVP_VACCINE_SYSTEM,
-            code: 'XM0N24',
+            code: 'XM0N24',            // ICD-11 MMS: Yellow fever vaccines
             display: 'Yellow fever vaccines'
         });
     }
@@ -2262,6 +2269,70 @@ function ensureIcvpForImmunization(im) {
             }
         }
     }
+}
+
+
+function pruneToVaccinesOnly(bundle) {
+    if (!bundle?.entry) return;
+
+    const keepTypes = new Set(['Composition', 'Patient', 'Immunization', 'Organization', 'Practitioner']);
+
+    const compEntry = bundle.entry.find(e => e.resource?.resourceType === 'Composition');
+    if (compEntry?.resource?.section) {
+        for (const sec of compEntry.resource.section) {
+            const loinc = (sec.code?.coding || []).find(c => c.system === 'http://loinc.org')?.code;
+            if (loinc && loinc !== LOINC_CODES.IMMUNIZATIONS_SECTION) {
+                delete sec.entry;
+            }
+        }
+    }
+
+    const needed = new Set();
+    const markNeeded = (ref) => {
+        if (!ref || typeof ref !== 'string') return;
+        needed.add(ref);
+        const parts = ref.split('/').filter(Boolean);
+        const type = parts[parts.length - 2];
+        const id = parts[parts.length - 1];
+        if (type && id) {
+            needed.add(`${type}/${id}`);
+            needed.add(`urn:uuid:${id}`);
+        }
+    };
+
+    if (compEntry?.resource?.custodian?.reference) {
+        markNeeded(compEntry.resource.custodian.reference);
+    }
+
+    for (const entry of bundle.entry) {
+        const res = entry.resource;
+        if (res?.resourceType === 'Immunization') {
+            (res.performer || []).forEach(p => markNeeded(p?.actor?.reference));
+        }
+    }
+
+    const shouldKeep = (entry) => {
+        const rt = entry.resource?.resourceType;
+        if (!rt) return false;
+        if (keepTypes.has(rt) && rt !== 'Organization' && rt !== 'Practitioner') {
+            return true;
+        }
+        if (rt === 'Organization' || rt === 'Practitioner') {
+            const candidates = new Set([
+                entry.fullUrl,
+                entry.resource?.id ? `${rt}/${entry.resource.id}` : null,
+                entry.resource?.id ? `urn:uuid:${entry.resource.id}` : null,
+            ]);
+            for (const cand of candidates) {
+                if (cand && needed.has(cand)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    bundle.entry = bundle.entry.filter(shouldKeep);
 }
 
 
@@ -2290,13 +2361,15 @@ app.post('/icvp/_iti65', async (req, res) => {
     return res.status(400).json({ error: 'Invalid Bundle or missing uuid' });
   }
 
-
+    if (String(FEATURE_ICVP_VACCINES_ONLY).toLowerCase() === 'true') {
+        pruneToVaccinesOnly(summaryBundle);
+    }
 
     try {
 
-        // ========= NUEVO: Corregir problemas de validación ANTES de PDQm =========
-        preValidateIcvpBundle(summaryBundle);
-        fixBundleValidationIssues(summaryBundle);
+                // ========= Corregir problemas de validación ANTES de PDQm =========
+                preValidateIcvpBundle(summaryBundle);
+                fixBundleValidationIssues(summaryBundle);
 
         // ===== Asegurar perfil LAC Bundle desde el inicio =====
         ensureLacBundleProfile(summaryBundle);
@@ -2443,16 +2516,14 @@ app.post('/icvp/_iti65', async (req, res) => {
     //   }
     // });
 
-    // FIX #3 — Sanitize UV/IPS en meds/vacunas
-    summaryBundle.entry.forEach(entry => {
-      const res = entry.resource;
-      if (res?.resourceType === 'MedicationStatement' && res.medicationCodeableConcept?.coding) {
-        res.medicationCodeableConcept.coding.forEach(c => delete c.system);
-      }
-      if (res?.resourceType === 'Immunization' && res.vaccineCode?.coding) {
-        res.vaccineCode.coding.forEach(c => delete c.system);
-      }
-    });
+        // FIX #3 — Sanitize UV/IPS en meds (no tocar Immunization: ICVP exige system)
+        summaryBundle.entry.forEach(entry => {
+            const res = entry.resource;
+            if (res?.resourceType === 'MedicationStatement' && res.medicationCodeableConcept?.coding) {
+                // si realmente quieres limpiar systems en meds, deja este bloque.
+                // En vacunas NO remover system.
+            }
+        });
 
     // URN map para referencias internas
     const urlMap = new Map();
@@ -2558,7 +2629,7 @@ app.post('/icvp/_iti65', async (req, res) => {
     summaryBundle.entry.forEach(entry => {
       const res = entry.resource;
       if (res.subject?.reference && urlMap.has(res.subject.reference)) {
-        res.subject.reference = urlMap.get(res.patient.reference);
+                res.subject.reference = urlMap.get(res.subject.reference);
       }
       if (res.patient?.reference && urlMap.has(res.patient.reference)) {
         res.patient.reference = urlMap.get(res.patient.reference);
