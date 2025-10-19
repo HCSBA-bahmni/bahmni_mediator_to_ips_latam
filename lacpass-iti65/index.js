@@ -1004,14 +1004,11 @@ async function normalizeCC(ts, cc, domainCfg, domain) {
 
     for (const step of steps) {
         try {
-            console.log('  │       └─ Executing step...',step);
             const result = await step();
-            console.log('  │           └─ Result:', result);
             if (result?.system && result?.code) {
                 target.system = result.system;
                 target.code = result.code;
                 target.display = result.display || target.display || cc.text;
-                console.log('  │           └─ Updated coding:', target);
                 return; // Usa el primer resultado exitoso
             }
         } catch (error) {
@@ -1103,6 +1100,7 @@ async function normalizeTerminologyInBundle(bundle) {
     // Normalizar todas las CC relevantes del recurso
     for (const { path, cc } of iterateCodeableConcepts(res)) {
       try {
+          console.log('cc----->', cc);
         console.log(`  └─ Normalizando ${path}:`, cc.coding?.map(c => `${c.system}|${c.code}|${c.display}`) || ['sin códigos']);
         await normalizeCC(ts, cc, domainCfg, domain);
       } catch (e) {
