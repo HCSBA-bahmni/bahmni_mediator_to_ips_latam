@@ -210,7 +210,7 @@ async function fireAndForgetSnomedLookup(ts, system, code, versionUri) {
   if (!ts || !system || !code) return;
   try {
     // SOLO CONSULTA: CodeSystem/$lookup (no usamos la respuesta)
-    const response = await ts.get('/CodeSystem/$lookup', {
+    await ts.get('/CodeSystem/$lookup', {
       params: {
         system,                   // http://snomed.info/sct
         code,                     // p.ej. 59621000
@@ -218,7 +218,6 @@ async function fireAndForgetSnomedLookup(ts, system, code, versionUri) {
         _format: 'json'
       }
     });
-    console.log('debug', `SNOMED $lookup exitoso: ${system}|${code}|${versionUri} ->`, response);
   } catch (e) {
     // Log no bloqueante (usar WARN para que se vea con TS_DEBUG_LEVEL=warn)
     tsLog('warn', `SNOMED $lookup fallo: ${system}|${code}|${versionUri} -> ${e?.response?.status || e?.message}`);
@@ -1005,11 +1004,14 @@ async function normalizeCC(ts, cc, domainCfg, domain) {
 
     for (const step of steps) {
         try {
+            console.log('  │       └─ Executing step...',step);
             const result = await step();
+            console.log('  │           └─ Result:', result);
             if (result?.system && result?.code) {
                 target.system = result.system;
                 target.code = result.code;
                 target.display = result.display || target.display || cc.text;
+                console.log('  │           └─ Updated coding:', target);
                 return; // Usa el primer resultado exitoso
             }
         } catch (error) {
