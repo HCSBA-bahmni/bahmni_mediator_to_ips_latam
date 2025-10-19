@@ -2173,7 +2173,7 @@ function normalizePractitionerResource(prac) {
                     }
                 ]
             },
-            //"system": "https://registrocivil.cl/pasaporte",
+            "system": "https://registrocivil.cl/pasaporte",
             "value": "CL987654"
         },
         {
@@ -2187,7 +2187,7 @@ function normalizePractitionerResource(prac) {
                     }
                 ]
             },
-            //"system": "https://colegiomedico.cl/id",
+            "system": "https://colegiomedico.cl/id",
             "value": "K7L8M"
         }
     ];
@@ -2222,7 +2222,7 @@ function normalizeOrganizationResource(orga) {
     const identifiers = [
         {
             "use": "official",
-            //"system": "https://registroorganizaciones.cl/id",
+            "system": "https://registroorganizaciones.cl/id",
             "value": "G7H8"
         }
     ];
