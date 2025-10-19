@@ -779,7 +779,7 @@ async function opValidateVS(ts, { code, system, display }, domainCfg) {
       return { system: system, code, display: ok.display || display, source: 'validate-vs' };
     } else {
       console.log('debug', `❌ VS validation failed: ${system}|${code}`);
-        return { system: system, code, display: ok.display || display, source: 'validate-vs' };
+      return { system: system, code, display: ok.display || display, source: 'validate-vs' };
     }
   } catch (e) {
     console.log('warn', `VS validation error: ${e.response?.status} ${e.message}`, { system, code });
@@ -810,6 +810,7 @@ async function opValidateCS(ts, { code, system, display }, domainCfg) {
       return { system: url, code, display: ok.display || display, source: 'validate-cs' };
     } else {
       console.log('debug', `❌ CS validation failed: ${url}|${code}`);
+        return { system: url, code, display: ok.display || display, source: 'validate-cs' };
     }
   } catch (e) {
     console.log('warn', `CS validation error: ${e.response?.status} ${e.message}`, { system: url, code });
@@ -837,6 +838,7 @@ async function opLookup(ts, { code, system, display }, domainCfg) {
       return { system, code, display: disp, source: 'lookup' };
     } else {
       console.log('debug', `❌ Lookup no display: ${system}|${code}`);
+        return { system, code, display: disp, source: 'lookup' };
     }
   } catch (e) {
     console.log('warn', `Lookup error: ${e.response?.status} ${e.message}`, { system, code });
@@ -1017,7 +1019,6 @@ function* iterateCodeableConcepts(resource) {
         'Immunization': ['vaccineCode'],
         'AllergyIntolerance': ['code'],
         'Observation': ['code'],
-        'Medication': ['code'],
     };
 
     const fields = typeToFields[resource.resourceType] || [];
