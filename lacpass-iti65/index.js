@@ -218,7 +218,7 @@ async function fireAndForgetSnomedLookup(ts, system, code, versionUri) {
         _format: 'json'
       }
     });
-    console.log('debug', `SNOMED $lookup exitoso: ${system}|${code}|${versionUri} -> ${response}`);
+    console.log('debug', `SNOMED $lookup exitoso: ${system}|${code}|${versionUri} ->`, response);
   } catch (e) {
     // Log no bloqueante (usar WARN para que se vea con TS_DEBUG_LEVEL=warn)
     tsLog('warn', `SNOMED $lookup fallo: ${system}|${code}|${versionUri} -> ${e?.response?.status || e?.message}`);
