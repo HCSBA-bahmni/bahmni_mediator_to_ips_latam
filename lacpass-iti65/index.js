@@ -923,6 +923,7 @@ function extractMatchFromTranslate(data) {
 
     let equivalence, system, code, display;
     for (const part of matchParam.part) {
+        console.log('Part--->:', part);
         if (part.name === 'equivalence') equivalence = part.valueCode;
         if (part.name === 'concept') {
             const concept = part.valueCoding;
