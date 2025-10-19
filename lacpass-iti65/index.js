@@ -210,7 +210,7 @@ async function fireAndForgetSnomedLookup(ts, system, code, versionUri) {
   if (!ts || !system || !code) return;
   try {
     // SOLO CONSULTA: CodeSystem/$lookup (no usamos la respuesta)
-    await ts.get('/CodeSystem/$lookup', {
+    const response = await ts.get('/CodeSystem/$lookup', {
       params: {
         system,                   // http://snomed.info/sct
         code,                     // p.ej. 59621000
@@ -218,6 +218,7 @@ async function fireAndForgetSnomedLookup(ts, system, code, versionUri) {
         _format: 'json'
       }
     });
+    console.log('debug', `SNOMED $lookup exitoso: ${system}|${code}|${versionUri} -> ${response}`);
   } catch (e) {
     // Log no bloqueante (usar WARN para que se vea con TS_DEBUG_LEVEL=warn)
     tsLog('warn', `SNOMED $lookup fallo: ${system}|${code}|${versionUri} -> ${e?.response?.status || e?.message}`);
@@ -1053,14 +1054,12 @@ async function normalizeTerminologyInBundle(bundle) {
       || 'http://snomed.info/sct/900000000000207008/version/20240331';
     for (const ent of entries) {
       const res = ent.resource;
-      console.log('Resource for lookup scan:', res.code);
       if (!res) continue;
       const codables = [
         res.code, res.medicationCodeableConcept, res.category, res.clinicalStatus
       ].filter(Boolean);
       for (const cc of codables) {
         const codings = cc.coding || [];
-        console.log('Codings to lookup:', codings);
         for (const c of codings) {
           if (c?.system === SNOMED_SYSTEM && c?.code) {
             uniq.add(`${c.system}|${c.code}|${versionDefault}`);
