@@ -996,6 +996,7 @@ async function normalizeCC(ts, cc, domainCfg, domain) {
         code: target.code,
         display: target.display || cc.text
     };
+    console.log('Base para normalizar:', base,target,cc);
 
     // Skip TS lookup for absent/unknown codes and SNOMED when not available
     if (!shouldLookupTS(base.system)) return;
