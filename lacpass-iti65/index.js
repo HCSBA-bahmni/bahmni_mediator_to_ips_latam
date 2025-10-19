@@ -1017,6 +1017,7 @@ function* iterateCodeableConcepts(resource) {
         'Immunization': ['vaccineCode'],
         'AllergyIntolerance': ['code'],
         'Observation': ['code'],
+        'Medication': ['code'],
     };
 
     const fields = typeToFields[resource.resourceType] || [];
