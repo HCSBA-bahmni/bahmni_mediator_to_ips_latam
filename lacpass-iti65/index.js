@@ -1033,7 +1033,6 @@ function* iterateCodeableConcepts(resource) {
     const fields = typeToFields[resource.resourceType] || [];
     for (const field of fields) {
         const cc = resource[field];
-        console.log(`Iterating CC for ${resource.resourceType}.${field}:`, cc);
         if (cc?.coding && Array.isArray(cc.coding)) {
             yield { path: field, cc };
         }
@@ -1062,15 +1061,15 @@ async function normalizeTerminologyInBundle(bundle) {
         const codings = cc.coding || [];
         for (const c of codings) {
           if (c?.system === SNOMED_SYSTEM && c?.code) {
-            uniq.add(`${c.system}|${c.code}|${versionDefault}`);
+            uniq.add(`${c.system}|${c.code}|${c.display}|${versionDefault}`);
           }
         }
       }
     }
     await Promise.all(
       [...uniq].map(k => {
-        const [system, code, versionUri] = k.split('|');
-        return fireAndForgetSnomedLookup(ts, system, code, versionUri);
+        const [system, code, display, versionUri] = k.split('|');
+        return fireAndForgetSnomedLookup(ts, system, code, display, versionUri);
       })
     );
   }
