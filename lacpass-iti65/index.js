@@ -988,12 +988,8 @@ function buildPipeline(domain, ts, base, domainCfg) {
 
 async function normalizeCC(ts, cc, domainCfg, domain) {
     if (!cc?.coding || !Array.isArray(cc.coding) || cc.coding.length === 0) return;
-
-    console.log('  │   ├─ Original codings:', cc.coding.map(c => `${c.system}|${c.code}|${c.display || ''}`));
     const target = pickDomainCoding(cc, domainCfg);
     if (!target) return;
-
-    console.log('  │   └─ Target coding for normalization:', `${target.system}|${target.code}|${target.display}`);
 
     const base = {
         system: target.system,
@@ -1037,6 +1033,7 @@ function* iterateCodeableConcepts(resource) {
     const fields = typeToFields[resource.resourceType] || [];
     for (const field of fields) {
         const cc = resource[field];
+        console.log(`Iterating CC for ${resource.resourceType}.${field}:`, cc);
         if (cc?.coding && Array.isArray(cc.coding)) {
             yield { path: field, cc };
         }
@@ -1104,7 +1101,7 @@ async function normalizeTerminologyInBundle(bundle) {
     // Normalizar todas las CC relevantes del recurso
     for (const { path, cc } of iterateCodeableConcepts(res)) {
       try {
-        console.log(`  └─ Normalizando ${path}:`, cc.coding?.map(c => `${c.system}|${c.code}`) || ['sin códigos']);
+        console.log(`  └─ Normalizando ${path}:`, cc.coding?.map(c => `${c.system}|${c.code}|${c.display}`) || ['sin códigos']);
         await normalizeCC(ts, cc, domainCfg, domain);
       } catch (e) {
         console.warn(`⚠️ TS normalize error (${domain}.${path}):`, e.message);
