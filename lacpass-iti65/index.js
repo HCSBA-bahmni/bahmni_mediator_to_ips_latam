@@ -220,7 +220,7 @@ async function fireAndForgetSnomedLookup(ts, system, code, versionUri) {
     });
   } catch (e) {
     // Log no bloqueante (usar WARN para que se vea con TS_DEBUG_LEVEL=warn)
-    tsLog('warn', `SNOMED $lookup fallo: ${system}|${code}|${versionUri} -> ${e?.response?.status || e?.message}`);
+    console.log('warn', `SNOMED $lookup fallo: ${system}|${code}|${versionUri} -> ${e?.response?.status || e?.message}`);
   }
 }
 
@@ -768,20 +768,20 @@ async function opValidateVS(ts, { code, system, display }, domainCfg) {
     if (display) params.display = display;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
 
-    tsLog('debug', `Validating VS: ${domainCfg.vsValidate} | ${system}|${code}`);
+    console.log('debug', `Validating VS: ${domainCfg.vsValidate} | ${system}|${code}`);
 
     const { data } = await ts.get('/ValueSet/$validate-code', { params });
     const ok = extractResultFromParameters(data);
 
     if (ok.result) {
-      tsLog('debug', `✅ VS validation OK: ${code} -> ${ok.display || display}`);
+      console.log('debug', `✅ VS validation OK: ${code} -> ${ok.display || display}`);
       return { system: system, code, display: ok.display || display, source: 'validate-vs' };
     } else {
-      tsLog('debug', `❌ VS validation failed: ${system}|${code}`);
+      console.log('debug', `❌ VS validation failed: ${system}|${code}`);
         return { system: system, code, display: ok.display || display, source: 'validate-vs' };
     }
   } catch (e) {
-    tsLog('warn', `VS validation error: ${e.response?.status} ${e.message}`, { system, code });
+    console.log('warn', `VS validation error: ${e.response?.status} ${e.message}`, { system, code });
   }
   return null;
 }
@@ -799,19 +799,19 @@ async function opValidateCS(ts, { code, system, display }, domainCfg) {
     if (display) params.display = display;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
 
-    tsLog('debug', `Validating CS: ${url} | ${code}`);
+    console.log('debug', `Validating CS: ${url} | ${code}`);
 
     const { data } = await ts.get('/CodeSystem/$validate-code', { params });
     const ok = extractResultFromParameters(data);
 
     if (ok.result) {
-      tsLog('debug', `✅ CS validation OK: ${code} -> ${ok.display || display}`);
+      console.log('debug', `✅ CS validation OK: ${code} -> ${ok.display || display}`);
       return { system: url, code, display: ok.display || display, source: 'validate-cs' };
     } else {
-      tsLog('debug', `❌ CS validation failed: ${url}|${code}`);
+      console.log('debug', `❌ CS validation failed: ${url}|${code}`);
     }
   } catch (e) {
-    tsLog('warn', `CS validation error: ${e.response?.status} ${e.message}`, { system: url, code });
+    console.log('warn', `CS validation error: ${e.response?.status} ${e.message}`, { system: url, code });
   }
   return null;
 }
@@ -826,19 +826,19 @@ async function opLookup(ts, { code, system, display }, domainCfg) {
     if (version) params.version = version;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
 
-    tsLog('debug', `Looking up: ${system}|${code}`);
+    console.log('debug', `Looking up: ${system}|${code}`);
 
     const { data } = await ts.get('/CodeSystem/$lookup', { params });
     const disp = extractDisplayFromLookup(data);
 
     if (disp) {
-      tsLog('debug', `✅ Lookup OK: ${code} -> ${disp}`);
+      console.log('debug', `✅ Lookup OK: ${code} -> ${disp}`);
       return { system, code, display: disp, source: 'lookup' };
     } else {
-      tsLog('debug', `❌ Lookup no display: ${system}|${code}`);
+      console.log('debug', `❌ Lookup no display: ${system}|${code}`);
     }
   } catch (e) {
-    tsLog('warn', `Lookup error: ${e.response?.status} ${e.message}`, { system, code });
+    console.log('warn', `Lookup error: ${e.response?.status} ${e.message}`, { system, code });
   }
   return null;
 }
@@ -858,24 +858,24 @@ async function opTranslate(ts, { code, system, display }, domainCfg) {
 
   const hasConfig = params.url || params.source || params.target || params.targetsystem;
   if (!hasConfig) {
-    tsLog('debug', `Translate skipped - no config: ${system}|${code}`);
+    console.log('debug', `Translate skipped - no config: ${system}|${code}`);
     return null;
   }
 
   try {
-    tsLog('debug', `Translating: ${system}|${code} -> ${params.targetsystem}`);
+    console.log('debug', `Translating: ${system}|${code} -> ${params.targetsystem}`);
 
     const { data } = await ts.get('/ConceptMap/$translate', { params });
     const match = extractMatchFromTranslate(data);
 
     if (match?.system && match?.code) {
-      tsLog('debug', `✅ Translate OK: ${code} -> ${match.system}|${match.code}`);
+      console.log('debug', `✅ Translate OK: ${code} -> ${match.system}|${match.code}`);
       return { system: match.system, code: match.code, display: match.display || display || code, source: 'translate' };
     } else {
-      tsLog('debug', `❌ Translate no match: ${system}|${code}`);
+      console.log('debug', `❌ Translate no match: ${system}|${code}`);
     }
   } catch (e) {
-    tsLog('warn', `Translate error: ${e.response?.status} ${e.message}`, { system, code });
+    console.log('warn', `Translate error: ${e.response?.status} ${e.message}`, { system, code });
   }
   return null;
 }
