@@ -1131,7 +1131,9 @@ function sanitizeMedicationResource(med) {
     med.code.coding = med.code.coding
       .filter(c => c?.system && c.system === 'http://snomed.info/sct');
     console.log('    └─ Sanitized code.coding to SNOMED:', med.code.coding);
-    med.code.coding[0].display = med.code.text;
+    if (med.code.coding.length && !med.code.coding[0]?.display && med.code.text) {
+      med.code.coding[0].display = med.code.text;
+    }
     if (med.code.coding.length === 0) delete med.code.coding;
   }
   // 3) form.coding → solo SNOMED; si queda vacío, elimina form
