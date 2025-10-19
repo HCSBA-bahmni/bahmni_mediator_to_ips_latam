@@ -996,10 +996,8 @@ async function normalizeCC(ts, cc, domainCfg, domain) {
         code: target.code,
         display: target.display || cc.text
     };
-    console.log('Base para normalizar:', base,target,cc);
-
     // Skip TS lookup for absent/unknown codes and SNOMED when not available
-    if (!shouldLookupTS(base.system)) return;
+    //if (!shouldLookupTS(base.system)) return;
 
     const steps = buildPipeline(domain, ts, base, domainCfg);
 
@@ -1102,7 +1100,7 @@ async function normalizeTerminologyInBundle(bundle) {
     for (const { path, cc } of iterateCodeableConcepts(res)) {
       try {
           console.log('cc----->', cc);
-        console.log(`  └─ Normalizando ${path}:`, cc.coding?.map(c => `${c.system}|${c.code}|${c.display}`) || ['sin códigos']);
+        console.log(`  └─ Normalizando ${path}:`, cc.coding?.map(c => `${c.system}|${c.code}|${cc.text}`) || ['sin códigos']);
         await normalizeCC(ts, cc, domainCfg, domain);
       } catch (e) {
         console.warn(`⚠️ TS normalize error (${domain}.${path}):`, e.message);
