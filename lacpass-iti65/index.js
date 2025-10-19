@@ -902,23 +902,52 @@ function extractDisplayFromLookup(data) {
   const params = Array.isArray(data.parameter) ? data.parameter : [];
 
   const lang = (process.env.TS_DISPLAY_LANGUAGE || 'en').toLowerCase();
-  const ROLE_PREFERRED = '900000000000548007';
+  const ROLE_PREFERRED  = '900000000000548007';
   const ROLE_ACCEPTABLE = '900000000000549004';
+  const TYPE_SYNONYM    = '900000000000013009';
+  const TYPE_FSN        = '900000000000003001';
 
-  // helper para extraer parts por nombre
+  // helpers
   const getPart = (d, name) => (d.part || []).find(p => p.name === name);
-  const getVal = (d) => getPart(d, 'value')?.valueString || null;
   const getLang = (d) => getPart(d, 'language')?.valueCode?.toLowerCase();
-  const getRole = (d) => getPart(d, 'role')?.valueCoding?.code;
-  const getUse = (d) => getPart(d, 'use')?.valueCoding?.code; // e.g. synonym/fsn
+  const getVal = (d) => getPart(d, 'value')?.valueString || null;
+  const getUseFromPart = (d) => getPart(d, 'use')?.valueCoding?.code;
+  const getCtxExts = (d) => (d.extension || []).filter(e => e.url === 'http://snomed.info/fhir/StructureDefinition/designation-use-context');
+  const getRoleFromExt = (d) => getCtxExts(d)
+    .map(e => (e.extension || []).find(x => x.url === 'role')?.valueCoding?.code)
+    .find(Boolean);
+  const getTypeFromExt = (d) => getCtxExts(d)
+    .map(e => (e.extension || []).find(x => x.url === 'type')?.valueCoding?.code)
+    .find(Boolean);
 
-  const designations = params.filter(p => p.name === 'designation' && Array.isArray(p.part));
-  let pick = designations.find(d => getLang(d) === lang && getRole(d) === ROLE_PREFERRED);
-  if (!pick) pick = designations.find(d => getLang(d) === lang && getRole(d) === ROLE_ACCEPTABLE);
-  if (!pick) pick = designations.find(d => getLang(d) === lang);
+  const designations = params
+    .filter(p => p.name === 'designation' && Array.isArray(p.part))
+    .map(d => {
+      const role = getRoleFromExt(d);
+      const type = getTypeFromExt(d) || getUseFromPart(d);
+      return { raw: d, lang: getLang(d), role, type, value: getVal(d) };
+    })
+    .filter(d => d.lang === lang && d.value);
+
   const paramDisplay = params.find(p => p.name === 'display')?.valueString || null;
+  if (designations.length === 0) return paramDisplay || null;
 
-  return getVal(pick) || paramDisplay || null;
+  const rank = (d) => {
+    const isPref = d.role === ROLE_PREFERRED;
+    const isAcc = d.role === ROLE_ACCEPTABLE;
+    const isSyn = d.type === TYPE_SYNONYM;
+    const isFsn = d.type === TYPE_FSN;
+    if (isPref && isSyn) return 0;
+    if (isPref && !isFsn) return 1;
+    if (isAcc && isSyn) return 2;
+    if (isSyn) return 3;
+    if (isPref) return 4;
+    if (isAcc) return 5;
+    return 6;
+  };
+
+  designations.sort((a, b) => rank(a) - rank(b));
+  return designations[0]?.value || paramDisplay || null;
 }
 
 function extractMatchFromTranslate(data) {
