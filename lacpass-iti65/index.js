@@ -973,7 +973,7 @@ function sortCodingsPreferred(codings) {
 function pickDomainCoding(cc, domainCfg) {
   if (!cc?.coding) return null;
   const targetSys = domainCfg?.codeSystem || 'http://snomed.info/sct';
-  return cc.coding.find(c => c.system === targetSys && c.code && c.display) || cc.coding[0] || null;
+  return cc.coding.find(c => c.system === targetSys && c.code) || cc.coding[0] || null;
 }
 
 function buildPipeline(domain, ts, base, domainCfg) {
@@ -989,6 +989,7 @@ function buildPipeline(domain, ts, base, domainCfg) {
 async function normalizeCC(ts, cc, domainCfg, domain) {
     if (!cc?.coding || !Array.isArray(cc.coding) || cc.coding.length === 0) return;
 
+    console.log('  │   ├─ Original codings:', cc.coding.map(c => `${c.system}|${c.code}|${c.display || ''}`));
     const target = pickDomainCoding(cc, domainCfg);
     if (!target) return;
 
