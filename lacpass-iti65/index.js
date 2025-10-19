@@ -35,10 +35,10 @@ const {
     FEATURE_TS_ENABLED = 'true',
 
     // Subfeatures terminológicas
-    FEATURE_TS_EXPAND_ENABLED = 'true',
-    FEATURE_TS_VALIDATE_VS_ENABLED = 'true',
-    FEATURE_TS_VALIDATE_CS_ENABLED = 'true',
-    FEATURE_TS_TRANSLATE_ENABLED = 'true',
+    FEATURE_TS_EXPAND_ENABLED = true,
+    FEATURE_TS_VALIDATE_VS_ENABLED = true,
+    FEATURE_TS_VALIDATE_CS_ENABLED = true,
+    FEATURE_TS_TRANSLATE_ENABLED = true,
 
     // ===== OIDs para identificadores de paciente (desde tu .env) =====
     LAC_NATIONAL_ID_SYSTEM_OID,
@@ -760,7 +760,7 @@ function tsLog(level, message, data = null) {
 // ===================== Terminology Ops (funciones) =====================
 async function opValidateVS(ts, { code, system, display }, domainCfg) {
     console.log('debug', FEATURE_TS_VALIDATE_VS_ENABLED);
-  if (FEATURE_TS_VALIDATE_VS_ENABLED != 'true') return null;
+  if (!FEATURE_TS_VALIDATE_VS_ENABLED) return null;
   if (!domainCfg?.vsValidate) return null;
 
   try {
@@ -788,7 +788,7 @@ async function opValidateVS(ts, { code, system, display }, domainCfg) {
 }
 
 async function opValidateCS(ts, { code, system, display }, domainCfg) {
-  if (!isTrue(FEATURE_TS_VALIDATE_CS_ENABLED)) return null;
+  if (!FEATURE_TS_VALIDATE_CS_ENABLED) return null;
   const url = domainCfg?.codeSystem || system;
   if (!url || !code) return null;
 
@@ -845,7 +845,7 @@ async function opLookup(ts, { code, system, display }, domainCfg) {
 }
 
 async function opTranslate(ts, { code, system, display }, domainCfg) {
-    if (!isTrue(FEATURE_TS_TRANSLATE_ENABLED)) return null;
+    if (!FEATURE_TS_TRANSLATE_ENABLED) return null;
 
     const cm = domainCfg?.translate || {};
     const params = {};
