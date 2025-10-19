@@ -1053,6 +1053,7 @@ async function normalizeTerminologyInBundle(bundle) {
       || 'http://snomed.info/sct/900000000000207008/version/20240331';
     for (const ent of entries) {
       const res = ent.resource;
+      console.log('Resource for lookup scan:', res.code);
       if (!res) continue;
       const codables = [
         res.code, res.medicationCodeableConcept, res.category, res.clinicalStatus
