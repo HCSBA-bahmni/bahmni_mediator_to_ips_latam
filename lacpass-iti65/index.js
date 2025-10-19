@@ -759,7 +759,7 @@ function tsLog(level, message, data = null) {
 
 // ===================== Terminology Ops (funciones) =====================
 async function opValidateVS(ts, { code, system, display }, domainCfg) {
-    console.log('debug', FEATURE_TS_VALIDATE_VS_ENABLED === 'true' ? 'VS validation enabled' : 'VS validation disabled');
+    console.log('debug', FEATURE_TS_VALIDATE_VS_ENABLED);
   if (FEATURE_TS_VALIDATE_VS_ENABLED != 'true') return null;
   if (!domainCfg?.vsValidate) return null;
 
