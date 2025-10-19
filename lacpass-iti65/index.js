@@ -776,6 +776,7 @@ function tsLog(level, message, data = null) {
 
 // ===================== Terminology Ops (funciones) =====================
 async function opValidateVS(ts, { code, system, display }, domainCfg) {
+    console.log('opValidateVS called with:', { code, system, display, domainCfg });
   if (!isTrue(FEATURE_TS_VALIDATE_VS_ENABLED)) return null;
   if (!domainCfg?.vsValidate) return null;
   
@@ -803,6 +804,7 @@ async function opValidateVS(ts, { code, system, display }, domainCfg) {
 }
 
 async function opValidateCS(ts, { code, system, display }, domainCfg) {
+    console.log('opValidateCS called with:', { code, system, display });
   if (!isTrue(FEATURE_TS_VALIDATE_CS_ENABLED)) return null;
   const url = domainCfg?.codeSystem || system;
   if (!url || !code) return null;
@@ -833,6 +835,7 @@ async function opValidateCS(ts, { code, system, display }, domainCfg) {
 }
 
 async function opLookup(ts, { code, system, display }, domainCfg) {
+    console.log('opLookup called with:', { code, system, display });
   if (!system || !code) return null;
 
   try {
@@ -860,6 +863,7 @@ async function opLookup(ts, { code, system, display }, domainCfg) {
 }
 
 async function opTranslate(ts, { code, system, display }, domainCfg) {
+    console.log('opTranslate called with:', { code, system, display });
     if (!isTrue(FEATURE_TS_TRANSLATE_ENABLED)) return null;
 
     const cm = domainCfg?.translate || {};
