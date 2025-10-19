@@ -992,6 +992,8 @@ async function normalizeCC(ts, cc, domainCfg, domain) {
     const target = pickDomainCoding(cc, domainCfg);
     if (!target) return;
 
+    console.log('  │   └─ Target coding for normalization:', `${target.system}|${target.code}|${target.display}`);
+
     const base = {
         system: target.system,
         code: target.code,
