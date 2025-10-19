@@ -1059,17 +1059,18 @@ async function normalizeTerminologyInBundle(bundle) {
       ].filter(Boolean);
       for (const cc of codables) {
         const codings = cc.coding || [];
+        console.log('Codings to lookup:', codings);
         for (const c of codings) {
           if (c?.system === SNOMED_SYSTEM && c?.code) {
-            uniq.add(`${c.system}|${c.code}|${c.display}|${versionDefault}`);
+            uniq.add(`${c.system}|${c.code}|${versionDefault}`);
           }
         }
       }
     }
     await Promise.all(
       [...uniq].map(k => {
-        const [system, code, display, versionUri] = k.split('|');
-        return fireAndForgetSnomedLookup(ts, system, code, display, versionUri);
+        const [system, code, versionUri] = k.split('|');
+        return fireAndForgetSnomedLookup(ts, system, code, versionUri);
       })
     );
   }
