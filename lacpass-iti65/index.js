@@ -220,7 +220,7 @@ async function fireAndForgetSnomedLookup(ts, system, code, versionUri) {
     });
   } catch (e) {
     // Log no bloqueante (usar WARN para que se vea con TS_DEBUG_LEVEL=warn)
-    console.log('warn', `SNOMED $lookup fallo: ${system}|${code}|${versionUri} -> ${e?.response?.status || e?.message}`);
+    tsLog('warn', `SNOMED $lookup fallo: ${system}|${code}|${versionUri} -> ${e?.response?.status || e?.message}`);
   }
 }
 
@@ -354,10 +354,10 @@ function ensureArray(obj, property) {
  */
 function addProfile(resource, profileUrl) {
   if (!resource || !profileUrl) return;
-  
+
   if (!resource.meta) resource.meta = {};
   ensureArray(resource.meta, 'profile');
-  
+
   if (!resource.meta.profile.includes(profileUrl)) {
     resource.meta.profile.push(profileUrl);
   }
@@ -643,7 +643,7 @@ function buildTsClient() {
         process.env.TERMINOLOGY_BASE_URL || // prioridad: var que estás usando
         process.env.TERMINO_BASE ||
         'http://localhost:8081/fhir';
-    
+
     if (!baseURL) return null;
     const client = axios.create({
         baseURL: baseURL,
@@ -666,17 +666,17 @@ function buildTsClient() {
 // ===================== URL Encoding Helper =====================
 function robustUrlEncode(value) {
   if (!value) return '';
-  
+
   // Primero, codificación URL estándar
   let encoded = encodeURIComponent(value);
-  
+
   // Luego, codificaciones adicionales para caracteres que pueden causar problemas en queries
   encoded = encoded.replace(/\*/g, '%2A');  // Asterisco
   encoded = encoded.replace(/'/g, '%27');   // Comilla simple
   encoded = encoded.replace(/"/g, '%22');   // Comilla doble
   encoded = encoded.replace(/\(/g, '%28');  // Paréntesis abierto
   encoded = encoded.replace(/\)/g, '%29');  // Paréntesis cerrado
-  
+
   return encoded;
 }
 
@@ -753,52 +753,35 @@ function pickIdentifiersOrderedForPdqm(identifiers) {
 }
 
 // ===================== Logging helper para terminología =====================
-function console.log(level, message, data = null) {
-  const debugLevel = TS_DEBUG_LEVEL.toLowerCase();
-  
-  if (debugLevel === 'silent') return;
-  
-  const shouldLog = {
-    debug: ['debug'].includes(debugLevel),
-    warn: ['debug', 'warn'].includes(debugLevel), 
-    error: ['debug', 'warn', 'error'].includes(debugLevel)
-  }[level];
-  
-  if (shouldLog) {
-    const prefix = `🔧 TS[${level.toUpperCase()}]:`;
-    if (data) {
-      console[level === 'error' ? 'error' : 'log'](prefix, message, data);
-    } else {
-      console[level === 'error' ? 'error' : 'log'](prefix, message);
-    }
-  }
+function tsLog(level, message, data = null) {
+  console.log(level, message, data);
 }
 
 // ===================== Terminology Ops (funciones) =====================
 async function opValidateVS(ts, { code, system, display }, domainCfg) {
   if (!isTrue(FEATURE_TS_VALIDATE_VS_ENABLED)) return null;
   if (!domainCfg?.vsValidate) return null;
-  
+
   try {
     const params = { url: domainCfg.vsValidate, code };
     if (system) params.system = system;
     if (display) params.display = display;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
-    
-    console.log('debug', `Validating VS: ${domainCfg.vsValidate} | ${system}|${code}`);
-    
+
+    tsLog('debug', `Validating VS: ${domainCfg.vsValidate} | ${system}|${code}`);
+
     const { data } = await ts.get('/ValueSet/$validate-code', { params });
     const ok = extractResultFromParameters(data);
-    
+
     if (ok.result) {
-      console.log('debug', `✅ VS validation OK: ${code} -> ${ok.display || display}`);
+      tsLog('debug', `✅ VS validation OK: ${code} -> ${ok.display || display}`);
       return { system: system, code, display: ok.display || display, source: 'validate-vs' };
     } else {
-      console.log('debug', `❌ VS validation failed: ${system}|${code}`);
+      tsLog('debug', `❌ VS validation failed: ${system}|${code}`);
         return { system: system, code, display: ok.display || display, source: 'validate-vs' };
     }
   } catch (e) {
-    console.log('warn', `VS validation error: ${e.response?.status} ${e.message}`, { system, code });
+    tsLog('warn', `VS validation error: ${e.response?.status} ${e.message}`, { system, code });
   }
   return null;
 }
@@ -816,19 +799,19 @@ async function opValidateCS(ts, { code, system, display }, domainCfg) {
     if (display) params.display = display;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
 
-    console.log('debug', `Validating CS: ${url} | ${code}`);
+    tsLog('debug', `Validating CS: ${url} | ${code}`);
 
     const { data } = await ts.get('/CodeSystem/$validate-code', { params });
     const ok = extractResultFromParameters(data);
-    
+
     if (ok.result) {
-      console.log('debug', `✅ CS validation OK: ${code} -> ${ok.display || display}`);
+      tsLog('debug', `✅ CS validation OK: ${code} -> ${ok.display || display}`);
       return { system: url, code, display: ok.display || display, source: 'validate-cs' };
     } else {
-      console.log('debug', `❌ CS validation failed: ${url}|${code}`);
+      tsLog('debug', `❌ CS validation failed: ${url}|${code}`);
     }
   } catch (e) {
-    console.log('warn', `CS validation error: ${e.response?.status} ${e.message}`, { system: url, code });
+    tsLog('warn', `CS validation error: ${e.response?.status} ${e.message}`, { system: url, code });
   }
   return null;
 }
@@ -843,19 +826,19 @@ async function opLookup(ts, { code, system, display }, domainCfg) {
     if (version) params.version = version;
     if (TS_DISPLAY_LANGUAGE) params.displayLanguage = TS_DISPLAY_LANGUAGE;
 
-    console.log('debug', `Looking up: ${system}|${code}`);
+    tsLog('debug', `Looking up: ${system}|${code}`);
 
     const { data } = await ts.get('/CodeSystem/$lookup', { params });
     const disp = extractDisplayFromLookup(data);
-    
+
     if (disp) {
-      console.log('debug', `✅ Lookup OK: ${code} -> ${disp}`);
+      tsLog('debug', `✅ Lookup OK: ${code} -> ${disp}`);
       return { system, code, display: disp, source: 'lookup' };
     } else {
-      console.log('debug', `❌ Lookup no display: ${system}|${code}`);
+      tsLog('debug', `❌ Lookup no display: ${system}|${code}`);
     }
   } catch (e) {
-    console.log('warn', `Lookup error: ${e.response?.status} ${e.message}`, { system, code });
+    tsLog('warn', `Lookup error: ${e.response?.status} ${e.message}`, { system, code });
   }
   return null;
 }
@@ -875,24 +858,24 @@ async function opTranslate(ts, { code, system, display }, domainCfg) {
 
   const hasConfig = params.url || params.source || params.target || params.targetsystem;
   if (!hasConfig) {
-    console.log('debug', `Translate skipped - no config: ${system}|${code}`);
+    tsLog('debug', `Translate skipped - no config: ${system}|${code}`);
     return null;
   }
 
   try {
-    console.log('debug', `Translating: ${system}|${code} -> ${params.targetsystem}`);
-    
+    tsLog('debug', `Translating: ${system}|${code} -> ${params.targetsystem}`);
+
     const { data } = await ts.get('/ConceptMap/$translate', { params });
     const match = extractMatchFromTranslate(data);
-    
+
     if (match?.system && match?.code) {
-      console.log('debug', `✅ Translate OK: ${code} -> ${match.system}|${match.code}`);
+      tsLog('debug', `✅ Translate OK: ${code} -> ${match.system}|${match.code}`);
       return { system: match.system, code: match.code, display: match.display || display || code, source: 'translate' };
     } else {
-      console.log('debug', `❌ Translate no match: ${system}|${code}`);
+      tsLog('debug', `❌ Translate no match: ${system}|${code}`);
     }
   } catch (e) {
-    console.log('warn', `Translate error: ${e.response?.status} ${e.message}`, { system, code });
+    tsLog('warn', `Translate error: ${e.response?.status} ${e.message}`, { system, code });
   }
   return null;
 }
