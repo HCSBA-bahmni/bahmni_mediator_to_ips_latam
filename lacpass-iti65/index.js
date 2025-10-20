@@ -1504,7 +1504,7 @@ function fixBundleValidationIssues(summaryBundle) {
     if (!r) continue;
 
     if (['AllergyIntolerance','MedicationStatement','Condition','Immunization'].includes(r.resourceType)) {
-      console.log(`  - Procesando ${r.resourceType}/${r.id || 'sin-id'}`);
+      console.log(`  - Procesando ${r.resourceType}/${r.id || 'sin-id'}`,r);
       stripNarrativeLinkExtensions(r);
     }
 
