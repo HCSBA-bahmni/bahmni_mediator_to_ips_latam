@@ -81,47 +81,6 @@ async function retryRequest(fn, max = MAX_RETRIES) {
 }
 function logStep(msg, ...d) { console.log(new Date().toISOString(), msg, ...d) }
 
-const SNOMED_SYSTEM = 'http://snomed.info/sct'
-
-function filterCodingsToSnomed(cc) {
-  if (!cc || !Array.isArray(cc.coding)) return
-  cc.coding = cc.coding.filter(c => c.system === SNOMED_SYSTEM)
-  if (cc.coding.length === 0) delete cc.coding
-}
-
-function sanitizeProcedure(proc) {
-  if (!proc || proc.resourceType !== 'Procedure') return proc
-  if (proc.code) {
-    filterCodingsToSnomed(proc.code)
-    if (!proc.code.coding && !proc.code.text) proc.code.text = 'Procedure'
-  }
-  if (Array.isArray(proc.bodySite)) {
-    proc.bodySite = proc.bodySite
-      .map(site => {
-        if (!site) return null
-        filterCodingsToSnomed(site)
-        if (!site.coding && !site.text) return null
-        return site
-      })
-      .filter(Boolean)
-    if (proc.bodySite.length === 0) delete proc.bodySite
-  }
-  if (proc.outcome) {
-    filterCodingsToSnomed(proc.outcome)
-    if (!proc.outcome.coding && !proc.outcome.text) delete proc.outcome
-  }
-  return proc
-}
-
-function sanitizeCondition(cond) {
-  if (!cond || cond.resourceType !== 'Condition') return cond
-  if (cond.code) {
-    filterCodingsToSnomed(cond.code)
-    if (!cond.code.coding && !cond.code.text) cond.code.text = 'Condition'
-  }
-  return cond
-}
-
 // 4) FHIR proxy calls
 // FHIR_PROXY_URL must include the full prefix, e.g.
 //   FHIR_PROXY_URL=https://10.68.174.206:5000/proxy/fhir
@@ -144,10 +103,7 @@ async function putToNode(resource) {
   const url = `${process.env.FHIR_NODE_URL}/fhir/${resource.resourceType}/${resource.id}`
   try {
     logStep('PUT (node)', url)
-    const payload = JSON.parse(JSON.stringify(resource))
-    if (payload?.resourceType === 'Procedure') sanitizeProcedure(payload)
-    else if (payload?.resourceType === 'Condition') sanitizeCondition(payload)
-    const r = await axios.put(url, payload, {
+    const r = await axios.put(url, resource, {
       headers:{ 'Content-Type':'application/fhir+json' },
       validateStatus: false,
       httpsAgent: axios.defaults.httpsAgent
