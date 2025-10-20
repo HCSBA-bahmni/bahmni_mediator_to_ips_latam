@@ -425,8 +425,8 @@ app.post('/forwarderProcedure/_event', async (req, res) => {
     await uploadEncounterWithParents(uuid)
     sent++
 
-    // 7.7) Recursos generales (excepto Observations Procedure History)
-    const types = ['Observation','Condition','Procedure','MedicationRequest','Medication','AllergyIntolerance','DiagnosticReport']
+    // 7.7) Recursos generales (excepto Observations Procedure History, ,'Condition','Procedure','MedicationRequest','Medication','AllergyIntolerance','DiagnosticReport')
+    const types = ['Observation']
     for (const t of types) {
       let bundle
       try {
