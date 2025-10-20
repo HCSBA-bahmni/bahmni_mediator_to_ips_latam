@@ -101,6 +101,13 @@ services:
       - "8014:8014"
     restart: unless-stopped
 
+  fhir-forwarder-procedure-mediator:
+    build: ./fhir-forwarder-procedure-mediator
+    env_file: ./.env
+    ports:
+      - "8015:8015"
+    restart: unless-stopped
+
 networks:
   default:
     name: lacpass-himnet

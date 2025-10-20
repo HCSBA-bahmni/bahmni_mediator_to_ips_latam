@@ -467,5 +467,5 @@ app.post('/forwarderProcedure/_event', async (req, res) => {
   }
 })
 
-const PORT = process.env.FORWARDER_PROCEDURE_PORT || 8011
+const PORT = process.env.FORWARDER_PROCEDURE_PORT || 8015
 app.listen(PORT, () => logStep(`FHIR Forwarder on port ${PORT}`))

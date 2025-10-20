@@ -12,7 +12,7 @@
           "name": "FHIR Forwarder Event Route",
           "host": "10.68.174.209",
           "path": "/forwarderprocedure/_event",
-          "port": "8011",
+          "port": "8015",
           "primary": true,
           "type": "http"
         }
@@ -29,7 +29,7 @@
           "name": "FHIR Forwarder Health Route",
           "host": "10.68.174.209",
           "path": "/forwarderprocedure/_health",
-          "port": "8011",
+          "port": "8015",
           "primary": true,
           "type": "http"
         }
