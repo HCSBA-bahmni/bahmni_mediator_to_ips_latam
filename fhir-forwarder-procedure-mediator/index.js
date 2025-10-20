@@ -1,4 +1,4 @@
-// index.js (FHIR Event Forwarder Mediator) — Vacunación -> Procedure
+// index.js (FHIR Event Forwarder Mediator) — Observations -> IPS Procedure
 import 'dotenv/config'
 import express from 'express'
 import axios from 'axios'
@@ -125,7 +125,6 @@ const uploadedLocations     = new Set()
 const uploadedEncounters    = new Set()
 const uploadedObservations  = new Set()
 const uploadedPractitioners = new Set()
-const uploadedOrganizations = new Set()
 
 // recursion para Location.partOf
 async function uploadLocationWithParents(locId) {
@@ -179,25 +178,20 @@ async function uploadPractitioner(pracRef) {
   return 1
 }
 
-// --- helpers de vacunación ---
-const OMRS_IMM_PROFILE = 'http://fhir.openmrs.org/core/StructureDefinition/omrs-Procedure' // :contentReference[oaicite:2]{index=2}
-const IMM_SET_CODE = '1421AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' // Procedure history (grupo)
-const IMM_CODES = {
-  VACCINE:       '984AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vacunación -> valueCodeableConcept
-  VAX_DATE:      '1410AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccination date -> valueDateTime
-  LOT:           '1420AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccine lot number -> valueString
-  LOT_EXP:       '165907AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccine lot expiration date -> valueDateTime
-  MANUFACTURER:  '1419AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Vaccine manufacturer -> valueString
-  DOSE_NUM:      '1418AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Procedure sequence number -> valueQuantity.value | string
-  NON_CODED:     '166011AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Procedure, non-coded -> valueString
-  RECEIVED:      '163100AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Procedure received by patient -> valueCodeableConcept (Sí/No)
-  YES:           '1065AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', // Sí
-  NO:            '1066AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'  // No
+// === Procedimientos (IPS) desde Observations OpenMRS ===
+// Grupo (Procedure History) y componentes que muestras en tu JSON:
+const PROC_GROUP_CODE = '160714AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' // Procedure History (grupo)
+const PROC_CODES = {
+  NAME_PERFORMED:  '1651AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',  // Name of Procedure performed -> valueCodeableConcept
+  PROC_DATE:       '160715AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',  // Procedure date/time -> valueDateTime
+  END_DATE:        '167132AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',  // Procedure end date/time -> valueDateTime
+  SITE_TEXT:       '163049AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',  // Procedure site (text) -> valueString
+  COMMENT:         '160716AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',  // Procedure comment -> valueString
+  DURATION:        '165929AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',  // Duration of procedure -> valueQuantity.value
+  OUTCOME:         '160721AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'   // Procedure outcome -> valueCodeableConcept
 }
-const IMM_ALL_CODES = new Set(Object.values(IMM_CODES).concat([IMM_SET_CODE]))
-
-const toDate = (dt) => (typeof dt === 'string' ? dt.substring(0,10) : undefined)
-const slug = (s) => ('org-' + String(s || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,''))
+const PROC_ALL_CODES = new Set([PROC_GROUP_CODE, ...Object.values(PROC_CODES)])
+const IPS_PROC_PROFILE = 'https://build.fhir.org/ig/HL7/fhir-ips/StructureDefinition-Procedure-uv-ips'
 
 function indexByIdFromBundle(bundle) {
   const map = {}
@@ -226,119 +220,83 @@ function getEncounterFirstLocation(enc) {
   const x = (enc.location || []).find(l => l.location?.reference?.startsWith('Location/'))
   return x?.location?.reference
 }
-async function ensureOrganizationByName(name) {
-  if (!name) return undefined
-  const id = slug(name)
-  if (uploadedOrganizations.has(id)) return { reference: `Organization/${id}` }
-  const org = { resourceType:'Organization', id, name:String(name) }
-  await putToNode(org)
-  uploadedOrganizations.add(id)
-  return { reference: `Organization/${id}` }
-}
-
 /**
- * Construye un Procedure (perfil OpenMRS) desde el grupo 1421 y sus hijas.
- * https://fhir.openmrs.org/StructureDefinition-omrs-Procedure.html  (status, vaccineCode, patient, occurrence[x] 1..1, etc.)
+ * Construye un Procedure (perfil IPS) desde el grupo PROC_GROUP_CODE y sus hijas.
+ * https://build.fhir.org/ig/HL7/fhir-ips/StructureDefinition-Procedure-uv-ips.html
  */
-async function buildProcedureFromGroup(groupObs, obsById, patientRef, enc, patientId) {
+async function buildIPSProcedureFromGroup(groupObs, obsById, patientRef, enc) {
   const idList = (groupObs.hasMember || [])
     .map(m => m.reference?.replace(/^Observation\//,''))
     .filter(Boolean)
 
-  // Elementos mapeados
-  const vaxObs   = pickMemberByCode(idList, obsById, IMM_CODES.VACCINE)
-  const freeObs  = pickMemberByCode(idList, obsById, IMM_CODES.NON_CODED)
-  const dateObs  = pickMemberByCode(idList, obsById, IMM_CODES.VAX_DATE)
-  const lotObs   = pickMemberByCode(idList, obsById, IMM_CODES.LOT)
-  const expObs   = pickMemberByCode(idList, obsById, IMM_CODES.LOT_EXP)
-  const mfgObs   = pickMemberByCode(idList, obsById, IMM_CODES.MANUFACTURER)
-  const doseObs  = pickMemberByCode(idList, obsById, IMM_CODES.DOSE_NUM)
-  const recvObs  = pickMemberByCode(idList, obsById, IMM_CODES.RECEIVED)
+  // Hijas relevantes
+  const nameObs  = pickMemberByCode(idList, obsById, PROC_CODES.NAME_PERFORMED)
+  const startObs = pickMemberByCode(idList, obsById, PROC_CODES.PROC_DATE)
+  const endObs   = pickMemberByCode(idList, obsById, PROC_CODES.END_DATE)
+  const siteObs  = pickMemberByCode(idList, obsById, PROC_CODES.SITE_TEXT)
+  const commObs  = pickMemberByCode(idList, obsById, PROC_CODES.COMMENT)
+  const outObs   = pickMemberByCode(idList, obsById, PROC_CODES.OUTCOME)
 
-  // status (required)
-  let status = 'completed'
-  const recvCoding = recvObs?.valueCodeableConcept?.coding || []
-  if (recvCoding.find(c => c.code === IMM_CODES.NO)) status = 'not-done'
-  if (recvCoding.find(c => c.code === IMM_CODES.YES)) status = 'completed'
+  // status (obligatorio) – por defecto 'completed'
+  const status = 'completed'
 
-  // vaccineCode (required)
-  let vaccineCode
-  if (vaxObs?.valueCodeableConcept) {
-    vaccineCode = vaxObs.valueCodeableConcept
-  } else if (freeObs?.valueString) {
-    vaccineCode = { text: freeObs.valueString }
-  } else {
-    // Fallback muy defensivo
-    vaccineCode = { text: groupObs?.valueString || 'Unknown vaccine' }
-  }
+  // code (obligatorio) – desde "Name of Procedure performed"
+  let code = nameObs?.valueCodeableConcept
+  if (!code) code = { text: nameObs?.valueString || groupObs?.valueString || 'Unknown procedure' }
 
-  // occurrenceDateTime (required en el perfil, slice occurrence[x])
-  const occurrenceDateTime = dateObs?.valueDateTime || groupObs?.effectiveDateTime
+  // performed[x] – preferir Period si tenemos start y end; si no, DateTime
+  const start = startObs?.valueDateTime
+  const end   = endObs?.valueDateTime
+  const performed =
+    (start && end) ? { performedPeriod: { start, end } } :
+    (start)        ? { performedDateTime: start } :
+                     {}
 
-  // encounter + location (opcionales)
+  // bodySite – desde "Procedure site (text)"
+  const bodySite = siteObs?.valueString ? [{ text: siteObs.valueString }] : undefined
+
+  // outcome
+  const outcome = outObs?.valueCodeableConcept
+
+  // note – desde "Procedure comment"
+  const note = commObs?.valueString ? [{ text: commObs.valueString }] : undefined
+
+  // performer – primer Practitioner del Encounter
   const encounterRef = groupObs?.encounter?.reference || (enc?.id ? `Encounter/${enc.id}` : undefined)
   const locationRef = getEncounterFirstLocation(enc)
-
-  // manufacturer -> crear Organization mínima si viene
-  const manufacturerRef = await ensureOrganizationByName(mfgObs?.valueString)
-
-  // performer -> tomar 1er Practitioner del Encounter (si existe)
   const practitionerRef = getEncounterFirstPractitioner(enc)
   const performer = practitionerRef ? [{ actor: { reference: practitionerRef } }] : undefined
 
-  // protocolApplied (solo si hay dosis)
-  let protocolApplied
-  if (doseObs?.valueQuantity?.value != null || typeof doseObs?.valueString === 'string') {
-    const dn = doseObs?.valueQuantity?.value
-    protocolApplied = [{ doseNumberPositiveInt: Number.isFinite(dn) ? Math.trunc(dn) : undefined,
-                         doseNumberString: (Number.isFinite(dn) ? undefined : (doseObs?.valueString ?? String(dn))) }]
-
-    // limpiar la variante no usada
-    if (protocolApplied[0].doseNumberPositiveInt == null) delete protocolApplied[0].doseNumberPositiveInt
-    if (!protocolApplied[0].doseNumberString) delete protocolApplied[0].doseNumberString
-  }
-
-  // lotNumber / expirationDate (opcionales)
-  const lotNumber = lotObs?.valueString
-  const expirationDate = toDate(expObs?.valueDateTime)
-
-  // Construir el Procedure conforme al perfil OMRS
-  const imm = {
+  // Construir Procedure IPS
+  const proc = {
     resourceType: 'Procedure',
     id: groupObs.id, // usamos el id del grupo para trazabilidad
-    meta: { profile: [OMRS_IMM_PROFILE] }, // perfila al omrs-Procedure  :contentReference[oaicite:3]{index=3}
+    meta: { profile: [IPS_PROC_PROFILE] },
     status,
-    vaccineCode,
-    patient: { reference: patientRef }, // 1..1
+    code,
+    subject: { reference: patientRef }, // 1..1
     ...(encounterRef ? { encounter: { reference: encounterRef } } : {}),
-    occurrenceDateTime,
+    ...performed,
     ...(locationRef ? { location: { reference: locationRef } } : {}),
-    ...(manufacturerRef ? { manufacturer: manufacturerRef } : {}),
-    ...(lotNumber ? { lotNumber } : {}),
-    ...(expirationDate ? { expirationDate } : {}),
     ...(performer ? { performer } : {}),
-    ...(protocolApplied ? { protocolApplied } : {})
+    ...(bodySite ? { bodySite } : {}),
+    ...(outcome ? { outcome } : {}),
+    ...(note ? { note } : {})
   }
 
-  // Quitar explícitamente campos prohibidos por el perfil (cardinalidad 0..0)
-  // recorded, primarySource, statusReason, route, site, doseQuantity, etc. — no los agregamos.
-
-  return imm
+  return proc
 }
 
-/**
- * Pipeline de vacunación:
- * - Busca solo grupos 1421 por paciente (include has-member)
- * - Mapea a Procedure (perfil OMRS)
- * - Sube Organization (manufacturer) si aplica y luego el Procedure
- */
-async function processProceduresByPatient(patientId, enc) {
+// Pipeline IPS Procedures por Encounter:
+// - Busca SOLO el grupo PROC_GROUP_CODE del Encounter (include has-member)
+// - Mapea a Procedure (perfil IPS)
+async function processIPSProceduresByEncounter(encId, patientId, enc) {
   let sent = 0
-  const url = `/Observation?patient=${encodeURIComponent(patientId)}&code=${IMM_SET_CODE}&_include=Observation:has-member&_count=200&_format=application/fhir+json`
+  const url = `/Observation?encounter=Encounter/${encodeURIComponent(encId)}&code=${PROC_GROUP_CODE}&_include=Observation:has-member&_count=200&_format=application/fhir+json`
   const bundle = await getFromProxy(url)
 
   if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry) || !bundle.entry.length) {
-    logStep('ⓘ No hay grupos de vacunación (1421) para', patientId)
+    logStep('ⓘ No hay grupo Procedure History para encounter=', encId)
     return 0
   }
 
@@ -346,12 +304,11 @@ async function processProceduresByPatient(patientId, enc) {
   const patientRef = `Patient/${patientId}`
   const groups = bundle.entry
     .map(e => e.resource)
-    .filter(r => r?.resourceType === 'Observation' && codeList(r).includes(IMM_SET_CODE))
+    .filter(r => r?.resourceType === 'Observation' && codeList(r).includes(PROC_GROUP_CODE))
 
-  // asegurar Practitioner/Location del Encounter ya fueron subidos (el handler general lo hace)
   for (const g of groups) {
-    const imm = await buildProcedureFromGroup(g, byId, patientRef, enc, patientId)
-    await putToNode(imm)
+    const proc = await buildIPSProcedureFromGroup(g, byId, patientRef, enc)
+    await putToNode(proc)
     sent++
   }
   return sent
@@ -423,7 +380,7 @@ app.post('/forwarderProcedure/_event', async (req, res) => {
     await uploadEncounterWithParents(uuid)
     sent++
 
-    // 7.7) Recursos generales (EXCEPTO obs de vacunación)
+    // 7.7) Recursos generales (excepto Observations Procedure History)
     const types = ['Observation','Condition','Procedure','MedicationRequest','Medication','AllergyIntolerance','DiagnosticReport']
     for (const t of types) {
       let bundle
@@ -437,11 +394,11 @@ app.post('/forwarderProcedure/_event', async (req, res) => {
       if (bundle.resourceType !== 'Bundle' || !Array.isArray(bundle.entry)) continue
 
       for (const { resource } of bundle.entry) {
-        // Saltar Observations de vacunación (grupo o hijas) — serán convertidas a Procedure
+        // Saltar Observations Procedure History (grupo e hijas) — se convierten en Procedure IPS
         if (resource.resourceType === 'Observation') {
           const codes = codeList(resource)
-          if (codes.some(c => IMM_ALL_CODES.has(c))) {
-            logStep('↷ Skip Obs vacunación (convertida a Procedure):', resource.id)
+          if (codes.some(c => PROC_ALL_CODES.has(c))) {
+            logStep('↷ Skip Obs Procedure History (convertida a Procedure IPS):', resource.id)
             continue
           }
         }
@@ -476,7 +433,7 @@ app.post('/forwarderProcedure/_event', async (req, res) => {
 
         try {
           if (resource.resourceType === 'Observation') {
-            // Subir otras obs no-vacunación (con recursividad hasMember)
+            // Subir otras Observations que no sean Procedure History (con recursividad hasMember)
             sent += await uploadObservationWithMembers(resource.id)
           } else {
             logStep('📤 Subiendo', resource.resourceType, resource.id)
@@ -498,8 +455,8 @@ app.post('/forwarderProcedure/_event', async (req, res) => {
       }
     }
 
-    // 7.7-bis) *** Vacunación -> Procedure ***
-    sent += await processProceduresByPatient(pid, enc)
+    // 7.7-bis) *** Procedure (IPS) desde Observations del Encounter ***
+    sent += await processIPSProceduresByEncounter(uuid, pid, enc)
 
     // 7.8) Done
     logStep('🎉 Done', uuid)
