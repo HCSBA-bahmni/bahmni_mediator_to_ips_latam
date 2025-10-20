@@ -235,7 +235,8 @@ const PROC_CODES = {
   OUTCOME:         '160721AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'   // Procedure outcome -> valueCodeableConcept
 }
 const PROC_ALL_CODES = new Set([PROC_GROUP_CODE, ...Object.values(PROC_CODES)])
-const IPS_PROC_PROFILE = 'https://build.fhir.org/ig/HL7/fhir-ips/StructureDefinition-Procedure-uv-ips'
+//const IPS_PROC_PROFILE = 'https://build.fhir.org/ig/HL7/fhir-ips/StructureDefinition-Procedure-uv-ips'
+const IPS_PROC_PROFILE = 'http://hl7.org/fhir/uv/ips/StructureDefinition/Procedure-uv-ips'
 
 function indexByIdFromBundle(bundle) {
   const map = {}
