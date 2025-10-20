@@ -179,15 +179,10 @@ async function translateToSNOMED (sourceCoding) {
   if (!USE_TRANSLATE || !TERMINOLOGY_BASE || !sourceCoding?.code) return null
   try {
     const url = `${TERMINOLOGY_BASE}/ConceptMap/$translate`
-    const params = { system: sourceCoding.system, code: sourceCoding.code, targetsystem: SNOMED }
-    dbg('[$translate → SNOMED] request', { url, params })
     const { data } = await axios.get(url, {
-      params,
+      params: { system: sourceCoding.system, code: sourceCoding.code, targetsystem: SNOMED },
       httpsAgent: axios.defaults.httpsAgent
     })
-    dbg('[$translate → SNOMED] response',
-      typeof data === 'string' ? data.substring(0, 2000) : JSON.stringify(data).substring(0, 2000)
-    )
     return parseTranslate(data)
   } catch (e) {
     dbg('translate error:', e.message)
@@ -228,19 +223,14 @@ async function translateSnomedToICD10 (snomedCoding) {
   if (!USE_SNOMED_TO_ICD10 || !TERMINOLOGY_BASE || !snomedCoding?.code) return null
   try {
     const url = `${TERMINOLOGY_BASE}/ConceptMap/$translate`
-    const params = {
-      system: SNOMED,
-      code: snomedCoding.code,
-      targetsystem: ICD10_TARGET_SYSTEM
-    }
-    dbg('[$translate SNOMED→ICD10] request', { url, params })
     const { data } = await axios.get(url, {
-      params,
+      params: {
+        system: SNOMED,
+        code: snomedCoding.code,
+        targetsystem: ICD10_TARGET_SYSTEM
+      },
       httpsAgent: axios.defaults.httpsAgent
     })
-    dbg('[$translate SNOMED→ICD10] response',
-      typeof data === 'string' ? data.substring(0, 2000) : JSON.stringify(data).substring(0, 2000)
-    )
     return parseTranslateICD10(data)
   } catch (e) {
     dbg('icd10 translate error:', e.message)
