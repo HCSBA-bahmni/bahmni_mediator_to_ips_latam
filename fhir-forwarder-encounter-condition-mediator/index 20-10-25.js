@@ -48,20 +48,6 @@ axios.defaults.httpsAgent = new https.Agent({
 function logStep (...args) { console.log(new Date().toISOString(), '-', ...args) }
 const DEBUG = /^true$/i.test(process.env.DEBUG_CONDITION || 'false')
 function dbg (...a) { if (DEBUG) logStep('[DEBUG_COND]', ...a) }
-// Utilidad para loguear payloads grandes sin inundar consola
-function previewJSON(obj, max=2000) {
-  try {
-    const s = typeof obj === 'string' ? obj : JSON.stringify(obj)
-    return s.length > max ? (s.slice(0, max) + ` …(+${s.length-max} chars)`) : s
-  } catch { return '[unserializable]' }
-}
-function urlWithQS(base, params) {
-  const usp = new URLSearchParams(params || {})
-  return `${base}?${usp.toString()}`
-}
-
-
-
 
 const FHIR_NODE_BASE = (process.env.FHIR_NODE_URL || '').replace(/\/$/, '')
 const FHIR_PROXY_BASE = (process.env.FHIR_PROXY_URL || '').replace(/\/$/, '')
@@ -193,19 +179,10 @@ async function translateToSNOMED (sourceCoding) {
   if (!USE_TRANSLATE || !TERMINOLOGY_BASE || !sourceCoding?.code) return null
   try {
     const url = `${TERMINOLOGY_BASE}/ConceptMap/$translate`
-    //const { data } = await axios.get(url, {
-    //  params: { system: sourceCoding.system, code: sourceCoding.code, targetsystem: SNOMED },
-    //  httpsAgent: axios.defaults.httpsAgent
-    //})
-
-    const params = { system: sourceCoding.system, code: sourceCoding.code, targetsystem: SNOMED }
-    const fullUrl = urlWithQS(url, params)
-    dbg('→ $translate to SNOMED URL:', fullUrl)
-    const resp = await axios.get(url, { params, httpsAgent: axios.defaults.httpsAgent, validateStatus: () => true })
-    dbg('← $translate to SNOMED status:', resp.status)
-    dbg('← $translate to SNOMED resp:', previewJSON(resp.data))
-    const { data } = resp
-
+    const { data } = await axios.get(url, {
+      params: { system: sourceCoding.system, code: sourceCoding.code, targetsystem: SNOMED },
+      httpsAgent: axios.defaults.httpsAgent
+    })
     return parseTranslate(data)
   } catch (e) {
     dbg('translate error:', e.message)
@@ -246,26 +223,14 @@ async function translateSnomedToICD10 (snomedCoding) {
   if (!USE_SNOMED_TO_ICD10 || !TERMINOLOGY_BASE || !snomedCoding?.code) return null
   try {
     const url = `${TERMINOLOGY_BASE}/ConceptMap/$translate`
-    //const { data } = await axios.get(url, {
-    //  params: {
-    //    system: SNOMED,
-    //    code: snomedCoding.code,
-    //    targetsystem: ICD10_TARGET_SYSTEM
-    //  },
-    //  httpsAgent: axios.defaults.httpsAgent
-    //})
-    const params = {
-      system: SNOMED,
-      code: snomedCoding.code,
-      targetsystem: ICD10_TARGET_SYSTEM
-    }
-    const fullUrl = urlWithQS(url, params)
-    dbg('→ $translate SNOMED→ICD10 URL:', fullUrl)
-    const resp = await axios.get(url, { params, httpsAgent: axios.defaults.httpsAgent, validateStatus: () => true })
-    dbg('← $translate SNOMED→ICD10 status:', resp.status)
-    dbg('← $translate SNOMED→ICD10 resp:', previewJSON(resp.data))
-    const { data } = resp
-
+    const { data } = await axios.get(url, {
+      params: {
+        system: SNOMED,
+        code: snomedCoding.code,
+        targetsystem: ICD10_TARGET_SYSTEM
+      },
+      httpsAgent: axios.defaults.httpsAgent
+    })
     return parseTranslateICD10(data)
   } catch (e) {
     dbg('icd10 translate error:', e.message)
@@ -282,26 +247,14 @@ async function lookupSnomedDisplay(code) {
   if (!USE_LOOKUP_SNOMED || !TERMINOLOGY_BASE || !code) return null
   try {
     const url = `${TERMINOLOGY_BASE}/CodeSystem/$lookup`
-    //const { data } = await axios.get(url, {
-    //  params: {
-    //    system: SNOMED,
-    //    code,
+    const { data } = await axios.get(url, {
+      params: {
+        system: SNOMED,
+        code,
         // version opcional: version=http://snomed.info/sct/900000000000207008/version/20240331
-    //  },
-    //  httpsAgent: axios.defaults.httpsAgent
-   // })
-    const params = {
-      system: SNOMED,
-      code,
-      // version opcional: version=http://snomed.info/sct/900000000000207008/version/20240331
-    }
-    const fullUrl = urlWithQS(url, params)
-    dbg('→ $lookup SNOMED URL:', fullUrl)
-    const resp = await axios.get(url, { params, httpsAgent: axios.defaults.httpsAgent, validateStatus: () => true })
-    dbg('← $lookup SNOMED status:', resp.status)
-    dbg('← $lookup SNOMED resp:', previewJSON(resp.data))
-    const { data } = resp
-    
+      },
+      httpsAgent: axios.defaults.httpsAgent
+    })
     const p = (data?.parameter || [])
     const disp = p.find(x => x.name === 'display')?.valueString
     return disp || null
