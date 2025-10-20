@@ -46,7 +46,7 @@ axios.defaults.httpsAgent = new https.Agent({
 // Flags & Consts
 // =============================
 function logStep (...args) { console.log(new Date().toISOString(), '-', ...args) }
-const DEBUG = /^true$/i.test(process.env.DEBUG_CONDITION || 'false')
+const DEBUG = /^true$/i.test(process.env.DEBUG_CONDITION || 'true')
 function dbg (...a) { if (DEBUG) logStep('[DEBUG_COND]', ...a) }
 // Utilidad para loguear payloads grandes sin inundar consola
 function previewJSON(obj, max=2000) {
@@ -59,6 +59,9 @@ function urlWithQS(base, params) {
   const usp = new URLSearchParams(params || {})
   return `${base}?${usp.toString()}`
 }
+
+// ID simple para trazabilidad entre llamados HTTP; ideal si reverse proxy propaga X-Request-ID
+const REQ_ID = () => Math.random().toString(36).slice(2)
 
 
 
@@ -114,10 +117,18 @@ async function getFromProxy (path) {
 }
 
 async function putToNode (resource) {
-  const url = `${FHIR_NODE_BASE}/fhir/${resource.resourceType}/${resource.id}`
+  const base = /\/fhir\/?$/.test(FHIR_NODE_BASE)
+    ? FHIR_NODE_BASE.replace(/\/$/, '')
+    : `${FHIR_NODE_BASE}/fhir`
+  const url = `${base}/${resource.resourceType}/${resource.id}`
   try {
     logStep('PUT (node)', url)
-    const resp = await axios.put(url, resource, { validateStatus: false, httpsAgent: axios.defaults.httpsAgent })
+    const resp = await axios.put(url, resource, {
+      validateStatus: false,
+      httpsAgent: axios.defaults.httpsAgent,
+      timeout: 15000,
+      headers: { 'X-Request-ID': REQ_ID() }
+    })
     logStep('DEBUG node status:', resp.status)
     if (resp.status >= 400) throw new Error(`Node returned ${resp.status}`)
   } catch (e) {
@@ -201,7 +212,13 @@ async function translateToSNOMED (sourceCoding) {
     const params = { system: sourceCoding.system, code: sourceCoding.code, targetsystem: SNOMED }
     const fullUrl = urlWithQS(url, params)
     dbg('→ $translate to SNOMED URL:', fullUrl)
-    const resp = await axios.get(url, { params, httpsAgent: axios.defaults.httpsAgent, validateStatus: () => true })
+    const resp = await axios.get(url, {
+      params,
+      httpsAgent: axios.defaults.httpsAgent,
+      validateStatus: () => true,
+      timeout: 10000,
+      headers: { Accept: 'application/fhir+json', 'X-Request-ID': REQ_ID() }
+    })
     dbg('← $translate to SNOMED status:', resp.status)
     dbg('← $translate to SNOMED resp:', previewJSON(resp.data))
     const { data } = resp
@@ -261,7 +278,13 @@ async function translateSnomedToICD10 (snomedCoding) {
     }
     const fullUrl = urlWithQS(url, params)
     dbg('→ $translate SNOMED→ICD10 URL:', fullUrl)
-    const resp = await axios.get(url, { params, httpsAgent: axios.defaults.httpsAgent, validateStatus: () => true })
+    const resp = await axios.get(url, {
+      params,
+      httpsAgent: axios.defaults.httpsAgent,
+      validateStatus: () => true,
+      timeout: 10000,
+      headers: { Accept: 'application/fhir+json', 'X-Request-ID': REQ_ID() }
+    })
     dbg('← $translate SNOMED→ICD10 status:', resp.status)
     dbg('← $translate SNOMED→ICD10 resp:', previewJSON(resp.data))
     const { data } = resp
@@ -297,11 +320,17 @@ async function lookupSnomedDisplay(code) {
     }
     const fullUrl = urlWithQS(url, params)
     dbg('→ $lookup SNOMED URL:', fullUrl)
-    const resp = await axios.get(url, { params, httpsAgent: axios.defaults.httpsAgent, validateStatus: () => true })
+    const resp = await axios.get(url, {
+      params,
+      httpsAgent: axios.defaults.httpsAgent,
+      validateStatus: () => true,
+      timeout: 10000,
+      headers: { Accept: 'application/fhir+json', 'X-Request-ID': REQ_ID() }
+    })
     dbg('← $lookup SNOMED status:', resp.status)
     dbg('← $lookup SNOMED resp:', previewJSON(resp.data))
     const { data } = resp
-    
+
     const p = (data?.parameter || [])
     const disp = p.find(x => x.name === 'display')?.valueString
     return disp || null
@@ -461,10 +490,14 @@ async function processConditionsByEncounter (enc, patient) {
 
   let sent = 0
   for (const g of groups) {
-    const cond = await buildConditionFromDiagnosisGroup(g, byId, patientRef, encounterRef, enc, patient)
-    if (!cond) continue
-    await putToNode(cond)
-    sent++
+    try {
+      const cond = await buildConditionFromDiagnosisGroup(g, byId, patientRef, encounterRef, enc, patient)
+      if (!cond) continue
+      await putToNode(cond)
+      sent++
+    } catch (err) {
+      dbg('Group build/PUT failed:', g?.id, err?.message)
+    }
   }
   return sent
 }
