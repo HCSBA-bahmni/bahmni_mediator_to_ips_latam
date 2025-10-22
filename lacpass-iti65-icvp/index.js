@@ -1276,6 +1276,7 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
             const uniq = new Set();
             sec.entry = [];
             for (const candidate of target) {
+                console.log('--- Adding Condition to section', loincCode, '->', candidate.fullUrl);
                 ensureIpsProfile(candidate.resource);
                 if (!uniq.has(candidate.fullUrl)) {
                     uniq.add(candidate.fullUrl);
@@ -1626,7 +1627,7 @@ function preValidateIcvpBundle(summaryBundle) {
     const urlMap = buildUrlMapUsingBase(summaryBundle);
 
     // 5) aplicar map a referencias internas (puedes reutilizar updateReferencesInObject)
-    //updateReferencesInObject(summaryBundle, urlMap);
+    updateReferencesInObject(summaryBundle, urlMap);
 
     // 6) asegurar Composition.subject referencia a Patient existente
     const compEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
