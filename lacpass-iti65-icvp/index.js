@@ -1288,8 +1288,7 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         // Si no había ninguna Condition para esta sección, caeremos al fallback más abajo (placeholder)
     }
 
-    console.log(`🔍 Ensuring entries for section LOINC ${loincCode} with allowed types:`, allowedTypes);
-    console.log('---',sec.entry);
+
 
     // Si no hay entries válidas, buscar candidatos y enlazarlos
     const candidates = (summaryBundle.entry || []).filter(x => allowedTypes.includes(x.resource?.resourceType));
@@ -1308,6 +1307,9 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
         return;
     }
+
+    console.log(`🔍 Ensuring entries for section LOINC ${loincCode} with allowed types:`, allowedTypes);
+    console.log('---',sec.entry);
 
     // Si tampoco hay candidatos: inyectar placeholder IPS "no known …"
     const patientEntry = (summaryBundle.entry || []).find(e => e.resource?.resourceType === 'Patient');
@@ -1390,8 +1392,10 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
         sec.entry.push({ reference: placeholder.fullUrl });
         // dedupe entries
+        console.log('--- After adding placeholder:',sec.entry);
         sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
     }
+    console.log('--- After adding placeholder:',sec.entry);
 }
 
 
