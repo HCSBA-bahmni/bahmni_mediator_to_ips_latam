@@ -1352,23 +1352,23 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         };
     } else if (allowedTypes.includes('Immunization')) {
         // Placeholder de sección solo si realmente quieres declarar "sin info de vacunas"
-        placeholder = {
-            fullUrl: 'urn:uuid:immu-none',
-            resource: {
-                resourceType: 'Immunization',
-                meta: { profile: [IPS_PROFILES.IMMUNIZATION] },
-                status: 'not-done',
-                vaccineCode: {
-                    coding: [{
-                        system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips',
-                        code: 'no-immunization-info',
-                        display: 'No information about immunizations'
-                    }]
-                },
-                subject: patRef ? { reference: patRef } : undefined,
-                occurrenceDateTime: nowIso
-            }
-        };
+        // placeholder = {
+        //     fullUrl: 'urn:uuid:immu-none',
+        //     resource: {
+        //         resourceType: 'Immunization',
+        //         meta: { profile: [IPS_PROFILES.IMMUNIZATION] },
+        //         status: 'not-done',
+        //         vaccineCode: {
+        //             coding: [{
+        //                 system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips',
+        //                 code: 'no-immunization-info',
+        //                 display: 'No information about immunizations'
+        //             }]
+        //         },
+        //         subject: patRef ? { reference: patRef } : undefined,
+        //         occurrenceDateTime: nowIso
+        //     }
+        // };
     } else if (allowedTypes.includes('Condition')) {
         const isPast = loincCode === LOINC_CODES.PAST_ILLNESS_SECTION;
         placeholder = {
@@ -1392,7 +1392,6 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
         sec.entry.push({ reference: placeholder.fullUrl });
         // dedupe entries
-        console.log('--- After adding placeholder:',sec.entry);
         sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
     }
     console.log('--- After adding placeholder:',sec.entry);
