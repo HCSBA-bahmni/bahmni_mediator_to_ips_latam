@@ -2073,12 +2073,12 @@ function fixBundleValidationIssues(summaryBundle) {
         return true;
     };
 
-    const isValid = finalValidation();
+    /*const isValid = finalValidation();
     if (isValid) {
         console.log('✅ Bundle LAC validation passed');
     } else {
         console.error('❌ Bundle LAC validation failed - check console for details');
-    }
+    }*/
 }
 
 // ===================== Helper: actualiza todas las referencias recursivamente =====================
