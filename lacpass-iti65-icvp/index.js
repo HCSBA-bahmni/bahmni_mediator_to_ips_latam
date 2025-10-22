@@ -2048,7 +2048,7 @@ function fixBundleValidationIssues(summaryBundle) {
             console.error('❌ Bundle.entry[0] debe ser Composition');
             return false;
         }
-        if (!comp.resource.meta?.profile?.includes('http://smart.who.int/trust-phw/StructureDefinition/Composition-uv-ips-ICVP')) {
+        if (!comp.resource.meta?.profile?.includes('http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP')) {
             console.error('❌ Composition no tiene perfil ICVP');
             return false;
         }
