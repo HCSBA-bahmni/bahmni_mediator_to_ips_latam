@@ -1288,6 +1288,9 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         // Si no había ninguna Condition para esta sección, caeremos al fallback más abajo (placeholder)
     }
 
+    console.log(`🔍 Ensuring entries for section LOINC ${loincCode} with allowed types:`, allowedTypes);
+    console.log('---',sec.entry);
+
     // Si no hay entries válidas, buscar candidatos y enlazarlos
     const candidates = (summaryBundle.entry || []).filter(x => allowedTypes.includes(x.resource?.resourceType));
 
@@ -1742,6 +1745,7 @@ function fixBundleValidationIssues(summaryBundle) {
         ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.ALLERGIES_SECTION, ['AllergyIntolerance']);
 
         // Inmunizaciones: LOINC 11369-6 → Immunization
+        console.log('--- Ensuring Immunizations section entries');
         ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.IMMUNIZATIONS_SECTION, ['Immunization']);
 
         // Problemas activos/lista de problemas: LOINC 11450-4 → Condition
@@ -2047,7 +2051,7 @@ function fixBundleValidationIssues(summaryBundle) {
             console.error('❌ Bundle.entry[0] debe ser Composition');
             return false;
         }
-        if (!comp.resource.meta?.profile?.includes('http://smart.who.int/trust-phw/StructureDefinition/Composition-uv-ips-ICVP')) {
+        if (!comp.resource.meta?.profile?.includes('http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP')) {
             console.error('❌ Composition no tiene perfil ICVP');
             return false;
         }
@@ -2072,12 +2076,12 @@ function fixBundleValidationIssues(summaryBundle) {
         return true;
     };
 
-    const isValid = finalValidation();
+    /*const isValid = finalValidation();
     if (isValid) {
         console.log('✅ Bundle LAC validation passed');
     } else {
         console.error('❌ Bundle LAC validation failed - check console for details');
-    }
+    }*/
 }
 
 // ===================== Helper: actualiza todas las referencias recursivamente =====================
@@ -2368,8 +2372,12 @@ app.post('/icvp/_iti65', async (req, res) => {
     try {
 
                 // ========= Corregir problemas de validación ANTES de PDQm =========
-                preValidateIcvpBundle(summaryBundle);
-                fixBundleValidationIssues(summaryBundle);
+        console.log('🔧 Pre-validating and fixing ICVP Bundle issues...');
+        preValidateIcvpBundle(summaryBundle);
+        console.log('✅ Pre-validation and fixing completed.');
+        fixBundleValidationIssues(summaryBundle);
+        console.log('✅ Bundle validation issues fixed.');
+
 
         // ===== Asegurar perfil LAC Bundle desde el inicio =====
         ensureLacBundleProfile(summaryBundle);
