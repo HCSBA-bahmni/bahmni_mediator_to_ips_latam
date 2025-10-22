@@ -1288,8 +1288,7 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         // Si no había ninguna Condition para esta sección, caeremos al fallback más abajo (placeholder)
     }
 
-    console.log(`🔍 Ensuring entries for section LOINC ${loincCode} with allowed types:`, allowedTypes);
-    console.log('---',sec.entry);
+
 
     // Si no hay entries válidas, buscar candidatos y enlazarlos
     const candidates = (summaryBundle.entry || []).filter(x => allowedTypes.includes(x.resource?.resourceType));
@@ -1297,17 +1296,20 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
     // NOTA: ya manejamos Condition arriba. De aquí en adelante, secciones no-Condition.
 
     // Generic fallback (non-Condition sections): link first candidate
-    if (candidates.length > 0) {
-        sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
-        // Enlaza SOLO el primer candidato (satisface slice mínimo)
-        const candidate = candidates[0];
-        ensureIpsProfile(candidate.resource);
-        const alreadyReferenced = sec.entry.some(e => e.reference === candidate.fullUrl);
-        if (!alreadyReferenced) sec.entry.push({ reference: candidate.fullUrl });
-        // dedupe
-        sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
-        return;
-    }
+    // if (candidates.length > 0) {
+    //     sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
+    //     // Enlaza SOLO el primer candidato (satisface slice mínimo)
+    //     const candidate = candidates[0];
+    //     ensureIpsProfile(candidate.resource);
+    //     const alreadyReferenced = sec.entry.some(e => e.reference === candidate.fullUrl);
+    //     if (!alreadyReferenced) sec.entry.push({ reference: candidate.fullUrl });
+    //     // dedupe
+    //     sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
+    //     return;
+    // }
+
+    console.log(`🔍 Ensuring entries for section LOINC ${loincCode} with allowed:`, allowedTypes);
+    console.log('---',sec.entry);
 
     // Si tampoco hay candidatos: inyectar placeholder IPS "no known …"
     const patientEntry = (summaryBundle.entry || []).find(e => e.resource?.resourceType === 'Patient');
@@ -1350,23 +1352,23 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         };
     } else if (allowedTypes.includes('Immunization')) {
         // Placeholder de sección solo si realmente quieres declarar "sin info de vacunas"
-        placeholder = {
-            fullUrl: 'urn:uuid:immu-none',
-            resource: {
-                resourceType: 'Immunization',
-                meta: { profile: [IPS_PROFILES.IMMUNIZATION] },
-                status: 'not-done',
-                vaccineCode: {
-                    coding: [{
-                        system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips',
-                        code: 'no-immunization-info',
-                        display: 'No information about immunizations'
-                    }]
-                },
-                subject: patRef ? { reference: patRef } : undefined,
-                occurrenceDateTime: nowIso
-            }
-        };
+        // placeholder = {
+        //     fullUrl: 'urn:uuid:immu-none',
+        //     resource: {
+        //         resourceType: 'Immunization',
+        //         meta: { profile: [IPS_PROFILES.IMMUNIZATION] },
+        //         status: 'not-done',
+        //         vaccineCode: {
+        //             coding: [{
+        //                 system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips',
+        //                 code: 'no-immunization-info',
+        //                 display: 'No information about immunizations'
+        //             }]
+        //         },
+        //         subject: patRef ? { reference: patRef } : undefined,
+        //         occurrenceDateTime: nowIso
+        //     }
+        // };
     } else if (allowedTypes.includes('Condition')) {
         const isPast = loincCode === LOINC_CODES.PAST_ILLNESS_SECTION;
         placeholder = {
@@ -1392,6 +1394,7 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         // dedupe entries
         sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
     }
+    console.log('--- After adding placeholder:',sec.entry);
 }
 
 
