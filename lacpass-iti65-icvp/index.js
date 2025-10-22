@@ -2369,8 +2369,12 @@ app.post('/icvp/_iti65', async (req, res) => {
     try {
 
                 // ========= Corregir problemas de validación ANTES de PDQm =========
-                preValidateIcvpBundle(summaryBundle);
-                fixBundleValidationIssues(summaryBundle);
+        console.log('🔧 Pre-validating and fixing ICVP Bundle issues...');
+        preValidateIcvpBundle(summaryBundle);
+        console.log('✅ Pre-validation and fixing completed.');
+        fixBundleValidationIssues(summaryBundle);
+        console.log('✅ Bundle validation issues fixed.');
+
 
         // ===== Asegurar perfil LAC Bundle desde el inicio =====
         ensureLacBundleProfile(summaryBundle);
