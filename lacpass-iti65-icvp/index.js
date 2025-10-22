@@ -1276,7 +1276,6 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
             const uniq = new Set();
             sec.entry = [];
             for (const candidate of target) {
-                console.log('--- Adding Condition to section', loincCode, '->', candidate.fullUrl);
                 ensureIpsProfile(candidate.resource);
                 if (!uniq.has(candidate.fullUrl)) {
                     uniq.add(candidate.fullUrl);
@@ -1288,6 +1287,9 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         }
         // Si no había ninguna Condition para esta sección, caeremos al fallback más abajo (placeholder)
     }
+
+    console.log(`🔍 Ensuring entries for section LOINC ${loincCode} with allowed types:`, allowedTypes);
+    console.log('---',sec.entry);
 
     // Si no hay entries válidas, buscar candidatos y enlazarlos
     const candidates = (summaryBundle.entry || []).filter(x => allowedTypes.includes(x.resource?.resourceType));
@@ -1743,6 +1745,7 @@ function fixBundleValidationIssues(summaryBundle) {
         ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.ALLERGIES_SECTION, ['AllergyIntolerance']);
 
         // Inmunizaciones: LOINC 11369-6 → Immunization
+        console.log('--- Ensuring Immunizations section entries');
         ensureRequiredSectionEntry(summaryBundle, compositionEntry.resource, LOINC_CODES.IMMUNIZATIONS_SECTION, ['Immunization']);
 
         // Problemas activos/lista de problemas: LOINC 11450-4 → Condition
