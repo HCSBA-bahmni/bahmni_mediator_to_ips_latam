@@ -223,11 +223,11 @@ async function uploadLocationWithParents (locId) {
 }
 
 function getEncounterFirstPractitioner (enc) {
-  const x = (enc?.participant || []).find(p => p.individual?.reference?.startsWith('Practitioner/'))
+  const x = (enc?.participant || []).find(p => p.individual?.reference?.includes('Practitioner/'))
   return x?.individual?.reference
 }
 function getEncounterFirstLocation (enc) {
-  const x = (enc?.location || []).find(l => l.location?.reference?.startsWith('Location/'))
+  const x = (enc?.location || []).find(l => l.location?.reference?.includes('Location/'))
   return x?.location?.reference
 }
 
