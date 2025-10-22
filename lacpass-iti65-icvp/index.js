@@ -1308,7 +1308,7 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
         return;
     }
 
-    console.log(`🔍 Ensuring entries for section LOINC ${loincCode} with allowed types:`, allowedTypes);
+    console.log(`🔍 Ensuring entries for section LOINC ${loincCode} with allowed:`, allowedTypes);
     console.log('---',sec.entry);
 
     // Si tampoco hay candidatos: inyectar placeholder IPS "no known …"
