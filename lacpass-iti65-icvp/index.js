@@ -1626,7 +1626,7 @@ function preValidateIcvpBundle(summaryBundle) {
     const urlMap = buildUrlMapUsingBase(summaryBundle);
 
     // 5) aplicar map a referencias internas (puedes reutilizar updateReferencesInObject)
-    updateReferencesInObject(summaryBundle, urlMap);
+    //updateReferencesInObject(summaryBundle, urlMap);
 
     // 6) asegurar Composition.subject referencia a Patient existente
     const compEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
