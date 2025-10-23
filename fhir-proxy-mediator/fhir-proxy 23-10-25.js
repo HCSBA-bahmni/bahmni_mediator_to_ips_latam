@@ -7,7 +7,6 @@ import { registerMediator, activateHeartbeat } from 'openhim-mediator-utils'
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
 const mediatorConfig = require('./mediatorConfig.json')
-import practitionerRouter from './routes/practitioner-ips.js'
 
 // --- OpenHIM config ---
 const openhimConfig = {
@@ -60,9 +59,6 @@ const healthPaths = ['/_health', '/proxy/_health']
 healthPaths.forEach(path => {
   app.get(path, (_req, res) => res.status(200).send('OK'))
 })
-
-// 3.1) IPS route: Provider → Practitioner (FHIR IPS)
-app.use(practitionerRouter)
 
 // 4) FHIR proxy: support /fhir/* and /proxy/fhir/*
 const OPENMRS_FHIR = process.env.OPENMRS_FHIR_URL
