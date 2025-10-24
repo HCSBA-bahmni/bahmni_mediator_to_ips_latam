@@ -19,72 +19,35 @@ const parseAttr = (display) => {
   }
 }
 
-// Parser robusto de fechas → YYYY-MM-DD con tolerancia básica EN/ES
-const MONTHS = {
-  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
-  apr: 4, april: 4, may: 5, jun: 6, june: 6,
-  jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9, september: 9,
-  oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
-  ene: 1, enero: 1, febr: 2, febrero: 2, marz: 3, marzo: 3,
-  abr: 4, abril: 4, mayo: 5, junio: 6, jul: 7, julio: 7,
-  ago: 8, agosto: 8, set: 9, septiem: 9, septiembre: 9,
-  octubre: 10, noviem: 11, noviembre: 11, dic: 12, diciembre: 12
-}
-
+// --- Parser robusto de fechas → YYYY-MM-DD ---
 function toIsoDateYYYYMMDD(raw) {
   if (!raw) return undefined
   let v = String(raw).trim()
-
-  // 1) ISO directo: 1974-12-24
+  // ISO directo 1974-12-24
   const iso = v.match(/\b(\d{4})-(\d{2})-(\d{2})\b/)
   if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
-
-  // 2) dd/mm/yyyy o dd-mm-yyyy
+  // dd/mm/yyyy o dd-mm-yyyy
   const dmy = v.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/)
   if (dmy) {
-    let d = dmy[1].padStart(2, '0')
-    let m = dmy[2].padStart(2, '0')
+    const d = dmy[1].padStart(2,'0')
+    const m = dmy[2].padStart(2,'0')
     let y = dmy[3]
     if (y.length === 2) y = (Number(y) > 30 ? '19' : '20') + y
-    if (Number(m) > 12) {
-      const tmp = m
-      m = d
-      d = tmp
-    }
     return `${y}-${m}-${d}`
   }
-
-  // 3) “Dec 24 1974”, “Tue Dec 24 00:00:00 CLST 1974”, etc.
-  const cleaned = v
-    .replace(/CLST|CLT|UTC|GMT/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-
-  const mmm = cleaned.match(/\b([A-Za-zÁÉÍÓÚÑ]{3,})\s+(\d{1,2}),?\s+(\d{4})\b/)
+  // “Tue Dec 24 00:00:00 CLST 1974” / “Dec 24 1974”
+  v = v.replace(/\b(CLST|CLT|UTC|GMT)\b/gi, '').replace(/\s{2,}/g,' ').trim()
+  const mmm = v.match(/\b([A-Za-z]{3,})\s+(\d{1,2}),?\s+(\d{4})\b/)
   if (mmm) {
-    const tokenBase = mmm[1]
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[^a-z]/g, '')
-    const candidates = [tokenBase, tokenBase.slice(0, 4), tokenBase.slice(0, 3)]
-    const M = candidates.map(c => MONTHS[c]).find(Boolean)
-    if (M) {
-      const d = String(mmm[2]).padStart(2, '0')
-      const m = String(M).padStart(2, '0')
-      const y = mmm[3]
-      return `${y}-${m}-${d}`
-    }
+    const map = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12,
+                 ene:1,feb2:2,marz:3,abr:4,mayo:5,ago:8,sept:9,oct2:10,nov2:11,dic:12}
+    const key = mmm[1].toLowerCase().slice(0,3)
+    const M = map[key] || map[key.replace('ó','o')] || map[key.replace('á','a')]
+    if (M) return `${mmm[3]}-${String(M).padStart(2,'0')}-${String(mmm[2]).padStart(2,'0')}`
   }
-
-  // 4) Fallback a Date.parse
-  const t = Date.parse(raw)
-  if (!Number.isNaN(t)) {
-    const d = new Date(t)
-    if (!Number.isNaN(d.getTime())) {
-      return d.toISOString().slice(0, 10)
-    }
-  }
-
+  // Fallback
+  const t = Date.parse(v)
+  if (!Number.isNaN(t)) return new Date(t).toISOString().slice(0,10)
   return undefined
 }
 
@@ -107,7 +70,7 @@ router.get('/ips/practitioner/:providerUuid', async (req, res) => {
     const provResp = await axios.get(provUrl, { auth })
     const provider = provResp.data
 
-  // 2) Usar únicamente el display del Provider para el nombre (evita privilegios extra)
+    // 2) Usar únicamente el display del Provider para el nombre (evita privilegios extra)
 
     // 3) Construcción del Practitioner FHIR (IPS)
     const prac = {
