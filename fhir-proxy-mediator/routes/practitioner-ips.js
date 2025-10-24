@@ -38,13 +38,7 @@ router.get('/ips/practitioner/:providerUuid', async (req, res) => {
     const provResp = await axios.get(provUrl, { auth })
     const provider = provResp.data
 
-    // 2) Obtener Person para detalles (nombre, sexo, nacimiento)
-    let person = provider.person
-    const selfLink = person?.links?.find(l => l.rel === 'self')?.uri
-    if (selfLink) {
-      const personResp = await axios.get(selfLink, { auth })
-      person = personResp.data
-    }
+  // 2) Usar únicamente el display del Provider para el nombre (evita privilegios extra)
 
     // 3) Construcción del Practitioner FHIR (IPS)
     const prac = {
@@ -156,12 +150,8 @@ router.get('/ips/practitioner/:providerUuid', async (req, res) => {
       prac.identifier = identifiers
     }
 
-    // 3.b) Nombre desde Person; si no hay, usar provider.person.display
-    if (person?.personName) {
-      const family = person.personName.familyName || person.personName.familyName2 || undefined
-      const given = [person.personName.givenName, person.personName.middleName].filter(Boolean)
-      prac.name = [{ use: 'official', family, given }]
-    } else if (provider.person?.display) {
+    // 3.b) Nombre desde provider.person.display (fallback seguro sin privilegios adicionales)
+    if (provider.person?.display) {
       const parts = provider.person.display.trim().split(/\s+/)
       const family = parts.pop()
       const given = parts
