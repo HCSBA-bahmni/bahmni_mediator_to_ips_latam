@@ -19,6 +19,75 @@ const parseAttr = (display) => {
   }
 }
 
+// Parser robusto de fechas → YYYY-MM-DD con tolerancia básica EN/ES
+const MONTHS = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
+  apr: 4, april: 4, may: 5, jun: 6, june: 6,
+  jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9, september: 9,
+  oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+  ene: 1, enero: 1, febr: 2, febrero: 2, marz: 3, marzo: 3,
+  abr: 4, abril: 4, mayo: 5, junio: 6, jul: 7, julio: 7,
+  ago: 8, agosto: 8, set: 9, septiem: 9, septiembre: 9,
+  octubre: 10, noviem: 11, noviembre: 11, dic: 12, diciembre: 12
+}
+
+function toIsoDateYYYYMMDD(raw) {
+  if (!raw) return undefined
+  let v = String(raw).trim()
+
+  // 1) ISO directo: 1974-12-24
+  const iso = v.match(/\b(\d{4})-(\d{2})-(\d{2})\b/)
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
+
+  // 2) dd/mm/yyyy o dd-mm-yyyy
+  const dmy = v.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\b/)
+  if (dmy) {
+    let d = dmy[1].padStart(2, '0')
+    let m = dmy[2].padStart(2, '0')
+    let y = dmy[3]
+    if (y.length === 2) y = (Number(y) > 30 ? '19' : '20') + y
+    if (Number(m) > 12) {
+      const tmp = m
+      m = d
+      d = tmp
+    }
+    return `${y}-${m}-${d}`
+  }
+
+  // 3) “Dec 24 1974”, “Tue Dec 24 00:00:00 CLST 1974”, etc.
+  const cleaned = v
+    .replace(/CLST|CLT|UTC|GMT/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+
+  const mmm = cleaned.match(/\b([A-Za-zÁÉÍÓÚÑ]{3,})\s+(\d{1,2}),?\s+(\d{4})\b/)
+  if (mmm) {
+    const tokenBase = mmm[1]
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[^a-z]/g, '')
+    const candidates = [tokenBase, tokenBase.slice(0, 4), tokenBase.slice(0, 3)]
+    const M = candidates.map(c => MONTHS[c]).find(Boolean)
+    if (M) {
+      const d = String(mmm[2]).padStart(2, '0')
+      const m = String(M).padStart(2, '0')
+      const y = mmm[3]
+      return `${y}-${m}-${d}`
+    }
+  }
+
+  // 4) Fallback a Date.parse
+  const t = Date.parse(raw)
+  if (!Number.isNaN(t)) {
+    const d = new Date(t)
+    if (!Number.isNaN(d.getTime())) {
+      return d.toISOString().slice(0, 10)
+    }
+  }
+
+  return undefined
+}
+
 // Mapeo simple: practitioner_type → v2-0360|2.7
 const PRACT_TYPE_TO_V20360 = {
   'Doctor':           { code: 'MD', display: 'Doctor of Medicine' },
@@ -43,7 +112,9 @@ router.get('/ips/practitioner/:providerUuid', async (req, res) => {
     // 3) Construcción del Practitioner FHIR (IPS)
     const prac = {
       resourceType: 'Practitioner',
-      meta: { profile: ['http://hl7.org/fhir/uv/ips/StructureDefinition/Practitioner-uv-ips'] }
+      id: provider.uuid,
+      meta: { profile: ['http://hl7.org/fhir/uv/ips/StructureDefinition/Practitioner-uv-ips'] },
+      active: provider.retired === false
     }
 
     // 3.a) Identifiers (solo si existen en atributos). NO publicamos provider.identifier (LR).
@@ -113,8 +184,8 @@ router.get('/ips/practitioner/:providerUuid', async (req, res) => {
 
       // Fecha de nacimiento
       if (L.startsWith('person.birthdate')) {
-        const d = new Date(value)
-        if (!isNaN(d)) prac.birthDate = d.toISOString().slice(0, 10)
+        const iso = toIsoDateYYYYMMDD(value)
+        if (iso) prac.birthDate = iso
       }
 
       // Dirección (país)
