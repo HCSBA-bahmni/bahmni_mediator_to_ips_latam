@@ -1608,7 +1608,7 @@ function warnIfNonIcvpVaccine(summaryBundle) {
 
 function buildUrlMapUsingBase(summaryBundle) {
     const urlMap = new Map();
-    const base = asAbsoluteBase(FHIR_NODO_NACIONAL_SERVER || '');
+    const base = asAbsoluteBase(ABSOLUTE_FULLURL_BASE || '');
     for (const e of summaryBundle.entry || []) {
         const r = e.resource;
         if (!r?.resourceType) continue;
@@ -2546,7 +2546,7 @@ app.post('/icvp/_iti65', async (req, res) => {
     const urlMap = new Map();
       summaryBundle.entry.forEach(entry => {
       const { resource } = entry;
-      const urn = `${FHIR_NODO_NACIONAL_SERVER}/${resource.resourceType}/${resource.id}`;
+      const urn = `${ABSOLUTE_FULLURL_BASE}/${resource.resourceType}/${resource.id}`;
       urlMap.set(`${resource.resourceType}/${resource.id}`, urn);
       });
 
@@ -2569,13 +2569,13 @@ app.post('/icvp/_iti65', async (req, res) => {
             // Añadir entry al bundle (usar referencia tipo "Practitioner/{id}" para que urlMap lo detecte)
             const pracFullRefKey = `Practitioner/${practitioner.id}`;
             summaryBundle.entry.push({
-                fullUrl: `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`,
+                fullUrl: `${ABSOLUTE_FULLURL_BASE.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`,
                 resource: practitioner
             });
 
             // Añadir al urlMap (misma forma que las otras entradas: mapea "Practitioner/{id}" -> nodo nacional absoluto)
-            if (typeof FHIR_NODO_NACIONAL_SERVER === 'string' && FHIR_NODO_NACIONAL_SERVER.length > 0) {
-                urlMap.set(pracFullRefKey, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`);
+            if (typeof ABSOLUTE_FULLURL_BASE === 'string' && ABSOLUTE_FULLURL_BASE.length > 0) {
+                urlMap.set(pracFullRefKey, `${ABSOLUTE_FULLURL_BASE.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`);
             } else {
                 // fallback a urn:uuid si no hay nodo configurado
                 urlMap.set(pracFullRefKey, `urn:uuid:${practitioner.id}`);
@@ -2586,8 +2586,8 @@ app.post('/icvp/_iti65', async (req, res) => {
             // Asegurar que exista mapeo si no se creó antes
             const key = `Practitioner/${practitioner.id}`;
             if (!urlMap.has(key)) {
-                if (typeof FHIR_NODO_NACIONAL_SERVER === 'string' && FHIR_NODO_NACIONAL_SERVER.length > 0) {
-                    urlMap.set(key, `${FHIR_NODO_NACIONAL_SERVER.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`);
+                if (typeof ABSOLUTE_FULLURL_BASE === 'string' && ABSOLUTE_FULLURL_BASE.length > 0) {
+                    urlMap.set(key, `${ABSOLUTE_FULLURL_BASE.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`);
                 } else {
                     urlMap.set(key, `urn:uuid:${practitioner.id}`);
                 }
