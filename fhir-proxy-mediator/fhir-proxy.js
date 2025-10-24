@@ -64,6 +64,20 @@ healthPaths.forEach(path => {
 // 3.1) IPS route: Provider → Practitioner (FHIR IPS)
 app.use(practitionerRouter)
 
+// 3.2) Override Practitioner reads to deliver IPS representation by default
+app.use(['/fhir/Practitioner/:id', '/proxy/fhir/Practitioner/:id'], async (req, res, next) => {
+  try {
+    if (req.query.native === '1') return next()
+    const id = req.params.id
+    const selfBase = `http://127.0.0.1:${process.env.FHIRPROXY_PORT || 7000}`
+    const upstream = await axios.get(`${selfBase}/ips/practitioner/${id}`)
+    return res.status(200).json(upstream.data)
+  } catch (err) {
+    console.error('❌ IPS default override error:', err?.response?.data || err.message)
+    return next()
+  }
+})
+
 // 4) FHIR proxy: support /fhir/* and /proxy/fhir/*
 const OPENMRS_FHIR = process.env.OPENMRS_FHIR_URL
 const OPENMRS_USER = process.env.OPENMRS_USER

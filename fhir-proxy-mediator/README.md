@@ -32,6 +32,7 @@ Defínelas en `.env` o como variables del contenedor:
 - `OPENHIM_USER` y `OPENHIM_PASS`: credenciales de OpenHIM.
 - `OPENHIM_API`: URL del API de OpenHIM (ej. `https://openhim-core:8080` o `https://openhim.example.org:8080`).
 - `OPENMRS_FHIR_URL`: base FHIR de OpenMRS (ej. `https://openmrs:8443/openmrs/ws/fhir2`).
+- `OPENMRS_REST_URL`: base REST de OpenMRS (ej. `https://openmrs:8443/openmrs/ws/rest/v1`).
 - `OPENMRS_USER`, `OPENMRS_PASS`: credenciales para OpenMRS (opcional si OpenMRS permite acceso anónimo al recurso solicitado).
 - `FHIRPROXY_PORT`: puerto de escucha (por defecto `7000`).
 - `NODE_ENV`: `development` para permitir certificados autofirmados durante pruebas.
@@ -111,10 +112,26 @@ Definidos en `mediatorConfig.json`:
 
 El mediador registra estos canales al iniciar; si ya existen, OpenHIM puede actualizarlos/evitar duplicados según configuración de tu servidor.
 
+## Practitioner IPS integrado
+
+El mediador incluye un adaptador para exponer recursos Practitioner compatibles con el perfil IPS:
+
+- `GET /ips/practitioner/:providerUuid`: obtiene el `Provider` desde OpenMRS REST y lo convierte en un `Practitioner` IPS, incorporando identificadores (PPN/PRN/NI), nombre (desde `provider.person.display`), estado `active` (según `retired`), `id` (UUID del Provider), calificaciones (`practitioner_type`) y normaliza fechas de nacimiento a `YYYY-MM-DD`.
+- El adaptador selecciona automáticamente sistemas de identificación y tolera formatos de fecha comunes en inglés y español.
+- Requiere `OPENMRS_REST_URL` (y credenciales si la API REST está protegida) para consultar OpenMRS.
+- Logs describen cualquier fallo y devuelven `500` con detalle en JSON.
+
+### Override de Practitioner FHIR
+
+- Las lecturas a `/fhir/Practitioner/:id` y `/proxy/fhir/Practitioner/:id` responden con la versión IPS por defecto.
+- Añade `?native=1` para omitir la transformación y consumir el recurso FHIR nativo de OpenMRS a través del proxy.
+- La transformación se ejecuta localmente contra `GET /ips/practitioner/:id`, por lo que cualquier error hace fallback al proxy nativo.
+
 ## Endpoints expuestos por el mediador
 
 - `GET /_health` y `GET /proxy/_health`: salud
-- `ANY /fhir/*` y `ANY /proxy/fhir/*`: proxy hacia `OPENMRS_FHIR_URL`
+- `GET /ips/practitioner/:providerUuid`: Practitioner IPS generado desde OpenMRS.
+- `ANY /fhir/*` y `ANY /proxy/fhir/*`: proxy hacia `OPENMRS_FHIR_URL` (incluye override IPS para Practitioner, salvo `?native=1`).
 
 ## Solución de problemas
 
