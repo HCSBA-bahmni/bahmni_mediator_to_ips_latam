@@ -2555,10 +2555,10 @@ app.post('/icvp/_iti65', async (req, res) => {
         if (!practitionerEntry) {
             // Crear nuevo Practitioner
             const newPracId = uuidv4();
-            practitioner = normalizePractitionerResource({
+            practitioner = /*normalizePractitionerResource({
                 resourceType: 'Practitioner',
                 id: newPracId
-            }) || { resourceType: 'Practitioner', id: newPracId };
+            }) || */{ resourceType: 'Practitioner', id: newPracId };
 
             // Añadir entry al bundle (usar referencia tipo "Practitioner/{id}" para que urlMap lo detecte)
             const pracFullRefKey = `Practitioner/${practitioner.id}`;
@@ -2576,7 +2576,7 @@ app.post('/icvp/_iti65', async (req, res) => {
             }
         } else {
             practitioner = practitionerEntry.resource;
-            normalizePractitionerResource(practitioner);
+            //normalizePractitionerResource(practitioner);
             // Asegurar que exista mapeo si no se creó antes
             const key = `Practitioner/${practitioner.id}`;
             if (!urlMap.has(key)) {
@@ -2601,12 +2601,12 @@ app.post('/icvp/_iti65', async (req, res) => {
         }
 
         //modificamos la Organizacion
-        const orgEntries = (summaryBundle.entry || []).filter(e => e.resource?.resourceType === 'Organization');
-        for (const orgEntry of orgEntries) {
-            const org = orgEntry.resource;
-            if (!org) continue;
-            normalizeOrganizationResource(org);
-        }
+        // const orgEntries = (summaryBundle.entry || []).filter(e => e.resource?.resourceType === 'Organization');
+        // for (const orgEntry of orgEntries) {
+        //     const org = orgEntry.resource;
+        //     if (!org) continue;
+        //     normalizeOrganizationResource(org);
+        // }
 
         // Reescribir todas las referencias en el bundle usando el urlMap (mapea Attachment.url y .reference)
         updateReferencesInObject(summaryBundle, urlMap);
