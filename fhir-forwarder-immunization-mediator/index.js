@@ -448,9 +448,9 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
 
   // encounter + location
   const encounterRef = groupObs?.encounter?.reference || (enc?.id ? `Encounter/${enc.id}` : undefined)
-  const locationRef = getEncounterFirstLocation(enc)
-  const locDisplay = (process.env.LAC_DEFAULT_LOCATION_DISPLAY || process.env.ICVP_DEFAULT_LOCATION_DISPLAY || 'Administration center')
-  const location = locationRef ? { reference: locationRef, display: locDisplay } : { display: locDisplay }
+  const location = getEncounterFirstLocation(enc)
+  // const locDisplay = (process.env.LAC_DEFAULT_LOCATION_DISPLAY || process.env.ICVP_DEFAULT_LOCATION_DISPLAY || 'Administration center')
+  // const location = locationRef ? { reference: locationRef, display: locDisplay } : { display: locDisplay }
 
   // manufacturer
   const manufacturerRef = await ensureOrganizationByName(mfgObs?.valueString)
