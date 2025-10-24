@@ -275,7 +275,7 @@ async function uploadLocationWithParents(locId) {
 
 async function uploadPractitioner(pracRef) {
   const pracId = pracRef.split('/')[1]
-  //if (uploadedPractitioners.has(pracId)) return 0
+  if (uploadedPractitioners.has(pracId)) return 0
   let prac
   try {
     logStep('🔍 Fetching Practitioner…', pracId)
@@ -288,7 +288,7 @@ async function uploadPractitioner(pracRef) {
   }
   logStep('📤 Subiendo Practitioner…', pracId)
   await putToNode(prac)
-  //uploadedPractitioners.add(pracId)
+  uploadedPractitioners.add(pracId)
   return 1
 }
 
