@@ -1295,24 +1295,18 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
 
     // NOTA: ya manejamos Condition arriba. De aquí en adelante, secciones no-Condition.
 
-    // Generic fallback (non-Condition sections): add ALL candidates (e.g., Immunization)
-    if (candidates.length > 0) {
-        sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
-        const seen = new Set(sec.entry.map(e => e.reference));
-        for (const candidate of candidates) {
-            ensureIpsProfile(candidate.resource);
-            let ref = candidate.fullUrl;
-            if (!ref && candidate.resource?.id) {
-                ref = `${candidate.resource.resourceType}/${candidate.resource.id}`;
-            }
-            if (!ref || seen.has(ref)) continue;
-            sec.entry.push({ reference: ref });
-            seen.add(ref);
-        }
-        // dedupe en caso de referencias repetidas en entradas manuales previas
-        sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
-        return;
-    }
+    // Generic fallback (non-Condition sections): link first candidate
+    // if (candidates.length > 0) {
+    //     sec.entry = Array.isArray(sec.entry) ? sec.entry : [];
+    //     // Enlaza SOLO el primer candidato (satisface slice mínimo)
+    //     const candidate = candidates[0];
+    //     ensureIpsProfile(candidate.resource);
+    //     const alreadyReferenced = sec.entry.some(e => e.reference === candidate.fullUrl);
+    //     if (!alreadyReferenced) sec.entry.push({ reference: candidate.fullUrl });
+    //     // dedupe
+    //     sec.entry = sec.entry.filter((e, i, arr) => i === arr.findIndex(v => v.reference === e.reference));
+    //     return;
+    // }
 
     console.log(`🔍 Ensuring entries for section LOINC ${loincCode} with allowed:`, allowedTypes);
     console.log('---',sec.entry);
