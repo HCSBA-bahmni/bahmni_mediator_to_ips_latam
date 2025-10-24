@@ -90,8 +90,8 @@ function toIsoDateYYYYMMDD(raw) {
 
 // Mapeo simple: practitioner_type → v2-0360|2.7
 const PRACT_TYPE_TO_V20360 = {
-  'Doctor':           { code: 'MD', display: 'Doctor of Medicine' },
-  'Registered Nurse': { code: 'RN', display: 'Registered Nurse' }
+  'Doctor':           { code: 'MD', display: 'Medical license number' },
+  'Registered Nurse': { code: 'RN', display: 'Registered Nurse Number' }
 }
 
 router.get('/ips/practitioner/:providerUuid', async (req, res) => {
