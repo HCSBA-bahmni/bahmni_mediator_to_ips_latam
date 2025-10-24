@@ -226,9 +226,35 @@ function getEncounterFirstPractitioner (enc) {
   const x = (enc?.participant || []).find(p => p.individual?.reference?.includes('Practitioner/'))
   return x?.individual?.reference
 }
-function getEncounterFirstLocation (enc) {
-  const x = (enc?.location || []).find(l => l.location?.reference?.includes('Location/'))
-  return x?.location?.reference
+function getEncounterFirstLocation(enc) {
+  // Busca la primera location con referencia al recurso Location
+  const x = (enc?.location || []).find(
+    l => l.location?.reference?.includes('Location/')
+  )
+
+  if (x?.location?.reference) {
+    // Retorna el objeto completo, con reference y display
+    const locDisplay =
+      process.env.LAC_DEFAULT_LOCATION_DISPLAY ||
+      process.env.ICVP_DEFAULT_LOCATION_DISPLAY ||
+      'Administration center'
+    const locationObj = {
+      reference: x.location.reference,
+      display: x.location.display || locDisplay
+    }
+    console.log('FOUND LOC REF:', locationObj)
+    return locationObj
+  }
+
+  // Si no hay referencia válida, retorna el objeto con display por defecto
+  const defaultLoc = {
+    display:
+      process.env.LAC_DEFAULT_LOCATION_DISPLAY ||
+      process.env.ICVP_DEFAULT_LOCATION_DISPLAY ||
+      'Administration center'
+  }
+  console.log('NO LOC FOUND, USING DEFAULT:', defaultLoc)
+  return defaultLoc
 }
 
 // =============================
@@ -422,9 +448,9 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
 
   // encounter + location
   const encounterRef = groupObs?.encounter?.reference || (enc?.id ? `Encounter/${enc.id}` : undefined)
-  const locationRef = getEncounterFirstLocation(enc)
-  const locDisplay = (process.env.LAC_DEFAULT_LOCATION_DISPLAY || process.env.ICVP_DEFAULT_LOCATION_DISPLAY || 'Administration center')
-  const location = locationRef ? { reference: locationRef, display: locDisplay } : { display: locDisplay }
+  const location = getEncounterFirstLocation(enc)
+  // const locDisplay = (process.env.LAC_DEFAULT_LOCATION_DISPLAY || process.env.ICVP_DEFAULT_LOCATION_DISPLAY || 'Administration center')
+  // const location = locationRef ? { reference: locationRef, display: locDisplay } : { display: locDisplay }
 
   // manufacturer
   const manufacturerRef = await ensureOrganizationByName(mfgObs?.valueString)
