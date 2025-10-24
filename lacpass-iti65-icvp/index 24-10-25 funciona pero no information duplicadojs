@@ -2368,9 +2368,9 @@ app.post('/icvp/_iti65', async (req, res) => {
     return res.status(400).json({ error: 'Invalid Bundle or missing uuid' });
   }
 
-    //if (String(FEATURE_ICVP_VACCINES_ONLY).toLowerCase() === 'true') {
-    //    pruneToVaccinesOnly(summaryBundle);
-    //}
+    if (String(FEATURE_ICVP_VACCINES_ONLY).toLowerCase() === 'true') {
+        pruneToVaccinesOnly(summaryBundle);
+    }
 
     try {
 
