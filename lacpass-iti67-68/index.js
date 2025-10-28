@@ -90,6 +90,7 @@ app.get('/regional/_health', (_req, res) => res.status(200).send('OK'));
 app.get('/regional/DocumentReference', async (req, res) => {
   try {
     // forward all query params as-is
+    console.log(req)
     const url = `${fhirBase()}/DocumentReference`;
     const response = await axios.get(url, {
       params: req.query,
