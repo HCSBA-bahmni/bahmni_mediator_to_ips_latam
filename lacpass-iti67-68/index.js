@@ -94,7 +94,7 @@ app.get('/regional/DocumentReference', async (req, res) => {
     const response = await axios.get(url, {
       params: req.query,
       httpsAgent: axios.defaults.httpsAgent,
-      timeout: 15000
+      timeout: 60000
     });
     res.status(response.status).json(response.data);
   } catch (e) {
