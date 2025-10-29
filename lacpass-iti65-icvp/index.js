@@ -163,7 +163,11 @@ function normalizeFhirBase(url) {
     return base;
 }
 
-const ABSOLUTE_FULLURL_BASE_RAW = 'https://gazelle.racsel.org:11016/fhir/1/fhir';
+const ABSOLUTE_FULLURL_BASE_RAW = normalizeFhirBase(
+    process.env.FHIR_NODO_REGIONAL_SERVER
+    || process.env.ABSOLUTE_FULLURL_BASE
+    || 'https://gazelle.racsel.org:11016/fhir/1/fhir'
+);
 
 // Prevent rebuilding absolute references from req.headers.host in downstream helpers.
 
@@ -1680,10 +1684,12 @@ function ensureIcvpBundleProfilesAndSlices(bundle) {
     if (compositionEntry?.resource) {
         const compResource = compositionEntry.resource;
 
+        // 🔧 Asegura que Composition.id refleje exactamente el UUID del fullUrl para cumplir slicing
         if (!compResource.id && compositionEntry.fullUrl?.startsWith('urn:uuid:')) {
             compResource.id = compositionEntry.fullUrl.replace('urn:uuid:', '');
         }
 
+        // 🔧 Reemplaza referencias absolutas (broadcast) por la variante interna correspondiente
         const patientEntry = bundle.entry.find((entry) => entry?.resource?.resourceType === 'Patient');
         if (compResource.subject?.reference?.startsWith('http') && patientEntry?.fullUrl) {
             compResource.subject.reference = patientEntry.fullUrl;
@@ -2015,6 +2021,10 @@ function ensureIcvpImmunizationCoding(immunization) {
     const productSystem = CS_PREQUAL_PRODUCT_IDS;
     const vaccineTypeSystem = CS_PREQUAL_VACCINE_TYPE;
     const icd11System = 'http://id.who.int/icd/release/11/mms';
+    const officialProductDisplays = {
+        YellowFeverProductd8a09f80301dc05e124f99ffe7711fc0:
+            '01/01/1987Yellow FeverSTAMARILVial + Ampoule10Sanofi PasteurAgence nationale de sécurité du médicament et des produits de santé'
+    };
 
     immunization.extension = Array.isArray(immunization.extension) ? immunization.extension.filter(Boolean) : [];
     immunization.extension = immunization.extension.filter((ext) => ext.url === productExtUrl);
@@ -2025,7 +2035,8 @@ function ensureIcvpImmunizationCoding(immunization) {
             valueCoding: {
                 system: productSystem,
                 code: 'YellowFeverProductd8a09f80301dc05e124f99ffe7711fc0',
-                display: 'Yellow Fever - STAMARIL (Sanofi Pasteur)'
+                // ⚠️ Display EXACTO según catálogo oficial WHO PreQual
+                display: officialProductDisplays.YellowFeverProductd8a09f80301dc05e124f99ffe7711fc0
             }
         });
     }
@@ -2036,16 +2047,13 @@ function ensureIcvpImmunizationCoding(immunization) {
     if (!productExtension.valueCoding.code) {
         productExtension.valueCoding.code = 'YellowFeverProductd8a09f80301dc05e124f99ffe7711fc0';
     }
-    if (!productExtension.valueCoding.display && productExtension.valueCoding.code === 'YellowFeverProductd8a09f80301dc05e124f99ffe7711fc0') {
-        productExtension.valueCoding.display = 'Yellow Fever - STAMARIL (Sanofi Pasteur)';
+    const officialDisplay = officialProductDisplays[productExtension.valueCoding.code];
+    if (officialDisplay) {
+        productExtension.valueCoding.display = officialDisplay;
     }
 
     const productCode = productExtension.valueCoding.code;
     const mapping = mapProductIdToPrequalVaccine(productCode);
-
-    if (mapping?.vaccineTypeDisplay && !productExtension.valueCoding.display) {
-        productExtension.valueCoding.display = mapping.vaccineTypeDisplay;
-    }
 
     immunization.vaccineCode = immunization.vaccineCode || {};
     immunization.vaccineCode.coding = Array.isArray(immunization.vaccineCode.coding)
@@ -2083,7 +2091,7 @@ function ensureIcvpImmunizationCoding(immunization) {
         }
 
         immunization.vaccineCode.coding = updatedCodings;
-        immunization.vaccineCode.text = canonicalCoding.display;
+    immunization.vaccineCode.text = canonicalCoding.display;
     } else if (!immunization.vaccineCode.text && immunization.vaccineCode.coding.length > 0) {
         const firstCoding = immunization.vaccineCode.coding[0];
         immunization.vaccineCode.text = firstCoding.display || firstCoding.code || 'ICVP vaccine type';
@@ -2462,9 +2470,9 @@ function fixBundleValidationIssues(summaryBundle) {
         );
 
         if (immunisationSection) {
-            // Corregir display del código LOINC
+            // Corregir display del código LOINC a la etiqueta publicada en LOINC 2.77
             const loincCoding = immunisationSection.code.coding.find(c => c.system === 'http://loinc.org' && c.code === '11369-6');
-            if (loincCoding && loincCoding.display === 'History of Immunization Narrative') {
+            if (loincCoding) {
                 loincCoding.display = 'History of Immunization note';
             }
         }
