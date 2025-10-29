@@ -1335,7 +1335,8 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
                 code: {
                     coding: [
                         { system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-allergies', display: 'No known allergies' },
-                        { system: 'http://snomed.info/sct', code: '716186003', display: 'No known allergy (situation)' }
+                        { system: 'http://snomed.info/sct', code: '716186003', display: 'No known allergy (situation)' },
+                        { system: CS_DATA_ABSENT_REASON, code: 'unknown' }
                     ],
                     text: 'No known allergies'
                 },
@@ -1350,7 +1351,10 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
                 meta: { profile: [IPS_PROFILES.MEDICATION_STATEMENT] },
                 status: 'active',
                 medicationCodeableConcept: {
-                    coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-medications', display: 'No known medications' }],
+                    coding: [
+                        { system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-medications', display: 'No known medications' },
+                        { system: CS_DATA_ABSENT_REASON, code: 'unknown' }
+                    ],
                     text: 'No known medications'
                 },
                 subject: patRef ? { reference: patRef } : undefined,
@@ -1385,7 +1389,10 @@ function ensureRequiredSectionEntry(summaryBundle, comp, loincCode, allowedTypes
                 meta: { profile: [IPS_PROFILES.CONDITION] },
                 category: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/condition-category', code: 'problem-list-item' }] }],
                 code: {
-                    coding: [{ system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-problems', display: 'No known problems' }],
+                    coding: [
+                        { system: 'http://hl7.org/fhir/uv/ips/CodeSystem/absent-unknown-uv-ips', code: 'no-known-problems', display: 'No known problems' },
+                        { system: CS_DATA_ABSENT_REASON, code: 'unknown' }
+                    ],
                     text: isPast ? 'No known past illnesses' : 'No known problems'
                 },
                 subject: patRef ? { reference: patRef } : undefined
@@ -1582,9 +1589,15 @@ const FULLURL_MODE_DOCUMENT = 'urn';
 const ICVP_BUNDLE_PROFILE_BASE = 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP';
 const ICVP_BUNDLE_PROFILE = `${ICVP_BUNDLE_PROFILE_BASE}|0.2.0`;
 const ICVP_COMPOSITION_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP';
-// ⚠️ URL canónica correcta (Ids, no IDs):
-const PREQUAL_PRODUCT_CS = 'http://smart.who.int/icvp/CodeSystem/preQualVaccines';
-const PREQUAL_VACCINE_TYPE_CS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualVaccineType';
+// ⚠️ Código productId exacto según catálogo PreQual
+const CS_PREQUAL_PRODUCT_IDS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIds';
+// Tipo de vacuna (ICVP VaccineType)
+const CS_PREQUAL_VACCINE_TYPE = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualVaccineType';
+// Fallback para "data absent" (evita dependencia del paquete IPS)
+const CS_DATA_ABSENT_REASON = 'http://terminology.hl7.org/CodeSystem/data-absent-reason';
+// URNs requeridas por mCSD para Organization.type
+const URN_MCSJ = 'urn:ihe:iti:mcsd:2019:jurisdiction';
+const URN_3986 = 'urn:ietf:rfc:3986';
 // ConceptMap de ICVP: ProductId → VaccineType (se usa en el validador)
 // https://smart.who.int/icvp/0.2.0/ConceptMap-ICVPProductIdToVaccineType.html
 // Mapeo básico de ProductId → VaccineType (extensible según catálogo)
@@ -1774,20 +1787,25 @@ function fixJurisdictionOrganization(org) {
 
     org.type = Array.isArray(org.type) ? org.type : [];
     const codeSystem = 'https://profiles.ihe.net/ITI/mCSD/CodeSystem/IHE.mCSD.Organization.Location.Types';
-    const alreadyJurisdiction = org.type.some((codingGroup) =>
-        codingGroup.coding?.some((coding) => coding.system === codeSystem && coding.code === 'jurisdiction')
-    );
-    if (!alreadyJurisdiction) {
-        org.type.push({
-            coding: [{ system: codeSystem, code: 'jurisdiction' }]
-        });
-    }
-
-    for (const t of org.type) {
-        for (const c of (t.coding || [])) {
-            if (c.system === codeSystem && c.code === 'jurisdiction' && 'display' in c) delete c.display;
+    const ensureTypeCoding = (system, code) => {
+        let targetType = org.type.find((codingGroup) => (codingGroup.coding || []).some((coding) => coding.system === system));
+        if (!targetType) {
+            targetType = { coding: [] };
+            org.type.push(targetType);
         }
-    }
+        targetType.coding = Array.isArray(targetType.coding) ? targetType.coding : [];
+        let coding = targetType.coding.find((item) => item.system === system);
+        if (!coding) {
+            coding = { system, code };
+            targetType.coding.push(coding);
+        } else {
+            coding.code = code;
+        }
+        if ('display' in coding) delete coding.display;
+    };
+
+    ensureTypeCoding(URN_3986, URN_MCSJ);
+    ensureTypeCoding(codeSystem, 'jurisdiction');
 }
 
 function normalizeBundleReferences(bundle) {
@@ -1894,13 +1912,13 @@ function ensureIcvpImmunizationCoding(immunization) {
     if (!productExtension) {
         productExtension = {
             url: productExtUrl,
-            valueCoding: { system: PREQUAL_PRODUCT_CS, code: 'UNKNOWN' }
+            valueCoding: { system: CS_PREQUAL_PRODUCT_IDS, code: 'UNKNOWN' }
         };
         immunization.extension.push(productExtension);
     }
 
     productExtension.valueCoding = productExtension.valueCoding || {};
-    productExtension.valueCoding.system = PREQUAL_PRODUCT_CS;
+    productExtension.valueCoding.system = CS_PREQUAL_PRODUCT_IDS;
     if (!productExtension.valueCoding.code) {
         productExtension.valueCoding.code = 'UNKNOWN';
     }
@@ -1918,7 +1936,7 @@ function ensureIcvpImmunizationCoding(immunization) {
 
     if (mapping) {
         const canonicalCoding = {
-            system: PREQUAL_VACCINE_TYPE_CS,
+            system: CS_PREQUAL_VACCINE_TYPE,
             code: mapping.vaccineTypeCode,
             display: mapping.vaccineTypeDisplay
         };
