@@ -144,7 +144,8 @@ const OID_URN_SEPARATOR = process.env.OID_URN_SEPARATOR || '.';
 const {
     FULLURL_MODE_PROVIDE = 'urn',
     FULLURL_MODE_DOCUMENT = 'absolute',
-    ABSOLUTE_FULLURL_BASE,
+    // Base absoluto por defecto al nodo GAZELLE; puedes sobrescribir vía ENV
+    ABSOLUTE_FULLURL_BASE: ABSOLUTE_FULLURL_BASE_RAW = 'https://gazelle.racsel.org:11016/fhir/1/fhir/',
     BINARY_DELIVERY_MODE = 'both',
     ATTACHMENT_URL_MODE = 'absolute',
 } = process.env;
@@ -1423,10 +1424,15 @@ function asAbsoluteBase(u) {
     return /\/fhir$/i.test(x) ? x : `${x}/fhir`;
 }
 
+// Normalizamos una vez para evitar inconsistencias al construir referencias absolutas
+const ABS_BASE = ABSOLUTE_FULLURL_BASE_RAW
+    ? asAbsoluteBase(ABSOLUTE_FULLURL_BASE_RAW)
+    : '';
+
 
 function makeAbsolute(resourceType, id) {
-    const base = asAbsoluteBase(ABSOLUTE_FULLURL_BASE);
-    return `${base}/${resourceType}/${id}`;
+    if (!ABS_BASE) return makeUrn(id);
+    return `${ABS_BASE}/${resourceType}/${id}`;
 }
 function makeRelative(resourceType, id) {
     return `${resourceType}/${id}`;
@@ -1472,7 +1478,7 @@ function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
             }
         }
     }
-    if (ABSOLUTE_FULLURL_BASE) absoluteBases.add(asAbsoluteBase(ABSOLUTE_FULLURL_BASE));
+    if (ABS_BASE) absoluteBases.add(ABS_BASE);
 
     for (const e of bundle.entry) {
         const r = e.resource;
@@ -1498,7 +1504,10 @@ function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
             variants.add(`${base}/${r.resourceType}/${id}`);
         }
 
-        for (const v of [...variants].filter(Boolean)) urlMap.set(v, finalRef);
+        // BUGFIX: evitar `[.variants]` y garantizar que todas las variantes se agreguen
+        for (const v of Array.from(variants)) {
+            if (v) urlMap.set(v, finalRef);
+        }
 
         // asignar fullUrl final según el modo
         e.fullUrl = finalRef;
@@ -1544,6 +1553,14 @@ function checkAndFixReferences(obj, availableUrls, bundle) {
                 obj.reference = foundEntry.fullUrl;
             }
         }
+
+        // Normaliza referencias absolutas con base distinta (p.ej. sin /fhir)
+        if (/^https?:\/\//i.test(obj.reference)) {
+            const match = obj.reference.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/([A-Za-z]+)\/([A-Za-z0-9\-.]{1,64})$/);
+            if (match && match[2] && match[3] && ABS_BASE) {
+                obj.reference = `${ABS_BASE}/${match[2]}/${match[3]}`;
+            }
+        }
     }
 
     // Recursivamente procesar todas las propiedades
@@ -1583,6 +1600,19 @@ function ensureIcvpBundleProfilesAndSlices(bundle) {
         const compProfiles = new Set([...(composition.meta.profile || [])]);
         compProfiles.add('http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP');
         composition.meta.profile = Array.from(compProfiles);
+    }
+
+    // Remueve display en Organization.type.coding para perfiles JurisdictionOrganization
+    for (const entry of bundle.entry || []) {
+        const org = entry?.resource;
+        if (org?.resourceType !== 'Organization') continue;
+        const profs = new Set([...(org.meta?.profile || [])]);
+        if (!profs.has('https://profiles.ihe.net/ITI/mCSD/StructureDefinition/IHE.mCSD.JurisdictionOrganization')) continue;
+        for (const type of org.type || []) {
+            for (const coding of type.coding || []) {
+                if (coding.system && coding.code) delete coding.display;
+            }
+        }
     }
 }
 
@@ -1769,7 +1799,8 @@ function warnIfNonIcvpVaccine(summaryBundle) {
 
 function buildUrlMapUsingBase(summaryBundle) {
     const urlMap = new Map();
-    const base = asAbsoluteBase(ABSOLUTE_FULLURL_BASE || '');
+    if (!ABS_BASE) return urlMap;
+    const base = ABS_BASE;
     for (const e of summaryBundle.entry || []) {
         const r = e.resource;
         if (!r?.resourceType) continue;
@@ -2267,6 +2298,11 @@ function updateReferencesInObject(obj, urlMap) {
         const mapped = urlMap.get(obj.reference);
         if (mapped) {
             obj.reference = mapped;
+        } else if (/^https?:\/\//i.test(obj.reference) && ABS_BASE) {
+            const match = obj.reference.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/([A-Za-z]+)\/([A-Za-z0-9\-.]{1,64})$/);
+            if (match && match[2] && match[3]) {
+                obj.reference = `${ABS_BASE}/${match[2]}/${match[3]}`;
+            }
         }
     }
 
@@ -2279,6 +2315,11 @@ function updateReferencesInObject(obj, urlMap) {
         const mappedUrl = urlMap.get(obj.url);
         if (mappedUrl) {
             obj.url = mappedUrl;
+        } else if (/^https?:\/\//i.test(obj.url) && ABS_BASE) {
+            const match = obj.url.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/([A-Za-z]+)\/([A-Za-z0-9\-.]{1,64})$/);
+            if (match && match[2] && match[3]) {
+                obj.url = `${ABS_BASE}/${match[2]}/${match[3]}`;
+            }
         }
     }
 
@@ -2701,78 +2742,78 @@ app.post('/icvp/_iti65', async (req, res) => {
     //   }
     // });
 
-        // FIX #3 — Sanitize UV/IPS en meds (no tocar Immunization: ICVP exige system)
-        summaryBundle.entry.forEach(entry => {
-            const res = entry.resource;
-            if (res?.resourceType === 'MedicationStatement' && res.medicationCodeableConcept?.coding) {
-                // si realmente quieres limpiar systems en meds, deja este bloque.
-                // En vacunas NO remover system.
-            }
-        });
+    // FIX #3 — Sanitize UV/IPS en meds (no tocar Immunization: ICVP exige system)
+    summaryBundle.entry.forEach(entry => {
+        const res = entry.resource;
+        if (res?.resourceType === 'MedicationStatement' && res.medicationCodeableConcept?.coding) {
+            // si realmente quieres limpiar systems en meds, deja este bloque.
+            // En vacunas NO remover system.
+        }
+    });
 
     // URN map para referencias internas
     const urlMap = new Map();
-      summaryBundle.entry.forEach(entry => {
-      const { resource } = entry;
-      const urn = `${ABSOLUTE_FULLURL_BASE}/${resource.resourceType}/${resource.id}`;
-      urlMap.set(`${resource.resourceType}/${resource.id}`, urn);
-      });
+    summaryBundle.entry.forEach(entry => {
+        const { resource } = entry;
+        const abs = ABS_BASE ? `${ABS_BASE}/${resource.resourceType}/${resource.id}` : `urn:uuid:${resource.id}`;
+        urlMap.set(`${resource.resourceType}/${resource.id}`, abs);
+    });
 
 
     const patientEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Patient');
     const compositionEntry = summaryBundle.entry.find(e => e.resource.resourceType === 'Composition');
 
-        //modificamos al Practitioner
-        const practitionerEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Practitioner');
-        let practitioner;
+    //modificamos al Practitioner
+    const practitionerEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Practitioner');
+    let practitioner;
 
-        if (!practitionerEntry) {
-            // Crear nuevo Practitioner
-            const newPracId = uuidv4();
-            practitioner = /*normalizePractitionerResource({
-                resourceType: 'Practitioner',
-                id: newPracId
-            }) || */{ resourceType: 'Practitioner', id: newPracId };
+    if (!practitionerEntry) {
+        // Crear nuevo Practitioner
+        const newPracId = uuidv4();
+        practitioner = /*normalizePractitionerResource({
+            resourceType: 'Practitioner',
+            id: newPracId
+        }) || */{ resourceType: 'Practitioner', id: newPracId };
 
-            // Añadir entry al bundle (usar referencia tipo "Practitioner/{id}" para que urlMap lo detecte)
-            const pracFullRefKey = `Practitioner/${practitioner.id}`;
-            summaryBundle.entry.push({
-                fullUrl: `${ABSOLUTE_FULLURL_BASE.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`,
-                resource: practitioner
-            });
+        // Añadir entry al bundle (usar referencia tipo "Practitioner/{id}" para que urlMap lo detecte)
+        const pracFullRefKey = `Practitioner/${practitioner.id}`;
+        summaryBundle.entry.push({
+            fullUrl: ABS_BASE ? `${ABS_BASE}/Practitioner/${practitioner.id}` : `urn:uuid:${practitioner.id}`,
+            resource: practitioner
+        });
 
-            // Añadir al urlMap (misma forma que las otras entradas: mapea "Practitioner/{id}" -> nodo nacional absoluto)
-            if (typeof ABSOLUTE_FULLURL_BASE === 'string' && ABSOLUTE_FULLURL_BASE.length > 0) {
-                urlMap.set(pracFullRefKey, `${ABSOLUTE_FULLURL_BASE.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`);
-            } else {
-                // fallback a urn:uuid si no hay nodo configurado
-                urlMap.set(pracFullRefKey, `urn:uuid:${practitioner.id}`);
-            }
+        // Añadir al urlMap (misma forma que las otras entradas: mapea "Practitioner/{id}" -> nodo nacional absoluto)
+        if (typeof ABS_BASE === 'string' && ABS_BASE.length > 0) {
+            urlMap.set(pracFullRefKey, `${ABS_BASE}/Practitioner/${practitioner.id}`);
         } else {
-            practitioner = practitionerEntry.resource;
-            //normalizePractitionerResource(practitioner);
-            // Asegurar que exista mapeo si no se creó antes
-            const key = `Practitioner/${practitioner.id}`;
-            if (!urlMap.has(key)) {
-                if (typeof ABSOLUTE_FULLURL_BASE === 'string' && ABSOLUTE_FULLURL_BASE.length > 0) {
-                    urlMap.set(key, `${ABSOLUTE_FULLURL_BASE.replace(/\/+$/, '')}/Practitioner/${practitioner.id}`);
-                } else {
-                    urlMap.set(key, `urn:uuid:${practitioner.id}`);
-                }
+            // fallback a urn:uuid si no hay nodo configurado
+            urlMap.set(pracFullRefKey, `urn:uuid:${practitioner.id}`);
+        }
+    } else {
+        practitioner = practitionerEntry.resource;
+        //normalizePractitionerResource(practitioner);
+        // Asegurar que exista mapeo si no se creó antes
+        const key = `Practitioner/${practitioner.id}`;
+        if (!urlMap.has(key)) {
+            if (typeof ABS_BASE === 'string' && ABS_BASE.length > 0) {
+                urlMap.set(key, `${ABS_BASE}/Practitioner/${practitioner.id}`);
+            } else {
+                urlMap.set(key, `urn:uuid:${practitioner.id}`);
             }
         }
+    }
 
-        // Asegurar que Composition.author incluya al Practitioner creado/normalizado
-        if (compositionEntry?.resource) {
-            const pracRef = urlMap.get(`Practitioner/${practitioner.id}`) || `Practitioner/${practitioner.id}`;
-            // FHIR Composition.author es un array de Reference
-            compositionEntry.resource.author = Array.isArray(compositionEntry.resource.author)
-                ? compositionEntry.resource.author
-                : (compositionEntry.resource.author ? [compositionEntry.resource.author] : []);
+    // Asegurar que Composition.author incluya al Practitioner creado/normalizado
+    if (compositionEntry?.resource) {
+        const pracRef = urlMap.get(`Practitioner/${practitioner.id}`) || `Practitioner/${practitioner.id}`;
+        // FHIR Composition.author es un array de Reference
+        compositionEntry.resource.author = Array.isArray(compositionEntry.resource.author)
+            ? compositionEntry.resource.author
+            : (compositionEntry.resource.author ? [compositionEntry.resource.author] : []);
 
-            const already = compositionEntry.resource.author.some(a => a.reference === pracRef);
-            if (!already) compositionEntry.resource.author.push({ reference: pracRef });
-        }
+        const already = compositionEntry.resource.author.some(a => a.reference === pracRef);
+        if (!already) compositionEntry.resource.author.push({ reference: pracRef });
+    }
 
         //modificamos la Organizacion
         // const orgEntries = (summaryBundle.entry || []).filter(e => e.resource?.resourceType === 'Organization');
