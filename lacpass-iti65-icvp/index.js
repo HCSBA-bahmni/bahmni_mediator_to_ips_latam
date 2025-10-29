@@ -1579,27 +1579,39 @@ function checkAndFixReferences(obj, availableUrls, bundle) {
 const FULLURL_MODE_DOCUMENT = 'urn';
 
 // Canonicals y sistemas canónicos (ICVP / mCSD / IPS)
-const ICVP_BUNDLE_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0';
+const ICVP_BUNDLE_PROFILE_BASE = 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP';
+const ICVP_BUNDLE_PROFILE = `${ICVP_BUNDLE_PROFILE_BASE}|0.2.0`;
 const ICVP_COMPOSITION_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP';
 // ⚠️ URL canónica correcta (Ids, no IDs):
-const PREQUAL_PRODUCT_CS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIds';
+const PREQUAL_PRODUCT_CS = 'http://smart.who.int/icvp/CodeSystem/preQualVaccines';
+const PREQUAL_VACCINE_TYPE_CS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualVaccineType';
 // ConceptMap de ICVP: ProductId → VaccineType (se usa en el validador)
 // https://smart.who.int/icvp/0.2.0/ConceptMap-ICVPProductIdToVaccineType.html
-// Códigos "tipo vacuna" (ICD-11) usados como fallback
-const ICD11_MMS_CS = 'http://id.who.int/icd/release/11/mms';
-const VACCINE_TYPES = {
-    yellowFever: { system: ICD11_MMS_CS, code: 'XM0N24', display: 'Vacunas contra la fiebre amarilla' },
+// Mapeo básico de ProductId → VaccineType (extensible según catálogo)
+const PREQUAL_PRODUCT_MAP = [
+    {
+        prefix: 'yellowfeverproduct',
+        vaccineTypeCode: 'YellowFever',
+        vaccineTypeDisplay: 'Yellow Fever'
+    },
     // agrega aquí otros mapeos si los necesitas (COVID-19 XM68M6, etc.)
-};
+];
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function ensureIcvpBundleProfilesAndSlices(bundle) {
     if (!bundle || bundle.resourceType !== 'Bundle') return;
 
     // Garantiza perfil ICVP para el Bundle
     bundle.meta = bundle.meta || {};
-    const bundleProfiles = new Set([...(bundle.meta.profile || [])]);
-    bundleProfiles.add(ICVP_BUNDLE_PROFILE);
-    bundle.meta.profile = Array.from(bundleProfiles);
+    const existingProfiles = Array.isArray(bundle.meta.profile) ? bundle.meta.profile : [];
+    const desiredOrder = [ICVP_BUNDLE_PROFILE_BASE, ICVP_BUNDLE_PROFILE];
+    const mergedProfiles = [...desiredOrder];
+    for (const profile of existingProfiles) {
+        if (profile && !mergedProfiles.includes(profile)) {
+            mergedProfiles.push(profile);
+        }
+    }
+    bundle.meta.profile = mergedProfiles;
 
     // Composition debe ser primer entry
     const entries = Array.isArray(bundle.entry) ? bundle.entry : [];
@@ -1613,7 +1625,7 @@ function ensureIcvpBundleProfilesAndSlices(bundle) {
     // IPS/ICVP: la primera entry debe tener fullUrl URN alineado con Composition.id
     if (bundle.type === 'document' && FULLURL_MODE_DOCUMENT === 'urn' && bundle.entry?.[0]?.resource?.resourceType === 'Composition') {
         const compRes = bundle.entry[0].resource;
-        if (!compRes.id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(compRes.id)) {
+        if (!compRes.id || !UUID_REGEX.test(compRes.id)) {
             compRes.id = (compRes.id && compRes.id.replace(/^.*\//, '')) || uuidv4();
         }
         bundle.entry[0].fullUrl = `urn:uuid:${compRes.id}`;
@@ -1640,6 +1652,118 @@ function ensureIcvpBundleProfilesAndSlices(bundle) {
             }
         }
     }
+}
+
+function mapProductIdToPrequalVaccine(productCode) {
+    if (!productCode) return null;
+    const normalized = String(productCode).trim().toLowerCase();
+    return PREQUAL_PRODUCT_MAP.find(({ prefix }) => normalized.startsWith(prefix)) || null;
+}
+
+function ensureBundleEntryIdsAreUuids(bundle) {
+    const legacyMap = new Map();
+    if (!bundle?.entry) return legacyMap;
+
+    for (const entry of bundle.entry) {
+        const resource = entry?.resource;
+        if (!resource) continue;
+
+        const originalId = resource.id;
+        const originalFullUrl = entry.fullUrl;
+        let nextId = originalId;
+
+        if (!nextId && typeof originalFullUrl === 'string' && originalFullUrl.startsWith('urn:uuid:')) {
+            const candidate = originalFullUrl.split(':').pop();
+            if (candidate && UUID_REGEX.test(candidate)) {
+                nextId = candidate;
+            }
+        }
+
+        if (!nextId || !UUID_REGEX.test(nextId)) {
+            const newId = uuidv4();
+            if (originalId) {
+                const relative = `${resource.resourceType}/${originalId}`;
+                legacyMap.set(relative, `urn:uuid:${newId}`);
+                legacyMap.set(`./${relative}`, `urn:uuid:${newId}`);
+                legacyMap.set(`urn:uuid:${originalId}`, `urn:uuid:${newId}`);
+                if (ABS_BASE) {
+                    legacyMap.set(`${ABS_BASE}/${relative}`, `urn:uuid:${newId}`);
+                }
+            }
+            if (originalFullUrl && originalFullUrl !== `urn:uuid:${newId}`) {
+                legacyMap.set(originalFullUrl, `urn:uuid:${newId}`);
+            }
+            nextId = newId;
+        }
+
+        resource.id = nextId;
+    }
+
+    return legacyMap;
+}
+
+function ensureCompositionLinkages(bundle) {
+    if (!bundle?.entry?.length) return;
+    const entries = bundle.entry;
+    const compositionEntry = entries.find((entry) => entry?.resource?.resourceType === 'Composition');
+    const composition = compositionEntry?.resource?.resourceType === 'Composition' ? compositionEntry.resource : null;
+    if (!composition) return;
+
+    const patientEntry = entries.find((entry) => entry?.resource?.resourceType === 'Patient');
+    if (patientEntry) {
+        ensureCompositionSubject(composition, patientEntry);
+    }
+
+    const jurisdictionOrgEntry = entries.find((entry) =>
+        entry?.resource?.resourceType === 'Organization' &&
+        (entry.resource.meta?.profile || []).includes('https://profiles.ihe.net/ITI/mCSD/StructureDefinition/IHE.mCSD.JurisdictionOrganization')
+    );
+    const practitionerEntry = entries.find((entry) => entry?.resource?.resourceType === 'Practitioner');
+
+    const authorRefs = [];
+    if (jurisdictionOrgEntry?.fullUrl) {
+        authorRefs.push({ reference: jurisdictionOrgEntry.fullUrl });
+    }
+    if (practitionerEntry?.fullUrl) {
+        authorRefs.push({ reference: practitionerEntry.fullUrl });
+    }
+    if (authorRefs.length > 0) {
+        composition.author = authorRefs;
+    }
+
+    if (jurisdictionOrgEntry?.fullUrl) {
+        composition.custodian = { reference: jurisdictionOrgEntry.fullUrl };
+    }
+}
+
+function collectBundleReferences(node, accumulator) {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+        node.forEach((item) => collectBundleReferences(item, accumulator));
+        return;
+    }
+    if (typeof node.reference === 'string') {
+        accumulator.add(node.reference);
+    }
+    for (const key of Object.keys(node)) {
+        if (key === 'reference') continue;
+        collectBundleReferences(node[key], accumulator);
+    }
+}
+
+function removeUnusedLacOrganizations(bundle) {
+    if (!bundle?.entry?.length) return;
+    const usedRefs = new Set();
+    collectBundleReferences(bundle, usedRefs);
+
+    bundle.entry = bundle.entry.filter((entry) => {
+        if (!entry?.resource || !entry.fullUrl) return true;
+        if (entry.resource.resourceType !== 'Organization') return true;
+        const profiles = entry.resource.meta?.profile || [];
+        const hasLacProfile = profiles.some((profile) => typeof profile === 'string' && profile.includes('lac-organization'));
+        if (!hasLacProfile) return true;
+        return usedRefs.has(entry.fullUrl);
+    });
 }
 
 function fixJurisdictionOrganization(org) {
@@ -1770,49 +1894,54 @@ function ensureIcvpImmunizationCoding(immunization) {
     if (!productExtension) {
         productExtension = {
             url: productExtUrl,
-            valueCoding: { system: PREQUAL_PRODUCT_CS, code: 'UNKNOWN', display: 'Unknown PreQual Product' }
+            valueCoding: { system: PREQUAL_PRODUCT_CS, code: 'UNKNOWN' }
         };
         immunization.extension.push(productExtension);
     }
 
-    if (productExtension.valueCoding) {
-        productExtension.valueCoding.system = PREQUAL_PRODUCT_CS;
+    productExtension.valueCoding = productExtension.valueCoding || {};
+    productExtension.valueCoding.system = PREQUAL_PRODUCT_CS;
+    if (!productExtension.valueCoding.code) {
+        productExtension.valueCoding.code = 'UNKNOWN';
     }
+    if ('display' in productExtension.valueCoding) {
+        delete productExtension.valueCoding.display;
+    }
+
+    const productCode = productExtension.valueCoding.code;
+    const mapping = mapProductIdToPrequalVaccine(productCode);
 
     immunization.vaccineCode = immunization.vaccineCode || {};
     immunization.vaccineCode.coding = Array.isArray(immunization.vaccineCode.coding)
-        ? immunization.vaccineCode.coding
+        ? immunization.vaccineCode.coding.filter(Boolean)
         : [];
-    if (!immunization.vaccineCode.text && immunization.vaccineCode.coding.length) {
+
+    if (mapping) {
+        const canonicalCoding = {
+            system: PREQUAL_VACCINE_TYPE_CS,
+            code: mapping.vaccineTypeCode,
+            display: mapping.vaccineTypeDisplay
+        };
+        immunization.vaccineCode.coding = [canonicalCoding];
+        immunization.vaccineCode.text = mapping.vaccineTypeDisplay;
+    } else if (!immunization.vaccineCode.text && immunization.vaccineCode.coding.length > 0) {
         const firstCoding = immunization.vaccineCode.coding[0];
-        immunization.vaccineCode.text = firstCoding.display || 'ICVP vaccine type';
+        immunization.vaccineCode.text = firstCoding.display || firstCoding.code || 'ICVP vaccine type';
     }
 
-    try {
-        const prodCode = (productExtension.valueCoding?.code || '').toLowerCase();
-        const isYellowFever = prodCode.startsWith('yellowfeverproduct');
-        if (isYellowFever) {
-            const hasYellowFeverCoding = immunization.vaccineCode.coding.some(
-                (c) => c.system === VACCINE_TYPES.yellowFever.system && c.code === VACCINE_TYPES.yellowFever.code
-            );
-            if (!hasYellowFeverCoding) {
-                immunization.vaccineCode.coding.unshift({
-                    system: VACCINE_TYPES.yellowFever.system,
-                    code: VACCINE_TYPES.yellowFever.code,
-                    display: VACCINE_TYPES.yellowFever.display
-                });
-                if (!immunization.vaccineCode.text) {
-                    immunization.vaccineCode.text = VACCINE_TYPES.yellowFever.display;
-                }
-            }
-        }
-    } catch (err) {
-        // noop fallback: no interrumpir flujo si no se pudo determinar el ProductId
+    if (immunization.location?.display) {
+        delete immunization.location.display;
+    }
+    if (immunization.manufacturer?.display) {
+        delete immunization.manufacturer.display;
     }
 }
 
 function preValidateAndFixICVP(bundle) {
     ensureIcvpBundleProfilesAndSlices(bundle);
+
+    const legacyRefMap = ensureBundleEntryIdsAreUuids(bundle);
+    const refMap = new Map(legacyRefMap);
 
     for (const entry of bundle.entry || []) {
         const resource = entry?.resource;
@@ -1826,11 +1955,45 @@ function preValidateAndFixICVP(bundle) {
             const resource = entry?.resource;
             if (!resource) continue;
             if (!resource.id) resource.id = uuidv4();
-            entry.fullUrl = `urn:uuid:${resource.id}`;
+            const targetFullUrl = `urn:uuid:${resource.id}`;
+            const previousFullUrl = entry.fullUrl;
+            if (previousFullUrl && previousFullUrl !== targetFullUrl) {
+                refMap.set(previousFullUrl, targetFullUrl);
+            }
+            const relative = `${resource.resourceType}/${resource.id}`;
+            refMap.set(relative, targetFullUrl);
+            refMap.set(`./${relative}`, targetFullUrl);
+            const baseVariants = new Set();
+            if (ABS_BASE) {
+                baseVariants.add(ABS_BASE);
+                const trimmedBase = ABS_BASE.replace(/\/fhir$/i, '');
+                baseVariants.add(trimmedBase);
+            }
+            if (previousFullUrl && /^https?:\/\//i.test(previousFullUrl)) {
+                const derivedBase = previousFullUrl.replace(/\/[A-Za-z]+\/[A-Za-z0-9\-.]{1,64}$/, '');
+                baseVariants.add(derivedBase);
+                if (!/\/fhir$/i.test(derivedBase)) {
+                    baseVariants.add(`${derivedBase}/fhir`);
+                }
+            }
+            for (const base of baseVariants) {
+                if (!base) continue;
+                const normalizedBase = base.replace(/\/+$/, '');
+                if (normalizedBase) {
+                    refMap.set(`${normalizedBase}/${relative}`, targetFullUrl);
+                }
+            }
+            refMap.set(`urn:uuid:${resource.id}`, targetFullUrl);
+            entry.fullUrl = targetFullUrl;
         }
     }
 
+    if (refMap.size > 0) {
+        updateReferencesInObject(bundle, refMap);
+    }
+
     normalizeBundleReferences(bundle);
+    ensureCompositionLinkages(bundle);
 
     for (const entry of bundle.entry || []) {
         const resource = entry?.resource;
@@ -1840,6 +2003,8 @@ function preValidateAndFixICVP(bundle) {
         if (resource.resourceType === 'Immunization') ensureIcvpImmunizationCoding(resource);
         if (resource.resourceType === 'Practitioner') fixPractitionerDegreeDisplay(resource);
     }
+
+    removeUnusedLacOrganizations(bundle);
 }
 
 const ICVP_DOSE_EXT = 'http://smart.who.int/icvp/StructureDefinition/doseNumberCodeableConcept';
