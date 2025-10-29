@@ -163,7 +163,7 @@ function normalizeFhirBase(url) {
     return base;
 }
 
-const ABSOLUTE_FULLURL_BASE_RAW = 'https://gazelle.racsel.org:11016/fhir/1/fhir';
+const ABSOLUTE_FULLURL_BASE_RAW = 'https://hcsba-api.hcsba.cl/fhir/1/fhir';
 
 // Prevent rebuilding absolute references from req.headers.host in downstream helpers.
 
