@@ -142,35 +142,28 @@ const {
 const OID_URN_SEPARATOR = process.env.OID_URN_SEPARATOR || '.';
 
 const {
-    ABSOLUTE_FULLURL_BASE: ENV_ABSOLUTE_FULLURL_BASE,
-    FULLURL_MODE_DOCUMENT: ENV_FULLURL_MODE_DOCUMENT,
-    FULLURL_MODE_PROVIDE: ENV_FULLURL_MODE_PROVIDE,
-    ATTACHMENT_URL_MODE: ENV_ATTACHMENT_URL_MODE,
-    BINARY_DELIVERY_MODE: ENV_BINARY_DELIVERY_MODE,
+    FULLURL_MODE_PROVIDE = 'urn',
+    BINARY_DELIVERY_MODE = 'both',
+    ATTACHMENT_URL_MODE = 'absolute',
 } = process.env;
 
-const FULLURL_MODE_DOCUMENT = (ENV_FULLURL_MODE_DOCUMENT || 'urn').toLowerCase();
-const FULLURL_MODE_PROVIDE = (ENV_FULLURL_MODE_PROVIDE || 'absolute').toLowerCase();
-const ATTACHMENT_URL_MODE = (ENV_ATTACHMENT_URL_MODE || 'urn').toLowerCase();
-const BINARY_DELIVERY_MODE = (ENV_BINARY_DELIVERY_MODE || 'both').toLowerCase();
-
 // -----------------------------------------------------------------------------
-// Normaliza bases FHIR absolutas sin imponer sufijos adicionales.
+// Fixed absolute FHIR base for Gazelle. Always enforce trailing /fhir segments.
 // -----------------------------------------------------------------------------
 function normalizeFhirBase(url) {
+    const fallback = 'https://gazelle.racsel.org:11016/fhir/1/fhir';
     let base = String(url || '').trim();
-    if (!base) return '';
-    if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
-    return base.replace(/\/+$/, '');
+    if (!base) return fallback;
+    base = base.replace(/\/+$/, '');
+    if (!/\/fhir\/1\/fhir$/i.test(base)) {
+        if (/\/fhir\/1$/i.test(base)) base = `${base}/fhir`;
+        else if (/\/fhir$/i.test(base)) base = `${base}/1/fhir`;
+        else base = `${base}/fhir/1/fhir`;
+    }
+    return base;
 }
 
-function asAbsoluteBase(base) {
-    return String(base || '').replace(/\/+$/, '');
-}
-
-const ABSOLUTE_FULLURL_BASE = normalizeFhirBase(
-    ENV_ABSOLUTE_FULLURL_BASE || process.env.FHIR_NODO_REGIONAL_SERVER || 'http://127.0.0.1:8080/fhir/1'
-);
+const ABSOLUTE_FULLURL_BASE_RAW = process.env.ABSOLUTE_FULLURL_BASE;
 
 // Prevent rebuilding absolute references from req.headers.host in downstream helpers.
 
@@ -1461,149 +1454,76 @@ function fixPatientCountry(bundle) {
 }
 
 // ===== Helpers de modos de URL =====
+function asAbsoluteBase(u) {
+    const trimmed = (u || '').replace(/\/+$/, '');
+    if (!trimmed) return '';
+    if (/\/fhir(?:\/|$)/i.test(trimmed)) return trimmed;
+    return `${trimmed}/fhir`;
+}
+
 // Normalizamos una vez y reutilizamos SIEMPRE
-const ABS_BASE = asAbsoluteBase(ABSOLUTE_FULLURL_BASE);
+const ABS_BASE = asAbsoluteBase(ABSOLUTE_FULLURL_BASE_RAW);
+
 
 function makeAbsolute(resourceType, id) {
     if (!ABS_BASE) return makeUrn(id);
     return `${ABS_BASE}/${resourceType}/${id}`;
 }
-
 function makeRelative(resourceType, id) {
     return `${resourceType}/${id}`;
 }
-
 function makeUrn(id) {
     return `urn:uuid:${id}`;
 }
 
-// --- buildRef (sobrecargado) ---
+
+/**
+ * Resuelve una referencia según el modo.
+ * @param {'urn'|'absolute'|'relative'} mode
+ * @param {string} resourceType
+ * @param {string} id
+ * @returns {string}
+ */
 function buildRef(modeOrType, resourceTypeOrId, maybeId) {
     let mode = modeOrType;
     let resourceType = resourceTypeOrId;
     let id = maybeId;
 
-    // Permite firma abreviada: buildRef(resourceType, id) -> usa FULLURL_MODE_DOCUMENT
+    // Permite firma abreviada buildRef(resourceType, id) usando FULLURL_MODE_DOCUMENT
     if (typeof maybeId === 'undefined') {
         id = resourceTypeOrId;
         resourceType = modeOrType;
         mode = FULLURL_MODE_DOCUMENT;
     }
 
-    const cleanType = String(resourceType || '').trim();
-    let cleanId = String(id || '')
-        .replace(/^urn:uuid:/, '')
-        .replace(/^([A-Za-z]+)\//, '')
-        .trim();
-
-    if (!cleanType || !cleanId) return null;
+    if (!resourceType || !id) return null;
 
     switch ((mode || '').toLowerCase()) {
         case 'absolute':
-            return makeAbsolute(cleanType, cleanId);
+            return makeAbsolute(resourceType, id);
         case 'relative':
-            return makeRelative(cleanType, cleanId);
+            return makeRelative(resourceType, id);
         default:
-            return makeUrn(cleanId);
+            return makeUrn(id);
     }
 }
 
-function fromUrlMap(urlMap, key) {
-    if (!urlMap || !key) return undefined;
-    if (urlMap instanceof Map) return urlMap.get(key);
-    return urlMap[key];
-}
-
-// --- reescritura recursiva de referencias + Attachment.url ---
-function updateReferencesInObject(obj, urlMap) {
-    if (!obj || typeof obj !== 'object') return;
-    if (Array.isArray(obj)) {
-        obj.forEach(item => updateReferencesInObject(item, urlMap));
-        return;
-    }
-
-    if (typeof obj.reference === 'string') {
-        const candidate = obj.reference.trim();
-        const replacement = fromUrlMap(urlMap, candidate);
-        if (replacement) obj.reference = replacement;
-    }
-
-    const looksLikeAttachment =
-        Object.prototype.hasOwnProperty.call(obj, 'contentType') &&
-        (Object.prototype.hasOwnProperty.call(obj, 'data') ||
-         Object.prototype.hasOwnProperty.call(obj, 'url') ||
-         Object.prototype.hasOwnProperty.call(obj, 'hash'));
-    if (looksLikeAttachment && typeof obj.url === 'string') {
-        const candidate = obj.url.trim();
-        const replacement = fromUrlMap(urlMap, candidate);
-        if (replacement) obj.url = replacement;
-    }
-
-    for (const key of Object.keys(obj)) updateReferencesInObject(obj[key], urlMap);
-}
-
-function checkAndFixReferences(bundle) {
+function applyUrlModeToBundle(bundle, mode, updateReferencesInObject) {
     if (!bundle?.entry?.length) return;
-    const indexByKey = {};
 
-    for (const entry of bundle.entry) {
-        const resource = entry?.resource;
-        if (!resource?.resourceType) continue;
-        const resourceType = resource.resourceType;
-        let id = resource.id || '';
-        if (entry.fullUrl?.startsWith('urn:uuid:')) {
-            id = entry.fullUrl.replace(/^urn:uuid:/, '') || id;
-        }
-        if (!id) continue;
-
-        const canonical = entry.fullUrl || `urn:uuid:${id}`;
-        indexByKey[`urn:uuid:${id}`] = canonical;
-        indexByKey[`${resourceType}/${id}`] = canonical;
-        indexByKey[`./${resourceType}/${id}`] = canonical;
-        if (ABS_BASE) indexByKey[`${ABS_BASE}/${resourceType}/${id}`] = canonical;
-    }
-
-    const walk = (node) => {
-        if (!node || typeof node !== 'object') return;
-        if (Array.isArray(node)) {
-            node.forEach(walk);
-            return;
-        }
-
-        if (typeof node.reference === 'string') {
-            const ref = node.reference.trim();
-            if (indexByKey[ref]) {
-                node.reference = indexByKey[ref];
-            } else {
-                const match = ref.match(/^([A-Za-z]+)\/([^\/#]+)$/);
-                if (match) {
-                    const fallback = `${match[1]}/${match[2]}`;
-                    if (indexByKey[fallback]) node.reference = indexByKey[fallback];
-                }
-            }
-        }
-
-        for (const key of Object.keys(node)) {
-            walk(node[key]);
-        }
-    };
-
-    walk(bundle);
-}
-
-// --- aplicar modo de URL al Bundle (única versión) ---
-function applyUrlModeToBundle(bundle, mode = FULLURL_MODE_DOCUMENT, rewriteFn = updateReferencesInObject) {
-    if (!bundle?.entry?.length) return new Map();
-
-    // Mapa de reemplazos: cualquier forma conocida -> forma final
+    // Mapa de reemplazos: cualquier forma conocida -> forma final (según 'mode')
     const urlMap = new Map();
 
-    // Detectar bases absolutas reales en el Bundle (normaliza a .../fhir)
+    // Detectar bases absolutas *reales* que vengan en el Bundle (no asumir solo ABSOLUTE_FULLURL_BASE)
     const absoluteBases = new Set();
     for (const e of bundle.entry) {
         if (typeof e.fullUrl === 'string' && /^https?:\/\//i.test(e.fullUrl)) {
-            const m = e.fullUrl.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/[A-Za-z]+\/[A-Za-z0-9\-.]{1,64}$/);
-            if (m && m[1]) absoluteBases.add(`${m[1]}/fhir`);
+            // recorta hasta '/fhir' si existe, o hasta el recurso
+            const m = e.fullUrl.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/[A-Za-z]+\/[A-Za-z0-9\-\.]{1,64}$/);
+            if (m && m[1]) {
+                // siempre considerar la variante con /fhir al final
+                absoluteBases.add(`${m[1]}/fhir`);
+            }
         }
     }
     if (ABS_BASE) absoluteBases.add(ABS_BASE);
@@ -1612,58 +1532,106 @@ function applyUrlModeToBundle(bundle, mode = FULLURL_MODE_DOCUMENT, rewriteFn = 
         const r = e.resource;
         if (!r?.resourceType) continue;
 
-        // Resolver id (prefiere el que viene en URN)
+        // Resolver ID (preferir el que provenga del fullUrl cuando sea URN)
         let id = null;
         if (e.fullUrl?.startsWith('urn:uuid:')) id = e.fullUrl.split(':').pop();
         else if (r.id) id = r.id;
-        if (!id) {
-            id = (Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 24);
-            r.id = id;
-        }
+        if (!id) continue;
 
         const finalRef = buildRef(mode, r.resourceType, id);
-        if (!finalRef) continue;
 
-        // Variantes de la MISMA referencia que deben converger a finalRef
+        // Variantes equivalentes que mapeamos a 'finalRef'
         const variants = new Set([
             e.fullUrl,
             `urn:uuid:${id}`,
             `${r.resourceType}/${id}`,
             `./${r.resourceType}/${id}`,
         ]);
-        for (const base of absoluteBases) variants.add(`${base}/${r.resourceType}/${id}`);
-        for (const v of variants) if (v) urlMap.set(v, finalRef);
+        // agregar TODAS las bases absolutas detectadas
+        for (const base of absoluteBases) {
+            variants.add(`${base}/${r.resourceType}/${id}`);
+        }
 
-        // Asigna el fullUrl definitivo según "mode"
+        // BUGFIX: evitar `[.variants]` y garantizar que todas las variantes se agreguen
+        for (const v of Array.from(variants)) {
+            if (v) urlMap.set(v, finalRef);
+        }
+
+        // asignar fullUrl final según el modo
         e.fullUrl = finalRef;
     }
 
-    rewriteFn(bundle, urlMap);
-    checkAndFixReferences(bundle);
-    return urlMap;
+    // Reescribir todas las .reference y Attachment.url según urlMap
+    updateReferencesInObject(bundle, urlMap);
 }
 
 // ===================== Las siguientes funciones ya están definidas arriba =====================
 
 function sortCodingsPreferred_OLD(codings) {
-        const pref = [CS_SCT]; // primero SNOMED
-        return [...codings].sort((a, b) => {
-                const ia = pref.indexOf(a.system);
-                const ib = pref.indexOf(b.system);
-                return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
-        });
+    const pref = [CS_SCT]; // primero SNOMED
+    return [...codings].sort((a, b) => {
+        const ia = pref.indexOf(a.system);
+        const ib = pref.indexOf(b.system);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    });
+}
+// Función auxiliar para verificar y corregir referencias
+function checkAndFixReferences(obj, availableUrls, bundle) {
+    if (!obj || typeof obj !== 'object') return;
+
+    if (Array.isArray(obj)) {
+        obj.forEach(item => checkAndFixReferences(item, availableUrls, bundle));
+        return;
+    }
+
+    // Si tiene propiedad 'reference', verificar que existe
+    if (obj.reference && typeof obj.reference === 'string') {
+        if (!availableUrls.has(obj.reference)) {
+            // Si la referencia no existe, intentar encontrar el recurso por ID
+            const parts = obj.reference.split('/');
+            const resourceType = parts[parts.length - 2];
+            const resourceId = parts[parts.length - 1];
+
+            const foundEntry = bundle.entry?.find(e =>
+                e.resource?.resourceType === resourceType &&
+                e.resource?.id === resourceId
+            );
+
+            if (foundEntry) {
+                obj.reference = foundEntry.fullUrl;
+            }
+        }
+
+        // Normaliza referencias absolutas con base distinta (p.ej. sin /fhir)
+        if (/^https?:\/\//i.test(obj.reference)) {
+            const match = obj.reference.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/([A-Za-z]+)\/([A-Za-z0-9\-.]{1,64})$/);
+            if (match && match[2] && match[3] && ABS_BASE) {
+                obj.reference = `${ABS_BASE}/${match[2]}/${match[3]}`;
+            }
+        }
+    }
+
+    // Recursivamente procesar todas las propiedades
+    for (const key in obj) {
+        if (obj.hasOwnProperty(key) && key !== 'reference') {
+            checkAndFixReferences(obj[key], availableUrls, bundle);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // ICVP / IPS / mCSD helpers (pre-validación y ajustes previos al envío)
 // ---------------------------------------------------------------------------
 
+// Modo de fullUrl para Bundles tipo "document": ICVP/IPS espera URNs
+const FULLURL_MODE_DOCUMENT = 'urn';
+
 // Canonicals y sistemas canónicos (ICVP / mCSD / IPS)
 const ICVP_BUNDLE_PROFILE_BASE = 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP';
 const ICVP_BUNDLE_PROFILE = `${ICVP_BUNDLE_PROFILE_BASE}|0.2.0`;
 const ICVP_COMPOSITION_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP';
 // ⚠️ Código productId exacto según catálogo PreQual
-const CS_PREQUAL_PRODUCT_IDS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs';
+const CS_PREQUAL_PRODUCT_IDS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIds';
 // Tipo de vacuna (ICVP VaccineType)
 const CS_PREQUAL_VACCINE_TYPE = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualVaccineType'; // (igual, confirmado)
 // Fallback para "data absent" (evita dependencia del paquete IPS)
@@ -2045,7 +2013,7 @@ function ensureIcvpImmunizationCoding(immunization) {
     if (!immunization || immunization.resourceType !== 'Immunization') return;
 
     // Align ProductID extension with ICVP 0.2.0 canonical values
-    const productExtUrl = 'http://smart.who.int/icvp/StructureDefinition/ProductID';
+    const productExtUrl = 'http://smart.who.int/pcmt/StructureDefinition/ProductID';
     const productSystem = CS_PREQUAL_PRODUCT_IDS;
     const vaccineTypeSystem = CS_PREQUAL_VACCINE_TYPE;
     const icd11System = 'http://id.who.int/icd/release/11/mms';
@@ -2270,9 +2238,26 @@ function warnIfNonIcvpVaccine(summaryBundle) {
     }
 }
 
-function preValidateIcvpBundle(summaryBundle) {
-    if (!summaryBundle || summaryBundle.resourceType !== 'Bundle') return;
+function buildUrlMapUsingBase(summaryBundle) {
+    const urlMap = new Map();
+    if (!ABS_BASE) return urlMap;
+    const base = ABS_BASE;
+    for (const e of summaryBundle.entry || []) {
+        const r = e.resource;
+        if (!r?.resourceType) continue;
+        const id = e.fullUrl?.startsWith('urn:uuid:') ? e.fullUrl.split(':').pop() : (r.id || null);
+        if (!id) continue;
+        const abs = `${base}/${r.resourceType}/${id}`;
+        urlMap.set(`${r.resourceType}/${id}`, abs);
+        // también mapear variantes comunes
+        urlMap.set(`urn:uuid:${id}`, abs);
+        urlMap.set(`${abs}`, abs);
+    }
+    return urlMap;
+}
 
+// Uso recomendado: justo antes de validar el bundle
+function preValidateIcvpBundle(summaryBundle) {
     // 1) composition first
     ensureCompositionFirst(summaryBundle);
 
@@ -2282,43 +2267,23 @@ function preValidateIcvpBundle(summaryBundle) {
     // 3) advertencias sobre vaccineCode
     warnIfNonIcvpVaccine(summaryBundle);
 
-    // 4) Normalizar Immunization según perfil ICVP (ProductID/VaccineType)
-    if (Array.isArray(summaryBundle.entry)) {
-        for (const entry of summaryBundle.entry) {
-            if (entry?.resource?.resourceType === 'Immunization') {
-                ensureIcvpImmunizationCoding(entry.resource);
-            }
+    // 4) reconstruir urlMap usando asAbsoluteBase para evitar '/fhir/fhir'
+    const urlMap = buildUrlMapUsingBase(summaryBundle);
+
+    // 5) aplicar map a referencias internas (puedes reutilizar updateReferencesInObject)
+    updateReferencesInObject(summaryBundle, urlMap);
+
+    // 6) asegurar Composition.subject referencia a Patient existente
+    const compEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Composition');
+    const patEntry = summaryBundle.entry?.find(e => e.resource?.resourceType === 'Patient');
+    if (compEntry?.resource && patEntry) {
+        const patFull = patEntry.fullUrl || (patEntry.resource?.id ? `${patEntry.resource.resourceType}/${patEntry.resource.id}` : null);
+        if (patFull) {
+            // si existe map, usar su valor absoluto
+            const mapped = urlMap.get(patFull) || patFull;
+            compEntry.resource.subject = { reference: mapped };
         }
     }
-
-    // 5) Alinear Composition.subject/author con referencias internas resolubles
-    if (Array.isArray(summaryBundle.entry)) {
-        const compEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Composition');
-        const patEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Patient');
-        const pracEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Practitioner');
-        const orgEntry = summaryBundle.entry.find(e => e.resource?.resourceType === 'Organization');
-
-        if (compEntry?.resource) {
-            if (patEntry?.resource) {
-                const pid = patEntry.resource.id || patEntry.fullUrl?.replace(/^urn:uuid:/, '');
-                if (pid) compEntry.resource.subject = { reference: buildRef('Patient', pid) };
-            }
-
-            const authors = [];
-            if (orgEntry?.resource) {
-                const oid = orgEntry.resource.id || orgEntry.fullUrl?.replace(/^urn:uuid:/, '');
-                if (oid) authors.push({ reference: buildRef('Organization', oid) });
-            }
-            if (pracEntry?.resource) {
-                const prid = pracEntry.resource.id || pracEntry.fullUrl?.replace(/^urn:uuid:/, '');
-                if (prid) authors.push({ reference: buildRef('Practitioner', prid) });
-            }
-            if (authors.length) compEntry.resource.author = authors;
-        }
-    }
-
-    // 6) Aplicar el modo de URL configurado al bundle completo (urn recomendado para Document)
-    applyUrlModeToBundle(summaryBundle, FULLURL_MODE_DOCUMENT, updateReferencesInObject);
 }
 
 // ===================== Función para corregir Bundle - INTEGRADA =====================
@@ -2617,8 +2582,13 @@ function fixBundleValidationIssues(summaryBundle) {
         }
     }
 
-    // 7) Asegurar que todas las referencias internas estén en el Bundle
-    checkAndFixReferences(summaryBundle);
+    // 7. Asegurar que todas las referencias internas estén en el Bundle
+    const allFullUrls = new Set(summaryBundle.entry?.map(e => e.fullUrl) || []);
+
+    summaryBundle.entry?.forEach(entry => {
+        // Revisar todas las referencias en el recurso
+        checkAndFixReferences(entry.resource, allFullUrls, summaryBundle);
+    });
 
     // 7.bis. Sanear meta.source que empiecen con '#' (problemático para validación)
     for (const e of summaryBundle.entry || []) {
@@ -2755,6 +2725,52 @@ function fixBundleValidationIssues(summaryBundle) {
         console.error('❌ Bundle LAC validation failed - check console for details');
     }*/
 }
+
+// ===================== Helper: actualiza todas las referencias recursivamente =====================
+function updateReferencesInObject(obj, urlMap) {
+    if (!obj || typeof obj !== 'object') return;
+
+    if (Array.isArray(obj)) {
+        obj.forEach(item => updateReferencesInObject(item, urlMap));
+        return;
+    }
+
+    if (obj.reference && typeof obj.reference === 'string') {
+        const mapped = urlMap.get(obj.reference);
+        if (mapped) {
+            obj.reference = mapped;
+        } else if (/^https?:\/\//i.test(obj.reference) && ABS_BASE) {
+            const match = obj.reference.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/([A-Za-z]+)\/([A-Za-z0-9\-.]{1,64})$/);
+            if (match && match[2] && match[3]) {
+                obj.reference = `${ABS_BASE}/${match[2]}/${match[3]}`;
+            }
+        }
+    }
+
+    // Si es un Attachment (tiene contentType/data/size/hash) y trae url, también mapearla
+    if (obj.url && typeof obj.url === 'string' &&
+        (Object.prototype.hasOwnProperty.call(obj, 'contentType') ||
+            Object.prototype.hasOwnProperty.call(obj, 'data') ||
+            Object.prototype.hasOwnProperty.call(obj, 'size') ||
+            Object.prototype.hasOwnProperty.call(obj, 'hash'))) {
+        const mappedUrl = urlMap.get(obj.url);
+        if (mappedUrl) {
+            obj.url = mappedUrl;
+        } else if (/^https?:\/\//i.test(obj.url) && ABS_BASE) {
+            const match = obj.url.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/([A-Za-z]+)\/([A-Za-z0-9\-.]{1,64})$/);
+            if (match && match[2] && match[3]) {
+                obj.url = `${ABS_BASE}/${match[2]}/${match[3]}`;
+            }
+        }
+    }
+
+    for (const key in obj) {
+        if (obj.hasOwnProperty(key) && key !== 'reference') {
+            updateReferencesInObject(obj[key], urlMap);
+        }
+    }
+}
+
 
 function normalizePractitionerResource(prac) {
     if (!prac || prac.resourceType !== 'Practitioner') return;
