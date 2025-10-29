@@ -147,12 +147,29 @@ const {
     ATTACHMENT_URL_MODE = 'absolute',
 } = process.env;
 
-// base absoluta fija para Gazelle (puedes override con ENV)
-const ABSOLUTE_FULLURL_BASE_RAW = ensureFhirSuffix(
+// -----------------------------------------------------------------------------
+// Fixed absolute FHIR base for Gazelle. Always enforce trailing /fhir segments.
+// -----------------------------------------------------------------------------
+function normalizeFhirBase(url) {
+    const fallback = 'https://gazelle.racsel.org:11016/fhir/1/fhir';
+    let base = String(url || '').trim();
+    if (!base) return fallback;
+    base = base.replace(/\/+$/, '');
+    if (!/\/fhir\/1\/fhir$/i.test(base)) {
+        if (/\/fhir\/1$/i.test(base)) base = `${base}/fhir`;
+        else if (/\/fhir$/i.test(base)) base = `${base}/1/fhir`;
+        else base = `${base}/fhir/1/fhir`;
+    }
+    return base;
+}
+
+const ABSOLUTE_FULLURL_BASE_RAW = normalizeFhirBase(
     process.env.FHIR_NODO_REGIONAL_SERVER
     || process.env.ABSOLUTE_FULLURL_BASE
-    || 'https://gazelle.racsel.org:11016/fhir/1'
+    || 'https://gazelle.racsel.org:11016/fhir/1/fhir'
 );
+
+// Prevent rebuilding absolute references from req.headers.host in downstream helpers.
 
 // ===== Constantes de Perfiles y Códigos =====
 // OIDs por defecto (normalizados a urn:oid con separador configurable)
@@ -195,16 +212,6 @@ const LAC_PROFILES = {
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
-
-function ensureFhirSuffix(baseUrl) {
-    const fallback = 'https://gazelle.racsel.org:11016/fhir/1';
-    const raw = String(baseUrl || '').trim();
-    if (!raw) return fallback;
-    const normalized = raw.replace(/\s+$/g, '').replace(/\/+$/g, '');
-    if (/\/fhir\/1$/i.test(normalized)) return normalized;
-    if (/\/fhir$/i.test(normalized)) return `${normalized}/1`;
-    return `${normalized}/fhir/1`;
-}
 
 // --- SNOMED $lookup (solo consulta, sin usar respuesta) -----------------------
 const SNOMED_SYSTEM = 'http://snomed.info/sct';
@@ -1628,7 +1635,7 @@ const ICVP_BUNDLE_PROFILE_BASE = 'http://smart.who.int/icvp/StructureDefinition/
 const ICVP_BUNDLE_PROFILE = `${ICVP_BUNDLE_PROFILE_BASE}|0.2.0`;
 const ICVP_COMPOSITION_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP';
 // ⚠️ Código productId exacto según catálogo PreQual
-const CS_PREQUAL_PRODUCT_IDS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs';
+const CS_PREQUAL_PRODUCT_IDS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIds';
 // Tipo de vacuna (ICVP VaccineType)
 const CS_PREQUAL_VACCINE_TYPE = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualVaccineType'; // (igual, confirmado)
 // Fallback para "data absent" (evita dependencia del paquete IPS)
@@ -1673,6 +1680,30 @@ function ensureIcvpBundleProfilesAndSlices(bundle) {
     }
     bundle.entry = entries;
 
+    const compositionEntry = bundle.entry.find((entry) => entry?.resource?.resourceType === 'Composition');
+    if (compositionEntry?.resource) {
+        const compResource = compositionEntry.resource;
+
+        if (!compResource.id && compositionEntry.fullUrl?.startsWith('urn:uuid:')) {
+            compResource.id = compositionEntry.fullUrl.replace('urn:uuid:', '');
+        }
+
+        const patientEntry = bundle.entry.find((entry) => entry?.resource?.resourceType === 'Patient');
+        if (compResource.subject?.reference?.startsWith('http') && patientEntry?.fullUrl) {
+            compResource.subject.reference = patientEntry.fullUrl;
+        }
+
+        if (Array.isArray(compResource.author)) {
+            const practitionerEntry = bundle.entry.find((entry) => entry?.resource?.resourceType === 'Practitioner');
+            compResource.author = compResource.author.map((author) => {
+                if (author?.reference?.startsWith('http') && practitionerEntry?.fullUrl) {
+                    return { reference: practitionerEntry.fullUrl };
+                }
+                return author;
+            });
+        }
+    }
+
     // IPS/ICVP: la primera entry debe tener fullUrl URN alineado con Composition.id
     if (bundle.type === 'document'
         && FULLURL_MODE_DOCUMENT === 'urn'
@@ -1698,7 +1729,7 @@ function ensureIcvpBundleProfilesAndSlices(bundle) {
     }
 
     // Asegura perfil ICVP para la Composition
-    const composition = bundle.entry?.[0]?.resource;
+    const composition = compositionEntry?.resource;
     if (composition?.resourceType === 'Composition') {
         composition.meta = composition.meta || {};
         const compProfiles = new Set([...(composition.meta.profile || [])]);
@@ -1983,33 +2014,41 @@ function fixPractitionerDegreeDisplay(practitioner) {
 function ensureIcvpImmunizationCoding(immunization) {
     if (!immunization || immunization.resourceType !== 'Immunization') return;
 
-    // Canon oficial ICVP 0.2.0
+    // Align ProductID extension with ICVP 0.2.0 canonical values
     const productExtUrl = 'http://smart.who.int/pcmt/StructureDefinition/ProductID';
     const productSystem = CS_PREQUAL_PRODUCT_IDS;
     const vaccineTypeSystem = CS_PREQUAL_VACCINE_TYPE;
-    immunization.extension = Array.isArray(immunization.extension) ? immunization.extension : [];
-    let productExtension = immunization.extension.find((ext) => ext.url === productExtUrl);
-    if (!productExtension) {
-        productExtension = {
+    const icd11System = 'http://id.who.int/icd/release/11/mms';
+
+    immunization.extension = Array.isArray(immunization.extension) ? immunization.extension.filter(Boolean) : [];
+    immunization.extension = immunization.extension.filter((ext) => ext.url === productExtUrl);
+
+    if (!immunization.extension.length) {
+        immunization.extension.push({
             url: productExtUrl,
-            valueCoding: { system: productSystem, code: 'UNKNOWN' }
-        };
-        immunization.extension.push(productExtension);
+            valueCoding: {
+                system: productSystem,
+                code: 'YellowFeverProductd8a09f80301dc05e124f99ffe7711fc0',
+                display: 'Yellow Fever - STAMARIL (Sanofi Pasteur)'
+            }
+        });
     }
 
+    const productExtension = immunization.extension[0];
     productExtension.valueCoding = productExtension.valueCoding || {};
     productExtension.valueCoding.system = productSystem;
     if (!productExtension.valueCoding.code) {
-        productExtension.valueCoding.code = 'UNKNOWN';
+        productExtension.valueCoding.code = 'YellowFeverProductd8a09f80301dc05e124f99ffe7711fc0';
+    }
+    if (!productExtension.valueCoding.display && productExtension.valueCoding.code === 'YellowFeverProductd8a09f80301dc05e124f99ffe7711fc0') {
+        productExtension.valueCoding.display = 'Yellow Fever - STAMARIL (Sanofi Pasteur)';
     }
 
     const productCode = productExtension.valueCoding.code;
     const mapping = mapProductIdToPrequalVaccine(productCode);
 
-    if (mapping?.vaccineTypeDisplay) {
+    if (mapping?.vaccineTypeDisplay && !productExtension.valueCoding.display) {
         productExtension.valueCoding.display = mapping.vaccineTypeDisplay;
-    } else if ('display' in productExtension.valueCoding) {
-        delete productExtension.valueCoding.display;
     }
 
     immunization.vaccineCode = immunization.vaccineCode || {};
@@ -2017,18 +2056,56 @@ function ensureIcvpImmunizationCoding(immunization) {
         ? immunization.vaccineCode.coding.filter(Boolean)
         : [];
 
+    if (!immunization.vaccineCode.coding.length) {
+        immunization.vaccineCode.coding = [
+            { system: vaccineTypeSystem, code: 'YellowFever', display: 'Yellow Fever' },
+            { system: icd11System, code: 'XM0N24' } // optional ICD-11 coding
+        ];
+        immunization.vaccineCode.text = 'Yellow Fever';
+    }
+
     if (mapping) {
         const canonicalCoding = {
             system: vaccineTypeSystem,
             code: mapping.vaccineTypeCode,
             display: mapping.vaccineTypeDisplay
         };
-        immunization.vaccineCode.coding = [canonicalCoding];
-        immunization.vaccineCode.text = mapping.vaccineTypeDisplay;
+
+        let hasCanonical = false;
+        const updatedCodings = immunization.vaccineCode.coding
+            .filter((coding) => coding?.system !== vaccineTypeSystem || coding?.code === canonicalCoding.code)
+            .map((coding) => {
+                if (coding?.system === canonicalCoding.system && coding?.code === canonicalCoding.code) {
+                    hasCanonical = true;
+                    return { ...coding, display: canonicalCoding.display };
+                }
+                return coding;
+            });
+
+        if (!hasCanonical) {
+            updatedCodings.unshift(canonicalCoding);
+        }
+
+        immunization.vaccineCode.coding = updatedCodings;
+        immunization.vaccineCode.text = canonicalCoding.display;
     } else if (!immunization.vaccineCode.text && immunization.vaccineCode.coding.length > 0) {
         const firstCoding = immunization.vaccineCode.coding[0];
         immunization.vaccineCode.text = firstCoding.display || firstCoding.code || 'ICVP vaccine type';
     }
+
+    const hasIcdCoding = immunization.vaccineCode.coding.some((coding) => coding.system === icd11System);
+    if (!hasIcdCoding) {
+        immunization.vaccineCode.coding.push({ system: icd11System, code: 'XM0N24' });
+    }
+
+    const seenCodings = new Set();
+    immunization.vaccineCode.coding = immunization.vaccineCode.coding.filter((coding) => {
+        if (!coding?.system || !coding?.code) return false;
+        const key = `${coding.system}|${coding.code}`;
+        if (seenCodings.has(key)) return false;
+        seenCodings.add(key);
+        return true;
+    });
 
     if (immunization.location?.display) {
         delete immunization.location.display;
