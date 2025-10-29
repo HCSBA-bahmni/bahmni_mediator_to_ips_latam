@@ -144,11 +144,12 @@ const OID_URN_SEPARATOR = process.env.OID_URN_SEPARATOR || '.';
 const {
     FULLURL_MODE_PROVIDE = 'urn',
     FULLURL_MODE_DOCUMENT = 'absolute',
-    // Base absoluto por defecto al nodo GAZELLE; puedes sobrescribir vía ENV
-    ABSOLUTE_FULLURL_BASE: ABSOLUTE_FULLURL_BASE_RAW = 'https://gazelle.racsel.org:11016/fhir/1/fhir/',
     BINARY_DELIVERY_MODE = 'both',
     ATTACHMENT_URL_MODE = 'absolute',
 } = process.env;
+
+// base absoluta fija para Gazelle (puedes override con ENV)
+const ABSOLUTE_FULLURL_BASE_RAW = process.env.ABSOLUTE_FULLURL_BASE || 'https://gazelle.racsel.org:11016/fhir/1/fhir/';
 
 // ===== Constantes de Perfiles y Códigos =====
 // OIDs por defecto (normalizados a urn:oid con separador configurable)
@@ -1420,14 +1421,14 @@ function fixPatientCountry(bundle) {
 
 // ===== Helpers de modos de URL =====
 function asAbsoluteBase(u) {
-    const x = (u || '').replace(/\/+$/, '');
-    return /\/fhir$/i.test(x) ? x : `${x}/fhir`;
+    const trimmed = (u || '').replace(/\/+$/, '');
+    if (!trimmed) return '';
+    if (/\/fhir(?:\/|$)/i.test(trimmed)) return trimmed;
+    return `${trimmed}/fhir`;
 }
 
-// Normalizamos una vez para evitar inconsistencias al construir referencias absolutas
-const ABS_BASE = ABSOLUTE_FULLURL_BASE_RAW
-    ? asAbsoluteBase(ABSOLUTE_FULLURL_BASE_RAW)
-    : '';
+// Normalizamos una vez y reutilizamos SIEMPRE
+const ABS_BASE = asAbsoluteBase(ABSOLUTE_FULLURL_BASE_RAW);
 
 
 function makeAbsolute(resourceType, id) {
@@ -1689,6 +1690,24 @@ function normalizeBundleReferences(bundle) {
                 return true;
             });
         }
+    }
+
+    // Normaliza referencias absolutas para apuntar al mismo base configurado
+    const normalizeAbsRef = (node) => {
+        if (!node) return;
+        if (Array.isArray(node)) return node.forEach(normalizeAbsRef);
+        if (typeof node !== 'object') return;
+        if (typeof node.reference === 'string' && ABS_BASE) {
+            const match = node.reference.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/([A-Za-z]+)\/([A-Za-z0-9\-.]{1,64})$/);
+            if (match && match[2] && match[3]) {
+                node.reference = `${ABS_BASE}/${match[2]}/${match[3]}`;
+            }
+        }
+        for (const key of Object.keys(node)) normalizeAbsRef(node[key]);
+    };
+
+    for (const entry of bundle.entry || []) {
+        if (entry?.resource) normalizeAbsRef(entry.resource);
     }
 }
 
