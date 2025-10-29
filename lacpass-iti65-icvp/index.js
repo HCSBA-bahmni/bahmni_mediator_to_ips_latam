@@ -143,7 +143,6 @@ const OID_URN_SEPARATOR = process.env.OID_URN_SEPARATOR || '.';
 
 const {
     FULLURL_MODE_PROVIDE = 'urn',
-    FULLURL_MODE_DOCUMENT = 'absolute',
     BINARY_DELIVERY_MODE = 'both',
     ATTACHMENT_URL_MODE = 'absolute',
 } = process.env;
@@ -1576,13 +1575,30 @@ function checkAndFixReferences(obj, availableUrls, bundle) {
 // ICVP / IPS / mCSD helpers (pre-validación y ajustes previos al envío)
 // ---------------------------------------------------------------------------
 
+// Modo de fullUrl para Bundles tipo "document": ICVP/IPS espera URNs
+const FULLURL_MODE_DOCUMENT = 'urn';
+
+// Canonicals y sistemas canónicos (ICVP / mCSD / IPS)
+const ICVP_BUNDLE_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0';
+const ICVP_COMPOSITION_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP';
+// ⚠️ URL canónica correcta (Ids, no IDs):
+const PREQUAL_PRODUCT_CS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIds';
+// ConceptMap de ICVP: ProductId → VaccineType (se usa en el validador)
+// https://smart.who.int/icvp/0.2.0/ConceptMap-ICVPProductIdToVaccineType.html
+// Códigos "tipo vacuna" (ICD-11) usados como fallback
+const ICD11_MMS_CS = 'http://id.who.int/icd/release/11/mms';
+const VACCINE_TYPES = {
+    yellowFever: { system: ICD11_MMS_CS, code: 'XM0N24', display: 'Vacunas contra la fiebre amarilla' },
+    // agrega aquí otros mapeos si los necesitas (COVID-19 XM68M6, etc.)
+};
+
 function ensureIcvpBundleProfilesAndSlices(bundle) {
     if (!bundle || bundle.resourceType !== 'Bundle') return;
 
     // Garantiza perfil ICVP para el Bundle
     bundle.meta = bundle.meta || {};
     const bundleProfiles = new Set([...(bundle.meta.profile || [])]);
-    bundleProfiles.add('http://smart.who.int/icvp/StructureDefinition/Bundle-uv-ips-ICVP|0.2.0');
+    bundleProfiles.add(ICVP_BUNDLE_PROFILE);
     bundle.meta.profile = Array.from(bundleProfiles);
 
     // Composition debe ser primer entry
@@ -1594,12 +1610,21 @@ function ensureIcvpBundleProfilesAndSlices(bundle) {
     }
     bundle.entry = entries;
 
+    // IPS/ICVP: la primera entry debe tener fullUrl URN alineado con Composition.id
+    if (bundle.type === 'document' && FULLURL_MODE_DOCUMENT === 'urn' && bundle.entry?.[0]?.resource?.resourceType === 'Composition') {
+        const compRes = bundle.entry[0].resource;
+        if (!compRes.id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(compRes.id)) {
+            compRes.id = (compRes.id && compRes.id.replace(/^.*\//, '')) || uuidv4();
+        }
+        bundle.entry[0].fullUrl = `urn:uuid:${compRes.id}`;
+    }
+
     // Asegura perfil ICVP para la Composition
     const composition = bundle.entry?.[0]?.resource;
     if (composition?.resourceType === 'Composition') {
         composition.meta = composition.meta || {};
         const compProfiles = new Set([...(composition.meta.profile || [])]);
-        compProfiles.add('http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP');
+        compProfiles.add(ICVP_COMPOSITION_PROFILE);
         composition.meta.profile = Array.from(compProfiles);
     }
 
@@ -1630,8 +1655,14 @@ function fixJurisdictionOrganization(org) {
     );
     if (!alreadyJurisdiction) {
         org.type.push({
-            coding: [{ system: codeSystem, code: 'jurisdiction', display: 'jurisdiction' }]
+            coding: [{ system: codeSystem, code: 'jurisdiction' }]
         });
+    }
+
+    for (const t of org.type) {
+        for (const c of (t.coding || [])) {
+            if (c.system === codeSystem && c.code === 'jurisdiction' && 'display' in c) delete c.display;
+        }
     }
 }
 
@@ -1644,10 +1675,15 @@ function normalizeBundleReferences(bundle) {
         const type = resource?.resourceType;
         if (!resource || !id || !type) continue;
         const key = `${type}/${id}`;
-        if (entry.fullUrl) {
-            byKey.set(entry.fullUrl, entry.fullUrl);
+        const full = entry.fullUrl;
+        if (full) {
+            byKey.set(full, full);
         }
-        byKey.set(key, entry.fullUrl || key);
+        const preferred = full?.startsWith('urn:uuid:') ? full : (full || key);
+        byKey.set(key, preferred);
+        if (full?.startsWith('urn:uuid:')) {
+            byKey.set(`urn:uuid:${id}`, full);
+        }
     }
 
     const fixRef = (node) => {
@@ -1666,6 +1702,9 @@ function normalizeBundleReferences(bundle) {
                 const stripped = ref.replace(/^https?:\/\/[^/]+\/[^/]+\//, '');
                 if (byKey.has(stripped)) {
                     node.reference = byKey.get(stripped);
+                } else if (/^[A-Za-z]+\/[0-9a-f-]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(stripped)) {
+                    const mapped = byKey.get(stripped);
+                    if (mapped) node.reference = mapped;
                 }
             }
         }
@@ -1726,17 +1765,18 @@ function ensureIcvpImmunizationCoding(immunization) {
     if (!immunization || immunization.resourceType !== 'Immunization') return;
 
     const productExtUrl = 'http://smart.who.int/pcmt/StructureDefinition/ProductID';
-    const prequalCS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs';
     immunization.extension = Array.isArray(immunization.extension) ? immunization.extension : [];
     let productExtension = immunization.extension.find((ext) => ext.url === productExtUrl);
     if (!productExtension) {
         productExtension = {
             url: productExtUrl,
-            valueCoding: { system: prequalCS, code: 'UNKNOWN', display: 'Unknown PreQual Product' }
+            valueCoding: { system: PREQUAL_PRODUCT_CS, code: 'UNKNOWN', display: 'Unknown PreQual Product' }
         };
         immunization.extension.push(productExtension);
-    } else if (productExtension.valueCoding && !productExtension.valueCoding.system) {
-        productExtension.valueCoding.system = prequalCS;
+    }
+
+    if (productExtension.valueCoding) {
+        productExtension.valueCoding.system = PREQUAL_PRODUCT_CS;
     }
 
     immunization.vaccineCode = immunization.vaccineCode || {};
@@ -1747,10 +1787,49 @@ function ensureIcvpImmunizationCoding(immunization) {
         const firstCoding = immunization.vaccineCode.coding[0];
         immunization.vaccineCode.text = firstCoding.display || 'ICVP vaccine type';
     }
+
+    try {
+        const prodCode = (productExtension.valueCoding?.code || '').toLowerCase();
+        const isYellowFever = prodCode.startsWith('yellowfeverproduct');
+        if (isYellowFever) {
+            const hasYellowFeverCoding = immunization.vaccineCode.coding.some(
+                (c) => c.system === VACCINE_TYPES.yellowFever.system && c.code === VACCINE_TYPES.yellowFever.code
+            );
+            if (!hasYellowFeverCoding) {
+                immunization.vaccineCode.coding.unshift({
+                    system: VACCINE_TYPES.yellowFever.system,
+                    code: VACCINE_TYPES.yellowFever.code,
+                    display: VACCINE_TYPES.yellowFever.display
+                });
+                if (!immunization.vaccineCode.text) {
+                    immunization.vaccineCode.text = VACCINE_TYPES.yellowFever.display;
+                }
+            }
+        }
+    } catch (err) {
+        // noop fallback: no interrumpir flujo si no se pudo determinar el ProductId
+    }
 }
 
 function preValidateAndFixICVP(bundle) {
     ensureIcvpBundleProfilesAndSlices(bundle);
+
+    for (const entry of bundle.entry || []) {
+        const resource = entry?.resource;
+        if (resource?.resourceType === 'Location' && resource.meta?.tag) {
+            delete resource.meta.tag;
+        }
+    }
+
+    if (bundle.type === 'document' && FULLURL_MODE_DOCUMENT === 'urn') {
+        for (const entry of bundle.entry || []) {
+            const resource = entry?.resource;
+            if (!resource) continue;
+            if (!resource.id) resource.id = uuidv4();
+            entry.fullUrl = `urn:uuid:${resource.id}`;
+        }
+    }
+
     normalizeBundleReferences(bundle);
 
     for (const entry of bundle.entry || []) {
