@@ -148,11 +148,7 @@ const {
 } = process.env;
 
 // base absoluta fija para Gazelle (puedes override con ENV)
-const ABSOLUTE_FULLURL_BASE_RAW = ensureFhirSuffix(
-    process.env.FHIR_NODO_REGIONAL_SERVER
-    || process.env.ABSOLUTE_FULLURL_BASE
-    || 'https://gazelle.racsel.org:11016/fhir/1'
-);
+const ABSOLUTE_FULLURL_BASE_RAW = process.env.ABSOLUTE_FULLURL_BASE || 'https://gazelle.racsel.org:11016/fhir/1/fhir/';
 
 // ===== Constantes de Perfiles y Códigos =====
 // OIDs por defecto (normalizados a urn:oid con separador configurable)
@@ -195,16 +191,6 @@ const LAC_PROFILES = {
 
 const isTrue = (v) => String(v).toLowerCase() === 'true';
 const arr = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
-
-function ensureFhirSuffix(baseUrl) {
-    const fallback = 'https://gazelle.racsel.org:11016/fhir/1';
-    const raw = String(baseUrl || '').trim();
-    if (!raw) return fallback;
-    const normalized = raw.replace(/\s+$/g, '').replace(/\/+$/g, '');
-    if (/\/fhir\/1$/i.test(normalized)) return normalized;
-    if (/\/fhir$/i.test(normalized)) return `${normalized}/1`;
-    return `${normalized}/fhir/1`;
-}
 
 // --- SNOMED $lookup (solo consulta, sin usar respuesta) -----------------------
 const SNOMED_SYSTEM = 'http://snomed.info/sct';
@@ -1197,19 +1183,8 @@ function ensureLacCompositionProfile(comp) {
 }
 function ensureCompositionSubject(comp, patientEntry) {
     if (!comp || !patientEntry) return;
-    const patientId = patientEntry.resource?.id
-        || (typeof patientEntry.fullUrl === 'string'
-            ? patientEntry.fullUrl.replace(/^urn:uuid:/, '').replace(/^Patient\//, '')
-            : null);
-
-    if (patientId) {
-        const ref = buildRef('Patient', patientId);
-        if (ref) comp.subject = { reference: ref }; // con FULLURL_MODE_DOCUMENT='urn' retorna 'urn:uuid:<id>'
-        return;
-    }
-
-    const fallbackRef = patientEntry.fullUrl || (patientEntry.resource?.id ? `Patient/${patientEntry.resource.id}` : null);
-    if (fallbackRef) comp.subject = { reference: fallbackRef };
+    const ref = patientEntry.fullUrl || (patientEntry.resource?.id ? `Patient/${patientEntry.resource.id}` : null);
+    if (ref) comp.subject = { reference: ref };
 }
 // ---- Helpers to classify Conditions for IPS sections ----
 function isAbsentProblemCondition(cond) {
@@ -1481,20 +1456,7 @@ function makeUrn(id) {
  * @param {string} id
  * @returns {string}
  */
-function buildRef(modeOrType, resourceTypeOrId, maybeId) {
-    let mode = modeOrType;
-    let resourceType = resourceTypeOrId;
-    let id = maybeId;
-
-    // Permite firma abreviada buildRef(resourceType, id) usando FULLURL_MODE_DOCUMENT
-    if (typeof maybeId === 'undefined') {
-        id = resourceTypeOrId;
-        resourceType = modeOrType;
-        mode = FULLURL_MODE_DOCUMENT;
-    }
-
-    if (!resourceType || !id) return null;
-
+function buildRef(mode, resourceType, id) {
     switch ((mode || '').toLowerCase()) {
         case 'absolute':
             return makeAbsolute(resourceType, id);
@@ -1628,9 +1590,9 @@ const ICVP_BUNDLE_PROFILE_BASE = 'http://smart.who.int/icvp/StructureDefinition/
 const ICVP_BUNDLE_PROFILE = `${ICVP_BUNDLE_PROFILE_BASE}|0.2.0`;
 const ICVP_COMPOSITION_PROFILE = 'http://smart.who.int/icvp/StructureDefinition/Composition-uv-ips-ICVP';
 // ⚠️ Código productId exacto según catálogo PreQual
-const CS_PREQUAL_PRODUCT_IDS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIDs';
+const CS_PREQUAL_PRODUCT_IDS = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualProductIds';
 // Tipo de vacuna (ICVP VaccineType)
-const CS_PREQUAL_VACCINE_TYPE = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualVaccineType'; // (igual, confirmado)
+const CS_PREQUAL_VACCINE_TYPE = 'http://smart.who.int/pcmt-vaxprequal/CodeSystem/PreQualVaccineType';
 // Fallback para "data absent" (evita dependencia del paquete IPS)
 const CS_DATA_ABSENT_REASON = 'http://terminology.hl7.org/CodeSystem/data-absent-reason';
 // URNs requeridas por mCSD para Organization.type
@@ -1674,27 +1636,12 @@ function ensureIcvpBundleProfilesAndSlices(bundle) {
     bundle.entry = entries;
 
     // IPS/ICVP: la primera entry debe tener fullUrl URN alineado con Composition.id
-    if (bundle.type === 'document'
-        && FULLURL_MODE_DOCUMENT === 'urn'
-        && Array.isArray(bundle.entry)
-        && bundle.entry[0]
-        && bundle.entry[0].resource?.resourceType === 'Composition') {
-        const compEntry = bundle.entry[0];
-        const compRes = compEntry.resource;
-        let compUuid = (compEntry.fullUrl || '').replace(/^urn:uuid:/, '');
-
-        if (!compUuid || !UUID_REGEX.test(compUuid)) {
-            compUuid = (compRes.id && UUID_REGEX.test(compRes.id))
-                ? compRes.id.replace(/^.*\//, '')
-                : uuidv4();
+    if (bundle.type === 'document' && FULLURL_MODE_DOCUMENT === 'urn' && bundle.entry?.[0]?.resource?.resourceType === 'Composition') {
+        const compRes = bundle.entry[0].resource;
+        if (!compRes.id || !UUID_REGEX.test(compRes.id)) {
+            compRes.id = (compRes.id && compRes.id.replace(/^.*\//, '')) || uuidv4();
         }
-
-        compEntry.fullUrl = `urn:uuid:${compUuid}`;
-
-        // Si no hay id o no coincide, alinéalo con el UUID del fullUrl
-        if (!compRes.id || compRes.id !== compUuid) {
-            compRes.id = compUuid;
-        }
+        bundle.entry[0].fullUrl = `urn:uuid:${compRes.id}`;
     }
 
     // Asegura perfil ICVP para la Composition
@@ -1780,51 +1727,25 @@ function ensureCompositionLinkages(bundle) {
         ensureCompositionSubject(composition, patientEntry);
     }
 
-    const extractEntryId = (entry) => {
-        if (!entry) return null;
-        if (entry.resource?.id) return entry.resource.id;
-        if (typeof entry.fullUrl === 'string') {
-            const urn = entry.fullUrl.match(/^urn:uuid:([0-9a-f\-]{36})$/i);
-            if (urn) return urn[1];
-            const rel = entry.fullUrl.match(/^[A-Za-z]+\/([A-Za-z0-9\-\.]{1,64})$/);
-            if (rel) return rel[1];
-            const abs = entry.fullUrl.match(/\/([A-Za-z0-9\-\.]{1,64})$/);
-            if (abs) return abs[1];
-        }
-        return null;
-    };
-
     const jurisdictionOrgEntry = entries.find((entry) =>
         entry?.resource?.resourceType === 'Organization' &&
         (entry.resource.meta?.profile || []).includes('https://profiles.ihe.net/ITI/mCSD/StructureDefinition/IHE.mCSD.JurisdictionOrganization')
     );
     const practitionerEntry = entries.find((entry) => entry?.resource?.resourceType === 'Practitioner');
 
-    const orgRef = (() => {
-        const id = extractEntryId(jurisdictionOrgEntry);
-        const ref = id ? buildRef('Organization', id) : null;
-        return ref || jurisdictionOrgEntry?.fullUrl || null;
-    })();
-
-    const practitionerRef = (() => {
-        const id = extractEntryId(practitionerEntry);
-        const ref = id ? buildRef('Practitioner', id) : null;
-        return ref || practitionerEntry?.fullUrl || null;
-    })();
-
     const authorRefs = [];
-    if (orgRef) {
-        authorRefs.push({ reference: orgRef });
+    if (jurisdictionOrgEntry?.fullUrl) {
+        authorRefs.push({ reference: jurisdictionOrgEntry.fullUrl });
     }
-    if (practitionerRef) {
-        authorRefs.push({ reference: practitionerRef });
+    if (practitionerEntry?.fullUrl) {
+        authorRefs.push({ reference: practitionerEntry.fullUrl });
     }
     if (authorRefs.length > 0) {
         composition.author = authorRefs;
     }
 
-    if (orgRef) {
-        composition.custodian = { reference: orgRef };
+    if (jurisdictionOrgEntry?.fullUrl) {
+        composition.custodian = { reference: jurisdictionOrgEntry.fullUrl };
     }
 }
 
@@ -1864,11 +1785,27 @@ function fixJurisdictionOrganization(org) {
     const hasJurisdictionProfile = (org.meta?.profile || []).includes(profile);
     if (!hasJurisdictionProfile) return;
 
+    org.type = Array.isArray(org.type) ? org.type : [];
     const codeSystem = 'https://profiles.ihe.net/ITI/mCSD/CodeSystem/IHE.mCSD.Organization.Location.Types';
-    org.type = [
-        { coding: [{ system: URN_3986, code: URN_MCSJ }] },
-        { coding: [{ system: codeSystem, code: 'jurisdiction' }] },
-    ];
+    const ensureTypeCoding = (system, code) => {
+        let targetType = org.type.find((codingGroup) => (codingGroup.coding || []).some((coding) => coding.system === system));
+        if (!targetType) {
+            targetType = { coding: [] };
+            org.type.push(targetType);
+        }
+        targetType.coding = Array.isArray(targetType.coding) ? targetType.coding : [];
+        let coding = targetType.coding.find((item) => item.system === system);
+        if (!coding) {
+            coding = { system, code };
+            targetType.coding.push(coding);
+        } else {
+            coding.code = code;
+        }
+        if ('display' in coding) delete coding.display;
+    };
+
+    ensureTypeCoding(URN_3986, URN_MCSJ);
+    ensureTypeCoding(codeSystem, 'jurisdiction');
 }
 
 function normalizeBundleReferences(bundle) {
@@ -1941,24 +1878,10 @@ function normalizeBundleReferences(bundle) {
         if (!node) return;
         if (Array.isArray(node)) return node.forEach(normalizeAbsRef);
         if (typeof node !== 'object') return;
-        if (typeof node.reference === 'string') {
-            const current = node.reference;
-            if (/^https?:\/\//i.test(current)) {
-                const uuidMatch = current.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-                if (uuidMatch) {
-                    const candidate = `urn:uuid:${uuidMatch[0].toLowerCase()}`;
-                    if (byKey.has(candidate)) {
-                        node.reference = byKey.get(candidate);
-                        return;
-                    }
-                }
-            }
-
-            if (ABS_BASE) {
-                const match = current.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/([A-Za-z]+)\/([A-Za-z0-9\-.]{1,64})$/);
-                if (match && match[2] && match[3]) {
-                    node.reference = `${ABS_BASE}/${match[2]}/${match[3]}`;
-                }
+        if (typeof node.reference === 'string' && ABS_BASE) {
+            const match = node.reference.match(/^(https?:\/\/[^]+?)(?:\/fhir)?\/([A-Za-z]+)\/([A-Za-z0-9\-.]{1,64})$/);
+            if (match && match[2] && match[3]) {
+                node.reference = `${ABS_BASE}/${match[2]}/${match[3]}`;
             }
         }
         for (const key of Object.keys(node)) normalizeAbsRef(node[key]);
@@ -1983,34 +1906,28 @@ function fixPractitionerDegreeDisplay(practitioner) {
 function ensureIcvpImmunizationCoding(immunization) {
     if (!immunization || immunization.resourceType !== 'Immunization') return;
 
-    // Canon oficial ICVP 0.2.0
     const productExtUrl = 'http://smart.who.int/pcmt/StructureDefinition/ProductID';
-    const productSystem = CS_PREQUAL_PRODUCT_IDS;
-    const vaccineTypeSystem = CS_PREQUAL_VACCINE_TYPE;
     immunization.extension = Array.isArray(immunization.extension) ? immunization.extension : [];
     let productExtension = immunization.extension.find((ext) => ext.url === productExtUrl);
     if (!productExtension) {
         productExtension = {
             url: productExtUrl,
-            valueCoding: { system: productSystem, code: 'UNKNOWN' }
+            valueCoding: { system: CS_PREQUAL_PRODUCT_IDS, code: 'UNKNOWN' }
         };
         immunization.extension.push(productExtension);
     }
 
     productExtension.valueCoding = productExtension.valueCoding || {};
-    productExtension.valueCoding.system = productSystem;
+    productExtension.valueCoding.system = CS_PREQUAL_PRODUCT_IDS;
     if (!productExtension.valueCoding.code) {
         productExtension.valueCoding.code = 'UNKNOWN';
+    }
+    if ('display' in productExtension.valueCoding) {
+        delete productExtension.valueCoding.display;
     }
 
     const productCode = productExtension.valueCoding.code;
     const mapping = mapProductIdToPrequalVaccine(productCode);
-
-    if (mapping?.vaccineTypeDisplay) {
-        productExtension.valueCoding.display = mapping.vaccineTypeDisplay;
-    } else if ('display' in productExtension.valueCoding) {
-        delete productExtension.valueCoding.display;
-    }
 
     immunization.vaccineCode = immunization.vaccineCode || {};
     immunization.vaccineCode.coding = Array.isArray(immunization.vaccineCode.coding)
@@ -2019,7 +1936,7 @@ function ensureIcvpImmunizationCoding(immunization) {
 
     if (mapping) {
         const canonicalCoding = {
-            system: vaccineTypeSystem,
+            system: CS_PREQUAL_VACCINE_TYPE,
             code: mapping.vaccineTypeCode,
             display: mapping.vaccineTypeDisplay
         };

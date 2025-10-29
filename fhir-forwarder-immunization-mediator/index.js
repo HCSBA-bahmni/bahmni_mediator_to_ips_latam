@@ -74,7 +74,7 @@ const PREQUAL_TARGET_SYSTEM = process.env.PREQUAL_TARGET_SYSTEM || 'http://smart
 const CM_TRANSLATE_SOURCE_SYSTEM = 'http://node-acme.org/terminology'
 
 // Extensión ICVP ProductID
-const EXT_ICVP_PRODUCT_ID = 'http://smart.who.int/pcmt/StructureDefinition/ProductID'
+const EXT_ICVP_PRODUCT_ID = 'http://smart.who.int/icvp/StructureDefinition/ProductID'
 
 // --- Parse $translate Parameters
 function parseTranslate(parameters) {
@@ -439,8 +439,12 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
 
   dbgT('ICD11 result:', icd11Coding, 'PreQual result:', prequalCoding)
 
-  // vaccineCode.coding: SOLO ICD-11
-  const vaccineCodeCoding = icd11Coding
+  // vaccineCode.coding: SOLO ICD-11 (sin display para cumplir con el perfil)
+  const vaccineCodeCoding = {
+    system: icd11Coding.system || ICD11_TARGET_SYSTEM,
+    code: icd11Coding.code
+  }
+  const vaccineCodeText = prequalCoding?.display || icd11Coding.display
 
   // occurrenceDateTime
   const occurrenceDateTime = dateObs?.valueDateTime || groupObs?.effectiveDateTime
@@ -508,8 +512,7 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
     url: EXT_ICVP_PRODUCT_ID,
     valueCoding: {
       system: PREQUAL_TARGET_SYSTEM,
-      code: prequalCoding.code,
-      ...(prequalCoding.display ? { display: prequalCoding.display } : {})
+      code: prequalCoding.code
     }
   }] : []
 
@@ -522,7 +525,10 @@ async function buildImmunizationFromGroup (groupObs, obsById, patientRef, enc, p
     meta: { profile: [profile] },
     ...(allExtensions.length ? { extension: allExtensions } : {}),
     status,
-    vaccineCode: { coding: [vaccineCodeCoding] },
+    vaccineCode: {
+      coding: [vaccineCodeCoding],
+      ...(vaccineCodeText ? { text: vaccineCodeText } : {})
+    },
     patient: { reference: patientRef },
     ...(encounterRef ? { encounter: { reference: encounterRef } } : {}),
     occurrenceDateTime,
