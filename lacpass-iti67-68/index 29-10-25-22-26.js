@@ -59,7 +59,7 @@ app.use((req, res, next) => {
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With, X-OpenHIM-ClientID');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With');
 
     if (req.method === 'OPTIONS') {
         return res.sendStatus(204);
@@ -89,15 +89,11 @@ app.get('/regional/_health', (_req, res) => res.status(200).send('OK'));
 // Transparent passthrough for DocumentReference search (ITI-67 semantics)
 app.get('/regional/DocumentReference', async (req, res) => {
   try {
-  // forward all query params, asegurando escape de '*' como '%2A'
-    const params = { ...req.query };
-    if (typeof params['patient.identifier'] === 'string') {
-      params['patient.identifier'] = params['patient.identifier'].replace(/\*/g, '%2A');
-    }
+    // forward all query params as-is
+    console.log(req)
     const url = `${fhirBase()}/DocumentReference`;
     const response = await axios.get(url, {
-      params,
-      headers: { Accept: 'application/fhir+json' },
+      params: req.query,
       httpsAgent: axios.defaults.httpsAgent,
       timeout: 60000
     });
@@ -115,9 +111,8 @@ app.get('/regional/Bundle/:id', async (req, res) => {
     const url = `${fhirBase()}/Bundle/${encodeURIComponent(req.params.id)}`;
     const response = await axios.get(url, {
       params: { _format: 'json', ...req.query },
-      headers: { Accept: 'application/fhir+json' },
       httpsAgent: axios.defaults.httpsAgent,
-      timeout: 60000
+      timeout: 15000
     });
     res.status(response.status).json(response.data);
   } catch (e) {
