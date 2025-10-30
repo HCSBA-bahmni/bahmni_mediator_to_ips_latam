@@ -127,7 +127,7 @@ app.post('/vhl/_generate', async (req, res) => {
         const resp = await axios.post(VHL_ISSUANCE_URL, payload, {
             headers,
             responseType: 'text',
-            timeout: 90000
+            timeout: 180000
         });
 
         const hc1 = (resp.data || '').toString().trim();
@@ -162,7 +162,7 @@ app.post('/vhl/_validate', async (req, res) => {
         const upstream = await axios.post(
             VHL_VALIDATION_URL,
             {qrCodeContent},
-            {headers, responseType: 'json', timeout: 90000}
+            {headers, responseType: 'json', timeout: 180000}
         );
 
         const data = upstream?.data || {};
@@ -218,7 +218,7 @@ app.post('/vhl/_resolve', async (req, res) => {
         const validationResp = await axios.post(
             process.env.VHL_VALIDATION_URL,
             { qrCodeContent },
-            { headers: buildUpstreamJsonHeaders(), responseType: 'json', timeout: 90000 }
+            { headers: buildUpstreamJsonHeaders(), responseType: 'json', timeout: 180000 }
         );
 
         const validation = validationResp?.data || {};
@@ -237,7 +237,7 @@ app.post('/vhl/_resolve', async (req, res) => {
         const manifestResp = await axios.post(
             manifestUrl,
             { recipient, passcode },
-            { headers: buildUpstreamJsonHeaders(), responseType: 'json', timeout: 90000 }
+            { headers: buildUpstreamJsonHeaders(), responseType: 'json', timeout: 180000 }
         );
 
         const manifestData = manifestResp?.data || {};
