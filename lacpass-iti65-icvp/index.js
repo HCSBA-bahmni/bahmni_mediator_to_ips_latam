@@ -168,9 +168,9 @@ function asAbsoluteBase(base) {
     return String(base || '').replace(/\/+$/, '');
 }
 
-const ABSOLUTE_FULLURL_BASE = normalizeFhirBase(
-    ENV_ABSOLUTE_FULLURL_BASE || process.env.FHIR_NODO_REGIONAL_SERVER || 'http://127.0.0.1:8080/fhir/1'
-);
+//const ABSOLUTE_FULLURL_BASE = normalizeFhirBase(
+//    ENV_ABSOLUTE_FULLURL_BASE || process.env.FHIR_NODO_REGIONAL_SERVER || 'http://127.0.0.1:8080/fhir/1'
+//);
 
 // Prevent rebuilding absolute references from req.headers.host in downstream helpers.
 
