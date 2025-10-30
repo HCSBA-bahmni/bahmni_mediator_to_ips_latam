@@ -127,7 +127,7 @@ app.post('/vhl/_generate', async (req, res) => {
         const resp = await axios.post(VHL_ISSUANCE_URL, payload, {
             headers,
             responseType: 'text',
-            timeout: 30000
+            timeout: 90000
         });
 
         const hc1 = (resp.data || '').toString().trim();
