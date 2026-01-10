@@ -20,6 +20,8 @@ OPENMRS_PASS = os.getenv("OPENMRS_PASS")
 OPENHIM_USER = os.getenv("OPENHIM_USER")
 OPENHIM_PASS = os.getenv("OPENHIM_PASS")
 
+DEBUG_FEED_RESPONSE = os.getenv("DEBUG_FEED_RESPONSE", "false").strip().lower() in ("1", "true", "yes", "y")
+
 # Persistencia de entries ya procesadas
 SEEN_FILE = "seen_entries.json"
 try:
@@ -140,7 +142,24 @@ def get_feed():
         )
         print(f"[INFO] Código de respuesta del feed: {r.status_code}")
         if r.status_code == 200:
-            return feedparser.parse(r.text)
+            content_type = r.headers.get("Content-Type")
+            if content_type:
+                print(f"[INFO] Content-Type del feed: {content_type}")
+
+            parsed = feedparser.parse(r.text)
+            if getattr(parsed, "bozo", False):
+                print(f"[WARN] feedparser bozo=True (posible XML malformado o HTML): {getattr(parsed, 'bozo_exception', None)}")
+
+            if DEBUG_FEED_RESPONSE:
+                snippet = (r.text or "")[:500].replace("\n", " ").replace("\r", " ")
+                print(f"[DEBUG] Snippet response (500 chars): {snippet}")
+
+            # Si parece HTML, normalmente es login page o error proxy que igual devuelve 200
+            body_lc = (r.text or "").lstrip().lower()
+            if body_lc.startswith("<html") or "<html" in body_lc[:200]:
+                print("[WARN] La respuesta parece HTML (no Atom XML). Revisa credenciales OPENMRS_USER/OPENMRS_PASS o permisos del endpoint.")
+
+            return parsed
         print(f"[ERROR] Feed status: {r.status_code} | Body: {r.text}")
     except Exception as e:
         print(f"[ERROR] Al leer feed: {e}")
@@ -149,6 +168,10 @@ def get_feed():
 
 if __name__ == '__main__':
     print("🚀 Feed watcher iniciado.")
+    if not FEED_URL:
+        print("[ERROR] Falta ATOM_FEED_URL en variables de entorno.")
+    if not OPENMRS_USER:
+        print("[WARN] OPENMRS_USER no definido: se consultará el feed sin autenticación.")
     while True:
         print("\n🔁 Nueva iteración de polling...")
         feed = get_feed()

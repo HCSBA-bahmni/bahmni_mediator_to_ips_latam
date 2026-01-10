@@ -207,32 +207,6 @@ function buildUpstreamJsonHeaders() {
     return headers;
 }
 
-function getUpstreamTimeoutMs() {
-    const raw = process.env.VHL_UPSTREAM_TIMEOUT_MS;
-    const parsed = raw ? Number(raw) : NaN;
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 180000;
-}
-
-function rewriteManifestUrlIfNeeded(manifestUrl) {
-    const baseOverride = process.env.VHL_MANIFEST_BASE_URL;
-    if (baseOverride) {
-        const original = new URL(manifestUrl);
-        const base = new URL(baseOverride);
-        base.pathname = original.pathname;
-        base.search = original.search;
-        base.hash = original.hash;
-        return base.toString();
-    }
-
-    const from = process.env.VHL_MANIFEST_URL_REWRITE_FROM;
-    const to = process.env.VHL_MANIFEST_URL_REWRITE_TO;
-    if (from && to && manifestUrl.startsWith(from)) {
-        return to + manifestUrl.slice(from.length);
-    }
-
-    return manifestUrl;
-}
-
 app.post('/vhl/_resolve', async (req, res) => {
     try {
         const qrCodeContent = req?.body?.qrCodeContent;
@@ -240,31 +214,20 @@ app.post('/vhl/_resolve', async (req, res) => {
             return res.status(400).json({ error: 'Missing qrCodeContent (HC1 string)' });
         }
 
-        if (!process.env.VHL_VALIDATION_URL) {
-            return res.status(500).json({ error: 'VHL resolve misconfigured', detail: 'Missing VHL_VALIDATION_URL env var' });
-        }
-
-        const upstreamTimeoutMs = getUpstreamTimeoutMs();
-
         // 1) Validar HC1 -> obtener manifest URL
         const validationResp = await axios.post(
             process.env.VHL_VALIDATION_URL,
             { qrCodeContent },
-            { headers: buildUpstreamJsonHeaders(), responseType: 'json', timeout: upstreamTimeoutMs }
+            { headers: buildUpstreamJsonHeaders(), responseType: 'json', timeout: 180000 }
         );
 
         const validation = validationResp?.data || {};
-        const manifestUrlOriginal = validation?.shLinkContent?.url;
-        if (!manifestUrlOriginal || typeof manifestUrlOriginal !== 'string') {
+        const manifestUrl = validation?.shLinkContent?.url;
+        if (!manifestUrl || typeof manifestUrl !== 'string') {
             return res.status(400).json({
                 error: 'Validation succeeded but manifest URL is missing',
                 detail: validation?.validationStatus || null
             });
-        }
-
-        const manifestUrlUsed = rewriteManifestUrlIfNeeded(manifestUrlOriginal);
-        if (manifestUrlUsed !== manifestUrlOriginal) {
-            console.log('ℹ️  Manifest URL rewritten:', { from: manifestUrlOriginal, to: manifestUrlUsed });
         }
 
         // 2) POST al manifest con recipient + passcode
@@ -272,9 +235,9 @@ app.post('/vhl/_resolve', async (req, res) => {
         const passcode  = process.env.VHL_PASSCODE || '1234';
 
         const manifestResp = await axios.post(
-            manifestUrlUsed,
+            manifestUrl,
             { recipient, passcode },
-            { headers: buildUpstreamJsonHeaders(), responseType: 'json', timeout: upstreamTimeoutMs }
+            { headers: buildUpstreamJsonHeaders(), responseType: 'json', timeout: 180000 }
         );
 
         const manifestData = manifestResp?.data || {};
@@ -293,20 +256,14 @@ app.post('/vhl/_resolve', async (req, res) => {
         // Por defecto, JSON compacto con files (+ contexto útil)
         return res.status(200).json({
             files,
-            manifestUrl: manifestUrlUsed,
-            manifestUrlOriginal,
+            manifestUrl,
             validationStatus: validation?.validationStatus || null
         });
     } catch (e) {
         console.error('❌ ERROR /vhl/_resolve:', e?.message || e);
         const status = e?.response?.status || 502;
         const detail = e?.response?.data || e?.message || 'Bad Gateway';
-        const debug = {
-            upstreamUrl: e?.config?.url || null,
-            upstreamMethod: e?.config?.method || null,
-            code: e?.code || null
-        };
-        return res.status(status).json({ error: 'VHL resolve failed', detail, debug });
+        return res.status(status).json({ error: 'VHL resolve failed', detail });
     }
 });
 
