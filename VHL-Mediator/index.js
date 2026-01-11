@@ -234,6 +234,12 @@ function rewriteManifestUrlIfNeeded(manifestUrl) {
 }
 
 app.post('/vhl/_resolve', async (req, res) => {
+    const debugContext = {
+        validationUrl: process.env.VHL_VALIDATION_URL || null,
+        manifestUrlOriginal: null,
+        manifestUrlUsed: null
+    };
+
     try {
         const qrCodeContent = req?.body?.qrCodeContent;
         if (!qrCodeContent || typeof qrCodeContent !== 'string') {
@@ -254,25 +260,29 @@ app.post('/vhl/_resolve', async (req, res) => {
         );
 
         const validation = validationResp?.data || {};
-        const manifestUrlOriginal = validation?.shLinkContent?.url;
-        if (!manifestUrlOriginal || typeof manifestUrlOriginal !== 'string') {
+        debugContext.manifestUrlOriginal = validation?.shLinkContent?.url || null;
+        if (!debugContext.manifestUrlOriginal || typeof debugContext.manifestUrlOriginal !== 'string') {
             return res.status(400).json({
                 error: 'Validation succeeded but manifest URL is missing',
                 detail: validation?.validationStatus || null
             });
         }
 
-        const manifestUrlUsed = rewriteManifestUrlIfNeeded(manifestUrlOriginal);
-        if (manifestUrlUsed !== manifestUrlOriginal) {
-            console.log('ℹ️  Manifest URL rewritten:', { from: manifestUrlOriginal, to: manifestUrlUsed });
+        debugContext.manifestUrlUsed = rewriteManifestUrlIfNeeded(debugContext.manifestUrlOriginal);
+        if (debugContext.manifestUrlUsed !== debugContext.manifestUrlOriginal) {
+            console.log('ℹ️  Manifest URL rewritten:', { from: debugContext.manifestUrlOriginal, to: debugContext.manifestUrlUsed });
+        } else {
+            console.log('ℹ️  Manifest URL NOT rewritten:', { url: debugContext.manifestUrlOriginal });
         }
 
         // 2) POST al manifest con recipient + passcode
         const recipient = process.env.VHL_RECIPIENT || 'Bahmni Client';
         const passcode  = process.env.VHL_PASSCODE || '1234';
 
+        console.log('➡️  POST manifest', { url: debugContext.manifestUrlUsed, timeoutMs: upstreamTimeoutMs });
+
         const manifestResp = await axios.post(
-            manifestUrlUsed,
+            debugContext.manifestUrlUsed,
             { recipient, passcode },
             { headers: buildUpstreamJsonHeaders(), responseType: 'json', timeout: upstreamTimeoutMs }
         );
@@ -293,8 +303,8 @@ app.post('/vhl/_resolve', async (req, res) => {
         // Por defecto, JSON compacto con files (+ contexto útil)
         return res.status(200).json({
             files,
-            manifestUrl: manifestUrlUsed,
-            manifestUrlOriginal,
+            manifestUrl: debugContext.manifestUrlUsed,
+            manifestUrlOriginal: debugContext.manifestUrlOriginal,
             validationStatus: validation?.validationStatus || null
         });
     } catch (e) {
@@ -304,7 +314,8 @@ app.post('/vhl/_resolve', async (req, res) => {
         const debug = {
             upstreamUrl: e?.config?.url || null,
             upstreamMethod: e?.config?.method || null,
-            code: e?.code || null
+            code: e?.code || null,
+            ...debugContext
         };
         return res.status(status).json({ error: 'VHL resolve failed', detail, debug });
     }
